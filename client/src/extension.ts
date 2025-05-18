@@ -1,22 +1,9 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
+import * as vscode from 'vscode'; // VS Code extensibility API
 import { LanguageClient, ServerOptions, TransportKind, LanguageClientOptions } from 'vscode-languageclient/node';
 import * as path from 'path';
 import { SymbolInformation } from 'vscode-languageserver-types';
+import { speak, beepSound } from './audio';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-// export function activate(context: vscode.ExtensionContext) {
-
-// Use the console to output diagnostic information (console.log) and errors (console.error)
-// This line of code will only be executed once when your extension is activated 
-console.log('Congratulations, your extension "lipcoder" is now active!');
-// The command has been defined in the package.json file
-// Now provide the implementation of the command with registerCommand
-// The commandId parameter must match the command field in package.json
-
-console.log("🚀 LipCoder.activate() called");
 export function activate(context: vscode.ExtensionContext) {
 	// 1. Point to the compiled server bundle
 	const serverModule = context.asAbsolutePath(path.join('dist', 'server', 'server.js'));
@@ -38,7 +25,15 @@ export function activate(context: vscode.ExtensionContext) {
 			client.stop();
 		}
 	});
-	client.start().catch(err => console.error(err));
+	// client.start().catch(err => console.error(err));
+	const disposableClient = client.start();
+	context.subscriptions.push({
+		dispose: () => disposableClient.then(() => { })
+	});
+
+	client.start().then(() => {
+		// register echoTest, whereAmI, readLineTokens here
+	}).catch(err => console.error('LSP client failed to start:', err));
 
 	// 3. Test our echo request via a command
 	context.subscriptions.push(
@@ -77,18 +72,56 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (containing.length === 0) {
 				vscode.window.showInformationMessage('Outside of any symbol.');
+				speak("You are outside of any symbol.");
 			} else {
 				// 3. Speak it out
 				const symbol = containing[0];
 				const container = symbol.containerName ? `${symbol.containerName} → ` : '';
 				const msg = `${container}${symbol.name}`;
 				vscode.window.showInformationMessage(`You are in: ${msg}`);
-				// TODO: integrate your TTS/beep here, e.g. speak(msg);
+				speak(`You are in ${msg}`);        // so espeak will vocalize it
+				vscode.window.showInformationMessage(`You are in: ${msg}`);
 			}
+		}),
+		vscode.commands.registerCommand('lipcoder.readLineTokens', async () => {
+			const editor = vscode.window.activeTextEditor;
+			if (!editor) {
+				vscode.window.showWarningMessage('No active editor!');
+				return;
+			}
+			vscode.window.showInformationMessage('Starting readLineTokens command...');
+			const uri = editor.document.uri.toString();
+			const line = editor.selection.active.line;
+			const tokens = await client.sendRequest<{ text: string; category: string }[]>(
+				'lipcoder/readLineTokens',
+				{ uri, line }
+			);
+			vscode.window.showInformationMessage(`Found ${tokens.length} tokens on line ${line}`);
+			for (let i = 0; i < tokens.length; i++) {
+				const { text, category } = tokens[i];
+				let pitch = 50;
+				let voice = 'en-us';
+				switch (category) {
+					case 'keyword': pitch = 90; voice = 'en-us+m3'; break;
+					case 'type': pitch = 70; voice = 'en-us+f3'; break;
+					case 'literal': pitch = 40; voice = 'en-us+f2'; break;
+					case 'variable': pitch = 60; voice = 'en-us'; break;
+				}
+				try {
+					await speak(text, { voice, pitch, gap: 0, speed: 250, beep: false });
+				} catch (err: any) {
+					vscode.window.showErrorMessage(`Error speaking token "${text}": ${err.message}`);
+				}
+				// beep between words (0.2s duration assumed by audio file)
+				if (i < tokens.length - 1) {
+					await beepSound();
+				}
+			}
+			vscode.window.showInformationMessage('Finished reading tokens');
 		})
 	);
 
 }
 
-// This method is called when your extension is deactivated
-export function deactivate() { }
+
+export function deactivate() { } // called when your extension is deactivated

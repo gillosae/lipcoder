@@ -15,9 +15,7 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "*"
-  ],
+  "activationEvents": [],
   "main": "./dist/client/extension.js",
   "contributes": {
     "commands": [
@@ -32,6 +30,10 @@
       {
         "command": "lipcoder.whereAmI",
         "title": "LipCoder: Where Am I?"
+      },
+      {
+        "command": "lipcoder.readLineTokens",
+        "title": "LipCoder: Read Line Tokens"
       }
     ]
   },
@@ -48,7 +50,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test",
-    "build": "tsc -b server && tsc -b client",
+    "build": "tsc -b shared && tsc -b server && tsc -b client",
     "watch:build": "tsc -b server --watch & tsc -b client --watch"
   },
   "devDependencies": {
@@ -65,8 +67,9 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "speaker": "^0.5.5",
     "ts-node": "^10.9.2",
-    "vscode-languageserver": "^9.0.1",
-    "vscode-languageclient": "^9.0.0"
+    "vscode-languageclient": "^9.0.0",
+    "vscode-languageserver": "^9.0.1"
   }
 }

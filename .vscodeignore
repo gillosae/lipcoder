@@ -1,14 +1,18 @@
+# Editor & test folders
 .vscode/**
 .vscode-test/**
-out/**
+
+# Don’t ship your dev dependencies
 node_modules/**
-src/**
-.gitignore
-.yarnrc
+
+# Don’t ship raw TypeScript or maps
+**/*.ts
+**/*.map
+
+# Don’t ship local build scripts or config
 esbuild.js
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/eslint.config.mjs
-**/*.map
-**/*.ts
-**/.vscode-test.*
+.gitignore
+.yarnrc

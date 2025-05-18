@@ -103,4 +103,33 @@ connection.onDocumentSymbol(params => {
     return syms.map(sym => ({ ...sym, location: { ...sym.location, uri: params.textDocument.uri } }));
 });
 
+// 3. Handle readLineTokens requests for tokenizing a specific line
+connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: number }) => {
+    const doc = documents.get(params.uri);
+    if (!doc) return [];
+    const text = doc.getText();
+    const lines = text.split(/\r?\n/);
+    const lineText = lines[params.line] || '';
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, lineText);
+
+    const tokens: Array<{ text: string; category: string }> = [];
+    let kind = scanner.scan();
+    while (kind !== ts.SyntaxKind.EndOfFileToken) {
+        const tokenText = scanner.getTokenText();
+        let category = 'other';
+        if (kind === ts.SyntaxKind.Identifier) {
+            category = 'variable';
+        } else if (kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.NumericLiteral) {
+            category = 'literal';
+        } else if (ts.SyntaxKind[kind].includes('Keyword')) {
+            category = 'keyword';
+        } else if (kind === ts.SyntaxKind.TypeReference) {
+            category = 'type';
+        }
+        tokens.push({ text: tokenText, category });
+        kind = scanner.scan();
+    }
+    return tokens;
+});
+
 connection.listen();
