@@ -3,3 +3,10 @@ dist
 node_modules
 .vscode-test/
 *.vsix
+
+# Don’t commit large model files:
+client/src/models/silero/**
+
+# Don’t commit the Python site-packages (we’ll install on the end user’s machine instead):
+client/src/python/lib/
+client/src/python/include/
