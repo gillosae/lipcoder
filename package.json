@@ -51,7 +51,8 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "build": "tsc -b shared && tsc -b server && tsc -b client",
-    "watch:build": "tsc -b server --watch & tsc -b client --watch"
+    "watch:build": "tsc -b server --watch & tsc -b client --watch",
+    "postinstall": "node ./scripts/download-silero-models.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
