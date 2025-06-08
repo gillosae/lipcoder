@@ -19,10 +19,13 @@ import {
 	playWave
 } from './audio';
 import { lipcoderLog } from './logger';
+import { createAudioMap, specialCharMap } from './mapping';
 
 let typingSpeechEnabled = true; // global flag to control typing speech
 
 export async function activate(context: vscode.ExtensionContext) {
+	// ── 0) TTS setup ───────────────────────────────────────────────────────────────
+
 	// Dynamically import the ESM word‐list package
 	const { default: wordListPath } = await import('word-list');
 	// Load dictionary into a Set for fast lookups
@@ -35,23 +38,15 @@ export async function activate(context: vscode.ExtensionContext) {
 		return dictWords.has(token.toLowerCase());
 	}
 
-	// ── Module-scope controller for cancellation ─────────────────────────────────
+	// Module-scope controller for cancellation
 	let currentAbortController: AbortController | null = null;
 
-	// ── 1. Configure Silero TTS & locate earcons ────────────────────────────────────
 	const extRoot = context.extensionPath;
+	const audioDir = path.join(extRoot, 'client', 'audio');
 	const pythonExe = path.join(extRoot, 'client', 'src', 'python', 'bin', 'python');
 	const scriptPath = path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py');
 
-	// Tell audio.ts exactly where your WAVs live on disk:
-	const audioDir = context.asAbsolutePath(path.join('client', 'audio'));
-	const earconDir = context.asAbsolutePath(path.join('client', 'audio', 'earcon'));
-	const numberDir = context.asAbsolutePath(path.join('client', 'audio', 'number'));
-	const alphabetDir = context.asAbsolutePath(path.join('client', 'audio', 'alphabet'));
-	const specialDir = context.asAbsolutePath(path.join('client', 'audio', 'special'));
-
 	setAudioDirectory(audioDir);
-
 	setBackend(TTSBackend.Silero, {
 		pythonExe,
 		scriptPath,
@@ -63,162 +58,15 @@ export async function activate(context: vscode.ExtensionContext) {
 		// speed: 400
 	});
 
-	// Paths for common sounds
-	const spacePath = path.join(earconDir, 'space.wav');
-	const quotePath = path.join(earconDir, 'quote.wav');
-	const quote2Path = path.join(earconDir, 'quote2.wav');
-	const bigquotePath = path.join(earconDir, 'bigquote.wav');
-	const bigquote2Path = path.join(earconDir, 'bigquote2.wav');
+	// ── 1) Build the unified audioMap ─────────────────────────────────────────────
+	const audioMap = createAudioMap(context);
 
-	// Map for single-character punctuation -> earcon file
-	const audioMap: Record<string, string> = {
-		//earcon
-		'{': path.join(earconDir, 'brace.wav'),
-		'}': path.join(earconDir, 'brace2.wav'),
-		'<': path.join(earconDir, 'anglebracket.wav'),
-		'>': path.join(earconDir, 'anglebracket2.wav'),
-		'[': path.join(earconDir, 'squarebracket.wav'),
-		']': path.join(earconDir, 'squarebracket2.wav'),
-		'(': path.join(earconDir, 'parenthesis.wav'),
-		')': path.join(earconDir, 'parenthesis2.wav'),
-		';': path.join(earconDir, 'semicolon.wav'),
-		'/': path.join(earconDir, 'slash.wav'),
-		'-': path.join(earconDir, 'bar.wav'),
-		':': path.join(earconDir, 'column.wav'),
-		"'": path.join(earconDir, 'quote.wav'),
-		'"': path.join(earconDir, 'bigquote.wav'),
-		// ',': path.join('client',  'audio', 'earcon', 'comma.wav'),
-		// '.': path.join('client',  'audio', 'earcon', 'dot.wav'),
-		// '_': path.join('client',  'audio', 'earcon', 'underbar.wav'),
-		//number
-		'0': path.join(numberDir, '0.wav'),
-		'1': path.join(numberDir, '1.wav'),
-		'2': path.join(numberDir, '2.wav'),
-		'3': path.join(numberDir, '3.wav'),
-		'4': path.join(numberDir, '4.wav'),
-		'5': path.join(numberDir, '5.wav'),
-		'6': path.join(numberDir, '6.wav'),
-		'7': path.join(numberDir, '7.wav'),
-		'8': path.join(numberDir, '8.wav'),
-		'9': path.join(numberDir, '9.wav'),
-		//alphabet
-		'a': path.join(alphabetDir, 'a.wav'),
-		'b': path.join(alphabetDir, 'b.wav'),
-		'c': path.join(alphabetDir, 'c.wav'),
-		'd': path.join(alphabetDir, 'd.wav'),
-		'e': path.join(alphabetDir, 'e.wav'),
-		'f': path.join(alphabetDir, 'f.wav'),
-		'g': path.join(alphabetDir, 'g.wav'),
-		'h': path.join(alphabetDir, 'h.wav'),
-		'i': path.join(alphabetDir, 'i.wav'),
-		'j': path.join(alphabetDir, 'j.wav'),
-		'k': path.join(alphabetDir, 'k.wav'),
-		'l': path.join(alphabetDir, 'l.wav'),
-		'm': path.join(alphabetDir, 'm.wav'),
-		'n': path.join(alphabetDir, 'n.wav'),
-		'o': path.join(alphabetDir, 'o.wav'),
-		'p': path.join(alphabetDir, 'p.wav'),
-		'q': path.join(alphabetDir, 'q.wav'),
-		'r': path.join(alphabetDir, 'r.wav'),
-		's': path.join(alphabetDir, 's.wav'),
-		't': path.join(alphabetDir, 't.wav'),
-		'u': path.join(alphabetDir, 'u.wav'),
-		'v': path.join(alphabetDir, 'v.wav'),
-		'w': path.join(alphabetDir, 'w.wav'),
-		'x': path.join(alphabetDir, 'x.wav'),
-		'y': path.join(alphabetDir, 'y.wav'),
-		'z': path.join(alphabetDir, 'z.wav'),
-		//special
-		' ': spacePath, // space
-		'ampersand': path.join(specialDir, 'ampersand.wav'),
-		'asterisk': path.join(specialDir, 'asterisk.wav'),
-		'at': path.join(specialDir, 'at.wav'),
-		'backslash': path.join(specialDir, 'backslash.wav'),
-		'backtick': path.join(specialDir, 'backtick.wav'),
-		'bar': path.join(specialDir, 'bar.wav'),
-		'caret': path.join(specialDir, 'caret.wav'),
-		'comma': path.join(specialDir, 'comma.wav'),
-		'dollar': path.join(specialDir, 'dollar.wav'),
-		'dot': path.join(specialDir, 'dot.wav'),
-		'equals': path.join(specialDir, 'equals.wav'),
-		'excitation': path.join(specialDir, 'excitation.wav'),
-		'percent': path.join(specialDir, 'percent.wav'),
-		'plus': path.join(specialDir, 'plus.wav'),
-		'question': path.join(specialDir, 'question.wav'),
-		'sharp': path.join(specialDir, 'sharp.wav'),
-		'tilde': path.join(specialDir, 'tilde.wav'),
-		'underbar': path.join(specialDir, 'underbar.wav'),
-		'won': path.join(specialDir, 'won.wav'),
-	};
-
-	function isEarcon(text: string): boolean {
+	function isEarcon(ch: string): boolean {
 		// any single-character token that you want as an earcon
-		return text.length === 1 && audioMap[text] !== undefined;
+		return ch.length === 1 && audioMap[ch] !== undefined;
 	}
-
-	// Map punctuation *and* digits to spoken words
-	const specialCharMap: Record<string, string> = {
-		'!': 'excitation',
-		'@': 'at',
-		'#': 'sharp',
-		'$': 'dollar',
-		'%': 'percent',
-		'^': 'caret',
-		'&': 'ampersand',
-		'*': 'asterisk',
-		'+': 'plus',
-		'~': 'tilde',
-		'|': 'bar',
-		'?': 'question',
-		'₩': 'won',
-		'=': 'equals',
-		'`': 'backtick',
-		'\\': 'backslash',
-		'.': 'dot',
-		',': 'comma',
-		'_': 'underbar',
-		// ─── new digit mappings ──────────────────────────────────────────
-		'0': 'zero',
-		'1': 'one',
-		'2': 'two',
-		'3': 'three',
-		'4': 'four',
-		'5': 'five',
-		'6': 'six',
-		'7': 'seven',
-		'8': 'eight',
-		'9': 'nine',
-		// ─── Letters ──────────────────────────────────────────
-		'a': 'ay',
-		'b': 'bee',
-		'c': 'see',
-		'd': 'dee',
-		'e': 'ee',
-		'f': 'eff',
-		'g': 'gee',
-		'h': 'aitch',
-		'i': 'eye',
-		'j': 'jay',
-		'k': 'kay',
-		'l': 'el',
-		'm': 'em',
-		'n': 'en',
-		'o': 'oh',
-		'p': 'pee',
-		'q': 'cue',
-		'r': 'ar',
-		's': 'ess',
-		't': 'tee',
-		'u': 'you',
-		'v': 'vee',
-		'w': 'double you',
-		'x': 'ex',
-		'y': 'why',
-		'z': 'zee',
-	};
-
-	function isSpecialChar(text: string): boolean {
-		return text.length === 1 && specialCharMap[text] !== undefined;
+	function isSpecial(ch: string): boolean {
+		return ch.length === 1 && specialCharMap[ch] !== undefined;
 	}
 
 	// ── 2. Start LanguageClient ──────────────────────────────────────────────────
@@ -457,7 +305,7 @@ export async function activate(context: vscode.ExtensionContext) {
 							} else {
 								for (const ch of run) {
 									if (isEarcon(ch)) actions.push({ kind: 'earcon', token: ch, category });
-									else if (isSpecialChar(ch)) actions.push({ kind: 'special', token: ch });
+									else if (isSpecial(ch)) actions.push({ kind: 'special', token: ch });
 									else actions.push({ kind: 'text', text: ch, category });
 								}
 							}
@@ -478,11 +326,11 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 					// Pure punctuation/digits/runs
-					// if ([...text].every(ch => isEarcon(ch) || isSpecialChar(ch))) {
-					if (!/^[A-Za-z]+$/.test(text) && [...text].every(ch => isEarcon(ch) || isSpecialChar(ch))) {
+					// if ([...text].every(ch => isEarcon(ch) || isSpecial(ch))) {
+					if (!/^[A-Za-z]+$/.test(text) && [...text].every(ch => isEarcon(ch) || isSpecial(ch))) {
 						for (const ch of text) {
 							if (isEarcon(ch)) actions.push({ kind: 'earcon', token: ch, category });
-							else if (isSpecialChar(ch)) actions.push({ kind: 'special', token: ch });
+							else if (isSpecial(ch)) actions.push({ kind: 'special', token: ch });
 							else actions.push({ kind: 'text', text: ch, category });
 						}
 						return;
@@ -615,7 +463,7 @@ export async function activate(context: vscode.ExtensionContext) {
 							} else {
 								for (const ch of run) {
 									if (isEarcon(ch)) actions.push({ kind: 'earcon', token: ch, category });
-									else if (isSpecialChar(ch)) actions.push({ kind: 'special', token: ch });
+									else if (isSpecial(ch)) actions.push({ kind: 'special', token: ch });
 									else actions.push({ kind: 'text', text: ch, category });
 								}
 							}
@@ -639,12 +487,12 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ── E) Punctuation/special splitting ───────────────────────────
-					if (text.length > 1 && [...text].every(ch => isEarcon(ch) || isSpecialChar(ch))) {
+					if (text.length > 1 && [...text].every(ch => isEarcon(ch) || isSpecial(ch))) {
 						flush();
 						for (const ch of text) {
 							if (isEarcon(ch)) {
 								actions.push({ kind: 'earcon', token: ch, category });
-							} else if (isSpecialChar(ch)) {
+							} else if (isSpecial(ch)) {
 								actions.push({ kind: 'special', token: ch });
 							} else {
 								actions.push({ kind: 'text', text: ch, category });
@@ -659,7 +507,7 @@ export async function activate(context: vscode.ExtensionContext) {
 						actions.push({ kind: 'earcon', token: text, category });
 
 						// ── G) Single char Special? ───────────────────────────────────────────
-					} else if (isSpecialChar(text)) {
+					} else if (isSpecial(text)) {
 						flush();
 						actions.push({ kind: 'special', token: text });
 
