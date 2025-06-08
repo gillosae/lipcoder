@@ -18,7 +18,11 @@
   "activationEvents": [
     "onCommand:lipcoder.echoTest",
     "onCommand:lipcoder.whereAmI",
-    "onCommand:lipcoder.readLineTokens"
+    "onCommand:lipcoder.readLineTokens",
+    "onCommand:lipcoder.echoTest",
+    "onCommand:lipcoder.whereAmI",
+    "onCommand:lipcoder.readLineTokens",
+    "onCommand:lipcoder.stopReadLineTokens"
   ],
   "main": "./dist/client/extension.js",
   "contributes": {
@@ -38,6 +42,18 @@
       {
         "command": "lipcoder.readLineTokens",
         "title": "LipCoder: Read Line Tokens"
+      },
+      {
+        "command": "lipcoder.stopReadLineTokens",
+        "title": "Stop LipCoder Speech"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lipcoder.stopReadLineTokens",
+        "key": "ctrl+alt+s",
+        "mac": "ctrl+alt+s",
+        "when": "editorTextFocus"
       }
     ]
   },
@@ -75,6 +91,8 @@
     "speaker": "^0.5.5",
     "ts-node": "^10.9.2",
     "vscode-languageclient": "^9.0.0",
-    "vscode-languageserver": "^9.0.1"
+    "vscode-languageserver": "^9.0.1",
+    "wav": "^1.0.2",
+    "word-list": "^4.1.0"
   }
 }

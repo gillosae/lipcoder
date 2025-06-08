@@ -11,5 +11,8 @@
   "description": "",
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/wav": "^1.0.4"
   }
 }

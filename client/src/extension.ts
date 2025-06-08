@@ -8,15 +8,34 @@ import {
 	LanguageClientOptions
 } from 'vscode-languageclient/node';
 import * as path from 'path';
+import * as fs from 'fs';
 import { SymbolInformation } from 'vscode-languageserver-types';
 import {
 	setBackend,
 	TTSBackend,
 	speakToken,
-	setAudioDirectory
+	setAudioDirectory,
+	genTokenAudio,
+	playWave
 } from './audio';
 
-export function activate(context: vscode.ExtensionContext) {
+
+export async function activate(context: vscode.ExtensionContext) {
+	// Dynamically import the ESM word‐list package
+	const { default: wordListPath } = await import('word-list');
+	// Load dictionary into a Set for fast lookups
+	const dictWords = new Set<string>(
+		fs.readFileSync(wordListPath, 'utf8')
+			.split('\n')
+			.map(w => w.toLowerCase())
+	);
+	function isDictionaryWord(token: string): boolean {
+		return dictWords.has(token.toLowerCase());
+	}
+
+	// ── Module-scope controller for cancellation ─────────────────────────────────
+	let currentAbortController: AbortController | null = null;
+
 	// ── 1. Configure Silero TTS & locate earcons ────────────────────────────────────
 	const extRoot = context.extensionPath;
 	const pythonExe = path.join(extRoot, 'client', 'src', 'python', 'bin', 'python');
@@ -54,8 +73,8 @@ export function activate(context: vscode.ExtensionContext) {
 		']': path.join(extRoot, 'client', 'src', 'audio', 'squarebracket2.wav'),
 		'(': path.join(extRoot, 'client', 'src', 'audio', 'parenthesis.wav'),
 		')': path.join(extRoot, 'client', 'src', 'audio', 'parenthesis2.wav'),
-		',': path.join(extRoot, 'client', 'src', 'audio', 'comma.wav'),
-		'.': path.join(extRoot, 'client', 'src', 'audio', 'dot.wav'),
+		// ',': path.join(extRoot, 'client', 'src', 'audio', 'comma.wav'),
+		// '.': path.join(extRoot, 'client', 'src', 'audio', 'dot.wav'),
 		';': path.join(extRoot, 'client', 'src', 'audio', 'semicolon.wav'),
 		'/': path.join(extRoot, 'client', 'src', 'audio', 'slash.wav'),
 		'_': path.join(extRoot, 'client', 'src', 'audio', 'underbar.wav'),
@@ -84,6 +103,10 @@ export function activate(context: vscode.ExtensionContext) {
 		'?': 'question',
 		'₩': 'won',
 		'=': 'equals',
+		'`': 'backtick',
+		'\\': 'backslash',
+		'.': 'dot',
+		',': 'comma',
 		// ─── new digit mappings ──────────────────────────────────────────
 		'0': 'zero',
 		'1': 'one',
@@ -95,6 +118,33 @@ export function activate(context: vscode.ExtensionContext) {
 		'7': 'seven',
 		'8': 'eight',
 		'9': 'nine',
+		// ─── Letters ──────────────────────────────────────────
+		'a': 'ay',
+		'b': 'bee',
+		'c': 'see',
+		'd': 'dee',
+		'e': 'ee',
+		'f': 'ef',
+		'g': 'gee',
+		'h': 'aitch',
+		'i': 'eye',
+		'j': 'jay',
+		'k': 'kay',
+		'l': 'el',
+		'm': 'em',
+		'n': 'en',
+		'o': 'oh',
+		'p': 'pee',
+		'q': 'cue',
+		'r': 'ar',
+		's': 'ess',
+		't': 'tee',
+		'u': 'you',
+		'v': 'vee',
+		'w': 'double you',
+		'x': 'ex',
+		'y': 'why',
+		'z': 'zee',
 	};
 
 	function isSpecialChar(text: string): boolean {
@@ -206,9 +256,17 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// ── 3.3 readLineTokens (with underscore & CamelCase splitting) ────────────────
+	// ── 3.3 readLineTokens (with acronym & digit splitting) ───────────────────────
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.readLineTokens', async () => {
+			// cancel any previous speech
+			if (currentAbortController) {
+				currentAbortController.abort();
+			}
+			const controller = new AbortController();
+			currentAbortController = controller;
+			const { signal } = controller;
+
 			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
 				vscode.window.showWarningMessage('No active editor!');
@@ -249,41 +307,96 @@ export function activate(context: vscode.ExtensionContext) {
 					return /[a-z][A-Z]/.test(id);
 				}
 				function splitCamel(id: string): string[] {
-					// e.g. "extRootValue" → ["ext","Root","Value"]
 					return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) || [id];
 				}
 
 				for (const { text, category } of tokens) {
-					// ── 2.a Underscore splitting ──────────────────────────────────────
+					// ── A) Bypass comment (and string) tokens ──────────────────────────────
+					if (category === 'comment' || category === 'string') {
+						// treat the entire comment/string as plain text
+						if (bufferCat === category) {
+							buffer += text;
+						} else {
+							flush();
+							buffer = text;
+							bufferCat = category;
+						}
+						continue;
+					}
+
+					// ── 2) Bypass keywords (don’t split “for”, “if”, “in”, etc.) ───────────
+					if (category === 'keyword') {
+						if (bufferCat === category) {
+							buffer += text;
+						} else {
+							flush();
+							buffer = text;
+							bufferCat = category;
+						}
+						continue;
+					}
+
+
+					// ── C) Dictionary words: read whole if in our word list ───────
+					if (/^[A-Za-z]+$/.test(text) && isDictionaryWord(text)) {
+						flush();
+						actions.push({ kind: 'text', text, category });
+						continue;
+					}
+
+					// ── C) UNDERSCORE SPLITTING (now first!) ────────────────────────────────
 					if (text.includes('_')) {
 						flush();
-						// keep underscores in the array
 						for (const part of text.split(/(_)/)) {
-							if (part === '') continue;
+							if (!part) continue;
 							if (part === '_') {
 								actions.push({ kind: 'earcon', token: '_', category });
-							} else if (part.length <= 2) {
-								// letter-by-letter for short segments
-								for (const ch of part) {
-									actions.push({ kind: 'text', text: ch, category });
-								}
 							} else {
-								// read as chunk
-								actions.push({ kind: 'text', text: part, category });
+								// chunk words longer than 2, letter-by-letter else
+								if (part.length <= 2) {
+									for (const ch of part) {
+										actions.push({ kind: 'text', text: ch, category });
+									}
+								} else {
+									actions.push({ kind: 'text', text: part, category });
+								}
 							}
 						}
 						continue;
 					}
 
-					// ── 2.b CamelCase splitting ──────────────────────────────────────
+					// ── D) ACRONYM / DIGIT SPLITTING ─────────────────────────────────────────
+					if (category === 'variable' && /[A-Za-z]/.test(text) && /\d|[^A-Za-z0-9]/.test(text)) {
+						flush();
+						const runs = text.match(/[A-Za-z]+|\d+|[^A-Za-z0-9]+/g)!;
+						for (const run of runs) {
+							if (/^[A-Za-z]+$/.test(run)) {
+								// only split short runs ≤2; longer stay chunk
+								if (run.length <= 2) {
+									for (const ch of run) actions.push({ kind: 'text', text: ch, category });
+								} else {
+									actions.push({ kind: 'text', text: run, category });
+								}
+							} else if (/^\d+$/.test(run)) {
+								for (const ch of run) actions.push({ kind: 'special', token: ch });
+							} else {
+								for (const ch of run) {
+									if (isEarcon(ch)) actions.push({ kind: 'earcon', token: ch, category });
+									else if (isSpecialChar(ch)) actions.push({ kind: 'special', token: ch });
+									else actions.push({ kind: 'text', text: ch, category });
+								}
+							}
+						}
+						continue;
+					}
+
+					// ── D) CamelCase splitting ──────────────────────────────────────
 					if (isCamelCase(text)) {
 						flush();
 						for (const segment of splitCamel(text)) {
 							if (/^[A-Z]/.test(segment)) {
-								// chunk that starts uppercase (e.g. "Root")
 								actions.push({ kind: 'text', text: segment, category });
 							} else {
-								// lowercase segment, letter-by-letter (e.g. "ext")
 								for (const ch of segment) {
 									actions.push({ kind: 'text', text: ch, category });
 								}
@@ -292,7 +405,7 @@ export function activate(context: vscode.ExtensionContext) {
 						continue;
 					}
 
-					// ── 2.c Punctuation/special splitting ───────────────────────────
+					// ── E) Punctuation/special splitting ───────────────────────────
 					if (text.length > 1 && [...text].every(ch => isEarcon(ch) || isSpecialChar(ch))) {
 						flush();
 						for (const ch of text) {
@@ -307,26 +420,21 @@ export function activate(context: vscode.ExtensionContext) {
 						continue;
 					}
 
-					// ── 2.d Earcon? ──────────────────────────────────────────────────
+					// ── F) Single-char earcon? ──────────────────────────────────────────────────
 					if (isEarcon(text)) {
 						flush();
 						actions.push({ kind: 'earcon', token: text, category });
 
-						// ── 2.e Special char? ───────────────────────────────────────────
+						// ── G) Single char Special? ───────────────────────────────────────────
 					} else if (isSpecialChar(text)) {
 						flush();
 						actions.push({ kind: 'special', token: text });
 
-						// ── 2.f Otherwise, accumulate for coalescing ────────────────────
+						// ── H) Otherwise, accumulate same category text ────────────────────
 					} else {
-						if (!buffer) {
-							buffer = text;
-							bufferCat = category;
-						}
-						else if (category === bufferCat) {
+						if (bufferCat === category) {
 							buffer += text;
-						}
-						else {
+						} else {
 							flush();
 							buffer = text;
 							bufferCat = category;
@@ -335,20 +443,80 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 				flush();  // push any trailing text
 
-				// 3) Playback
+				// 1. Merge adjacent text actions to reduce speakToken calls
+				const merged: Action[] = [];
+				let accText = '';
+				let accCat: string | null = null;
+
 				for (const act of actions) {
 					if (act.kind === 'text') {
-						await speakToken(act.text, act.category);
-					} else if (act.kind === 'earcon') {
-						await speakToken(act.token, act.category);
+						if (accCat === act.category) {
+							// same category: append
+							accText += act.text;
+						} else {
+							// push previous
+							if (accText) merged.push({ kind: 'text', text: accText, category: accCat! });
+							accText = act.text;
+							accCat = act.category;
+						}
 					} else {
+						// flush any pending text
+						if (accText) {
+							merged.push({ kind: 'text', text: accText, category: accCat! });
+							accText = '';
+							accCat = null;
+						}
+						// push the non-text action
+						merged.push(act);
+					}
+				}
+				// final flush
+				if (accText) merged.push({ kind: 'text', text: accText, category: accCat! });
+
+				// 3) Pipeline TTS: kick off all generation immediately
+				const audioFiles = merged.map(act => {
+					if (act.kind === 'earcon') {
+						// earcon WAV is already on disk
+						return Promise.resolve(audioMap[act.token]);
+					} else if (act.kind === 'special') {
+						// map symbol → word, then generate
 						const word = specialCharMap[act.token];
-						await speakToken(word, 'text', { speaker: 'en_6' });
+						return genTokenAudio(word, 'text');
+					} else {
+						// generate TTS for text chunk
+						return genTokenAudio(act.text, act.category);
+					}
+				});
+
+				// 4) Play in order, overlapping gen of [i+1] with play of [i], abortable
+				if (audioFiles.length > 0) {
+					let prevGen = audioFiles[0];
+					for (let i = 0; i < audioFiles.length - 1; i++) {
+						if (signal.aborted) break;
+						const file = await prevGen;
+
+						if (signal.aborted) break;
+						prevGen = audioFiles[i + 1];
+						await playWave(file);
+					}
+					if (!signal.aborted) {
+						await playWave(await prevGen);
 					}
 				}
 
 			} catch (err: any) {
 				vscode.window.showErrorMessage(`readLineTokens failed: ${err.message}`);
+			}
+		})
+	);
+
+	// ── 3.4 stopReadLineTokens: Abort any in-flight speech ──────────────────────
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.stopReadLineTokens', () => {
+			if (currentAbortController) {
+				currentAbortController.abort();
+				currentAbortController = null;
+				vscode.window.showInformationMessage('LipCoder speech stopped');
 			}
 		})
 	);
