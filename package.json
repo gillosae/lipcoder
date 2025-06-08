@@ -16,13 +16,17 @@
     "Other"
   ],
   "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python",
     "onCommand:lipcoder.echoTest",
     "onCommand:lipcoder.whereAmI",
     "onCommand:lipcoder.readLineTokens",
     "onCommand:lipcoder.echoTest",
     "onCommand:lipcoder.whereAmI",
     "onCommand:lipcoder.readLineTokens",
-    "onCommand:lipcoder.stopReadLineTokens"
+    "onCommand:lipcoder.stopReadLineTokens",
+    "onCommand:lipcoder.toggleTypingSpeech"
   ],
   "main": "./dist/client/extension.js",
   "contributes": {
@@ -46,6 +50,10 @@
       {
         "command": "lipcoder.stopReadLineTokens",
         "title": "Stop LipCoder Speech"
+      },
+      {
+        "command": "lipcoder.toggleTypingSpeech",
+        "title": "LipCoder: Toggle Typing Speech"
       }
     ],
     "keybindings": [
@@ -67,8 +75,8 @@
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
-    "check-types": "tsc --noEmit",
-    "lint": "eslint src",
+    "check-types": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
+    "lint": "eslint client/src server/src shared/src",
     "test": "vscode-test",
     "build": "tsc -b shared && tsc -b server && tsc -b client",
     "watch:build": "tsc -b server --watch & tsc -b client --watch",

@@ -4,10 +4,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Speaker from 'speaker';
 import * as wav from 'wav';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as os from 'os';
 import { Readable } from 'stream';
+import { lipcoderLog } from './logger';
 
+function hookChildErrors(cp: ChildProcess) {
+    cp.on('error', err => {
+        lipcoderLog.appendLine(`🔊 player “error” event: ${err.stack || err}`);
+    });
+    if (cp.stderr) {
+        cp.stderr.on('data', chunk => {
+            lipcoderLog.appendLine(`🔊 player stderr: ${chunk.toString().trim()}`);
+        });
+    }
+    return cp;
+}
 
 // ── Preload Earcons into Memory ──────────────────────────────────────────────
 // List every token that uses a WAV earcon:
@@ -68,24 +80,24 @@ let sileroConfig: SileroConfig = {
     scriptPath: '',
     language: 'en',
     modelId: 'v3_en',
-    defaultSpeaker: 'en_2',
+    defaultSpeaker: 'en_3',
     sampleRate: 24000,
 };
 
 
 // ── Category → voice mapping ──────────────────────────────────────────────────
 const categoryVoiceMap: Record<string, string> = {
-    keyword: 'en_0',
-    type: 'en_1',
-    literal: 'en_2',
-    variable: 'en_3',
-    operator: 'en_4',
-    comment: 'en_5',
+    keyword: 'en_1',
+    type: 'en_2',
+    literal: 'en_4',
+    variable: 'en_5',
+    operator: 'en_6',
+    comment: 'en_7',
 };
 
 
 // ── Earcon directory & setup ──────────────────────────────────────────────────
-let audioDir = path.join(__dirname, 'audio');
+let audioDir = path.join(__dirname, 'audio', 'earcon');
 export function setAudioDirectory(dir: string) {
     audioDir = dir;
 }
@@ -194,38 +206,6 @@ namespace getTokenSound {
     export let doubleQuote: boolean;
 }
 
-// ── Play an earcon directly from the in-memory cache ──────────────────────────
-// export function playEarcon(token: string): Promise<void> {
-//     const wavPath = getTokenSound(token);
-//     const data = earconCache[token];
-
-//     // If we never preloaded it (or it's a quote that's mis-parsed), just fallback
-//     if (!data || !wavPath) {
-//         return wavPath ? playWave(wavPath) : Promise.resolve();
-//     }
-
-//     return new Promise((resolve, reject) => {
-//         let speaker: Speaker;
-//         try {
-//             // Try to stream from our preloaded PCM
-//             speaker = new Speaker(data.format);
-//         } catch (err) {
-//             // If Speaker ctor blows up, fallback
-//             return playWave(wavPath).then(resolve, reject);
-//         }
-
-//         // If streaming errors, fallback
-//         speaker.on('error', () => {
-//             playWave(wavPath).then(resolve, reject);
-//         });
-
-//         speaker.on('close', resolve);
-
-//         // Write and end will trigger playback
-//         speaker.write(data.pcm);
-//         speaker.end();
-//     });
-// }
 
 const earconRaw: Record<string, Buffer> = {};
 export function playEarcon(token: string): Promise<void> {
@@ -270,6 +250,7 @@ export async function speakToken(
     category?: string,
     opts?: { speaker?: string }
 ): Promise<void> {
+    console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
     // Earcon?
     if (isEarcon(token)) {
         return playEarcon(token);
@@ -386,42 +367,66 @@ function speakWithSilero(
 }
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
-export function playWave(filePath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
+let playQueue = Promise.resolve();
+
+export function playWave(filePath: string, opts?: { isEarcon?: boolean; rate?: number }): Promise<void> {
+    playQueue = playQueue.then(() => new Promise<void>((resolve, reject) => {
         const fileStream = fs.createReadStream(filePath);
         const reader = new wav.Reader();
 
         let fallback = false;
         function doFallback(err: any) {
+            lipcoderLog.appendLine(`🛑 wav-stream error: ${err.stack || err}`);
+
             if (fallback) return;
             fallback = true;
-            // cleanup
+
+            // Clean up the failed stream
             reader.removeAllListeners();
             fileStream.unpipe(reader);
             fileStream.destroy();
 
-            // spawn external player as before
             let cmd: string, args: string[];
             if (process.platform === 'darwin') {
-                cmd = 'afplay'; args = [filePath];
+                // Use built-in afplay on macOS
+                cmd = 'afplay';
+                args = [filePath];
             } else if (process.platform === 'win32') {
+                // Use PowerShell SoundPlayer on Windows
                 cmd = 'powershell';
                 args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
+            } else if (process.platform === 'linux') {
+                // Prefer `play` (SoX) on Linux if installed
+                cmd = 'play';
+                args = [filePath];
             } else {
-                cmd = 'aplay'; args = [filePath];
+                // Fallback to aplay
+                cmd = 'aplay';
+                args = [filePath];
             }
-            const p = spawn(cmd, args, { stdio: 'ignore' });
-            p.on('error', reject);
+            const p = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
             p.on('close', code => code === 0 ? resolve() : reject(new Error(`fallback player ${code}`)));
         }
 
-        // Primary path: in-process streaming
         reader.on('format', (format: any) => {
+            lipcoderLog.appendLine(`🔊 got format: ${JSON.stringify(format)}`);
             try {
-                const speaker = new Speaker(format);
+                const isEarcon = opts?.isEarcon ?? false;
+                const adjustedFormat = { ...format };
+
+                // Speed up earcons by increasing sampleRate
+                if (isEarcon) {
+                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * 1.8);
+                }
+
+                const speaker = new Speaker(adjustedFormat);
                 reader.pipe(speaker);
                 speaker.on('close', resolve);
-                speaker.on('error', reject);
+                speaker.on('error', err => {
+                    // Log speaker-level errors
+                    lipcoderLog.appendLine(`🛑 Speaker error: ${err.stack || err}`);
+                    reject(err);
+                });
             } catch (err) {
                 doFallback(err);
             }
@@ -430,7 +435,9 @@ export function playWave(filePath: string): Promise<void> {
         reader.on('error', doFallback);
         fileStream.on('error', doFallback);
         fileStream.pipe(reader);
-    });
+    }));
+
+    return playQueue;
 }
 
 // ── (Unused) Tone generator ───────────────────────────────────────────────────
