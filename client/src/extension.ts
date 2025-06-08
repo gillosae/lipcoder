@@ -644,6 +644,31 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	vscode.window.onDidChangeTextEditorSelection(e => {
+		const uri = e.textEditor.document.uri.toString();
+		// just look at the primary cursor position:
+		const lineNum = e.selections[0].start.line;
+		const lineText = e.textEditor.document.lineAt(lineNum).text;
+		// count spaces or tabs:
+		const leading = (lineText.match(/^\s*/)?.[0] || '');
+		// convert to indent units (floor of spaces/tabSize or 1 char per \t):
+		const units = leading[0] === '\t'
+			? Math.min(leading.length, MAX_INDENT_UNITS)
+			: Math.min(Math.floor(leading.length / tabSize), MAX_INDENT_UNITS);
+
+		indentLevels.set(uri, units);
+	});
+
+	// keep a simple per‐document indent counter
+	const indentLevels: Map<string, number> = new Map();
+	const MAX_INDENT_UNITS = 5; // maximum nesting
+	const MIN_INDENT_UNITS = 0;
+
+	const editor = vscode.window.activeTextEditor!;
+	const tabSize = typeof editor.options.tabSize === 'number'
+		? editor.options.tabSize
+		: 4;  // fallback if somehow not a number
+
 	vscode.workspace.onDidChangeTextDocument(async (event) => {
 		if (!typingSpeechEnabled) return;
 		const editor = vscode.window.activeTextEditor;
@@ -652,38 +677,111 @@ export async function activate(context: vscode.ExtensionContext) {
 		const changes = event.contentChanges;
 		if (changes.length === 0) return;
 
+		const MAX_UNITS = 5;
+		const MIN_UNITS = 0;
+
+
 		for (const change of changes) {
-			// 1) ENTER key → choose enter.wav or enter2.wav on syntax error
-			if (change.text === '\n') {
+			console.log('⟶ change.text:', JSON.stringify(change.text),
+				'rangeLength:', change.rangeLength,
+				'startChar:', change.range.start.character);
+
+			const uri = event.document.uri.toString();
+
+			// ── 1) ENTER FIRST: if *any* change is a newline, play it and bail ─────────
+			// const enterChange = changes.find(c => c.text === '\n');
+			if (changes.some(c => c.text === '\n')) {
 				stopPlayback();
 
-				const uriKey = event.document.uri.toString();
-				const lineIdx = change.range.start.line;
-				const sevMap = diagCache.get(uriKey) || {};
-				const sev = sevMap[lineIdx] ?? vscode.DiagnosticSeverity.Hint;
-
-				// map severities to your four files:
+				// pick the right enter sound
+				const enterLine = changes.find(c => c.text === '\n')!.range.start.line;
+				const sevMap = diagCache.get(uri) || {};
+				const sev = sevMap[enterLine] ?? vscode.DiagnosticSeverity.Hint;
 				const fileMap = {
 					[vscode.DiagnosticSeverity.Error]: 'enter2.wav',
 					[vscode.DiagnosticSeverity.Warning]: 'enter2.wav',
 					[vscode.DiagnosticSeverity.Information]: 'enter2.wav',
 					[vscode.DiagnosticSeverity.Hint]: 'enter.wav',
 				} as const;
+				const enterFile = path.join(audioDir, 'earcon', fileMap[sev]);
+				await playWave(enterFile, { isEarcon: true });
 
-				const earconFile = path.join(audioDir, 'earcon', fileMap[sev]);
-				await playWave(earconFile, { isEarcon: true });
-				continue;
+				// reset indent state so the following auto-indent spaces look fresh
+				indentLevels.set(uri, 0);
+
+				return;   // <<< bail out before indent logic
 			}
 
-			// 2) BACKSPACE → single‐char deletion
+			// ── 2) Now handle indent / de-indent in one pass ─────────────────────────────
+			// Get the *raw* old indent (could be > MAX_UNITS)
+			const oldRaw = indentLevels.get(uri) ?? 0;
+			const lineNum = event.contentChanges[0].range.start.line;
+			const lineText = event.document.lineAt(lineNum).text;
+			const leading = (lineText.match(/^\s*/)?.[0] || '');
+			const rawUnits = Math.floor(leading.length / tabSize);
+
+			if (rawUnits > oldRaw) {
+				// indent
+				if (rawUnits > MAX_UNITS) {
+					await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS - 1}.wav`), { isEarcon: true });
+				} else {
+					await playWave(path.join(audioDir, 'earcon', `indent_${rawUnits - 1}.wav`), { isEarcon: true });
+				}
+			}
+			else if (rawUnits < oldRaw) {
+				// de-indent
+				if (rawUnits >= MAX_UNITS) {
+					await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS}.wav`), { isEarcon: true });
+				} else {
+					const idx = rawUnits === 0 ? 9 : 9 - rawUnits;
+					await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+				}
+			}
+
+
+			// // indent
+			// if (rawUnits > oldRaw) {
+			// 	if (rawUnits > MAX_UNITS) {
+			// 		// you’ve just gone past max → play indent_4.wav
+			// 		await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS - 1}.wav`), { isEarcon: true });
+			// 		indentLevels.set(uri, rawUnits);
+			// 	} else {
+			// 		// normal indent: 1→indent_0.wav, 2→indent_1.wav, …, 5→indent_4.wav
+			// 		const idx = rawUnits - 1;
+			// 		await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+			// 		indentLevels.set(uri, rawUnits);
+			// 	}
+			// }
+			// // de-indent
+			// else if (rawUnits < oldRaw) {
+			// 	if (rawUnits >= MAX_UNITS) {
+			// 		// you deleted but you’re still ≥ max → play indent_5.wav
+			// 		await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS}.wav`), { isEarcon: true });
+			// 		indentLevels.set(uri, rawUnits);
+			// 	} else {
+			// 		// normal de-indent below max: mirror 0→9, 1→8, …, 4→5
+			// 		const idx = rawUnits === 0 ? 9 : 9 - rawUnits;
+			// 		await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+			// 		indentLevels.set(uri, rawUnits);
+			// 	}
+			// }
+			// // else rawUnits == oldRaw → no change
+
+			// Finally, store the *raw* units for next time
+			indentLevels.set(uri, rawUnits);
+
+
+			// ── 3) Finally, handle plain backspace (single-char delete) ───────────────
 			//    change.text==='' and exactly one character removed
-			if (change.text === '' && change.rangeLength === 1) {
-				stopPlayback();
-				await playWave(path.join(audioDir, 'earcon', 'backspace.wav'), { isEarcon: true });
-				continue;
+			for (const change of changes) {
+				if (change.text === '' && change.rangeLength === 1) {
+					stopPlayback();
+					await playWave(path.join(audioDir, 'earcon', 'backspace.wav'), { isEarcon: true });
+					break;
+				}
 			}
 
-			// 3) Otherwise, single‐char logic:
+			// 4) Otherwise, single‐char logic:
 			const char = change.text;
 			if (char.length !== 1) continue;
 

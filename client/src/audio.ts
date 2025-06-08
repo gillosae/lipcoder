@@ -372,7 +372,40 @@ function speakWithSilero(
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
 let playQueue = Promise.resolve();
 
-export function playWave(filePath: string, opts?: { isEarcon?: boolean; rate?: number }): Promise<void> {
+export function playWave(
+    filePath: string,
+    opts?: { isEarcon?: boolean; rate?: number }
+): Promise<void> {
+    // 1) If this is an earcon, bypass wav.Reader completely
+    if (opts?.isEarcon) {
+        let cmd: string, args: string[];
+        if (process.platform === 'darwin') {
+            cmd = 'afplay';
+            args = [filePath];
+        } else if (process.platform === 'win32') {
+            cmd = 'powershell';
+            args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
+        } else if (process.platform === 'linux') {
+            cmd = 'play';
+            args = [filePath];
+        } else {
+            cmd = 'aplay';
+            args = [filePath];
+        }
+
+        // spawn and return that process
+        const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+        return new Promise((resolve, reject) => {
+            currentFallback = cp;
+            cp.on('close', code => {
+                currentFallback = null;
+                if (code === 0 || code === null) resolve();
+                else reject(new Error(`fallback player ${code}`));
+            });
+        });
+    }
+
+    // 2) Otherwise, your existing wav.Reader → Speaker logic…
     playQueue = playQueue.then(() => new Promise<void>((resolve, reject) => {
         const fileStream = fs.createReadStream(filePath);
         const reader = new wav.Reader();
