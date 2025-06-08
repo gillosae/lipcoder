@@ -1,12 +1,48 @@
 // client/src/audio.ts
 
-import Speaker from 'speaker';
-import { Readable } from 'stream';
-import { spawn } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import Speaker from 'speaker';
 import * as wav from 'wav';
+import { spawn } from 'child_process';
+import * as os from 'os';
+import { Readable } from 'stream';
+
+
+// ── Preload Earcons into Memory ──────────────────────────────────────────────
+// List every token that uses a WAV earcon:
+const earconTokens = [
+    ' ', "'", '"',
+    '{', '}', '<', '>', '[', ']', '(', ')',
+    ',', ';', '/', '.', '-', ':', //'_', 
+];
+
+// Cache for each token: { format, pcmBuffer }
+interface EarconData { format: any; pcm: Buffer }
+const earconCache: Record<string, EarconData> = {};
+
+/** Decode every earcon WAV once and stash its PCM + format. */
+export async function preloadEarcons() {
+    await Promise.all(earconTokens.map(token => {
+        const file = getTokenSound(token);
+        if (!file) return Promise.resolve();
+        return new Promise<void>((resolve, reject) => {
+            const reader = new wav.Reader();
+            const bufs: Buffer[] = [];
+            let fmt: any;
+
+            reader.on('format', f => { fmt = f; });
+            reader.on('data', d => bufs.push(d));
+            reader.on('end', () => {
+                earconCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
+                resolve();
+            });
+            reader.on('error', reject);
+
+            fs.createReadStream(file).pipe(reader);
+        });
+    }));
+}
 
 
 // ── TTS Backends & Config ─────────────────────────────────────────────────────
@@ -47,6 +83,7 @@ const categoryVoiceMap: Record<string, string> = {
     comment: 'en_5',
 };
 
+
 // ── Earcon directory & setup ──────────────────────────────────────────────────
 let audioDir = path.join(__dirname, 'audio');
 export function setAudioDirectory(dir: string) {
@@ -65,7 +102,6 @@ export function setBackend(
 }
 
 // ── Generate (but don’t play) audio for a token ───────────────────────────────
-// client/src/audio.ts
 export async function genTokenAudio(
     token: string,
     category?: string,
@@ -120,32 +156,6 @@ export async function genTokenAudio(
     return outFile;
 }
 
-// ── Speak a token (generate + play) ───────────────────────────────────────────
-export async function speakToken(
-    token: string,
-    category?: string,
-    opts?: { speaker?: string }
-): Promise<void> {
-    // Earcon?
-    const wav = getTokenSound(token);
-    if (wav) {
-        return playWave(wav);
-    }
-    // Skip blank
-    if (!token.trim()) {
-        return;
-    }
-    // Choose voice
-    const speakerName =
-        opts?.speaker
-        ?? (category && categoryVoiceMap[category])
-        ?? sileroConfig.defaultSpeaker!;
-
-    // Generate async file, then play it
-    const filePath = await genTokenAudio(token, speakerName);
-    return playWave(filePath);
-}
-
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
 function getTokenSound(token: string): string | null {
     if (token === ' ') {
@@ -171,7 +181,7 @@ function getTokenSound(token: string): string | null {
         '[': 'squarebracket.wav', ']': 'squarebracket2.wav',
         '(': 'parenthesis.wav', ')': 'parenthesis2.wav',
         ',': 'comma.wav', ';': 'semicolon.wav',
-        '/': 'slash.wav', '_': 'underbar.wav',
+        '/': 'slash.wav', // '_': 'underbar.wav',
         '.': 'dot.wav', ':': 'colon.wav', '-': 'bar.wav',
     };
     if (map[token]) {
@@ -183,6 +193,102 @@ namespace getTokenSound {
     export let singleQuote: boolean;
     export let doubleQuote: boolean;
 }
+
+// ── Play an earcon directly from the in-memory cache ──────────────────────────
+// export function playEarcon(token: string): Promise<void> {
+//     const wavPath = getTokenSound(token);
+//     const data = earconCache[token];
+
+//     // If we never preloaded it (or it's a quote that's mis-parsed), just fallback
+//     if (!data || !wavPath) {
+//         return wavPath ? playWave(wavPath) : Promise.resolve();
+//     }
+
+//     return new Promise((resolve, reject) => {
+//         let speaker: Speaker;
+//         try {
+//             // Try to stream from our preloaded PCM
+//             speaker = new Speaker(data.format);
+//         } catch (err) {
+//             // If Speaker ctor blows up, fallback
+//             return playWave(wavPath).then(resolve, reject);
+//         }
+
+//         // If streaming errors, fallback
+//         speaker.on('error', () => {
+//             playWave(wavPath).then(resolve, reject);
+//         });
+
+//         speaker.on('close', resolve);
+
+//         // Write and end will trigger playback
+//         speaker.write(data.pcm);
+//         speaker.end();
+//     });
+// }
+
+const earconRaw: Record<string, Buffer> = {};
+export function playEarcon(token: string): Promise<void> {
+    const file = getTokenSound(token);
+    if (!file) {
+        // no earcon mapped
+        return Promise.resolve();
+    }
+
+    // lazy-load the raw file once
+    if (!earconRaw[token]) {
+        earconRaw[token] = fs.readFileSync(file);
+    }
+    const buf = earconRaw[token];
+
+    // assume 44-byte header, then PCM16LE mono at sileroConfig.sampleRate
+    const pcm = buf.slice(44);
+    const fmt = {
+        channels: 1,
+        bitDepth: 16,
+        sampleRate: sileroConfig.sampleRate,
+    };
+
+    return new Promise((resolve, reject) => {
+        const speaker = new Speaker(fmt);
+        speaker.on('error', reject);
+        speaker.on('close', resolve);
+        speaker.write(pcm);
+        speaker.end();
+    });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+/** Returns true if we have a WAV earcon for this single-character token */
+function isEarcon(token: string): boolean {
+    return getTokenSound(token) !== null;
+}
+
+// ── Speak a token (generate + play) ───────────────────────────────────────────
+export async function speakToken(
+    token: string,
+    category?: string,
+    opts?: { speaker?: string }
+): Promise<void> {
+    // Earcon?
+    if (isEarcon(token)) {
+        return playEarcon(token);
+    }
+    // Skip blank
+    if (!token.trim()) {
+        return;
+    }
+    // Choose voice
+    const speakerName =
+        opts?.speaker
+        ?? (category && categoryVoiceMap[category])
+        ?? sileroConfig.defaultSpeaker!;
+
+    // Generate async file, then play it
+    const filePath = await genTokenAudio(token, speakerName);
+    return playWave(filePath);
+}
+
 
 
 // ── eSpeak TTS ─────────────────────────────────────────────────────────────────

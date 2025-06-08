@@ -77,7 +77,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		// '.': path.join(extRoot, 'client', 'src', 'audio', 'dot.wav'),
 		';': path.join(extRoot, 'client', 'src', 'audio', 'semicolon.wav'),
 		'/': path.join(extRoot, 'client', 'src', 'audio', 'slash.wav'),
-		'_': path.join(extRoot, 'client', 'src', 'audio', 'underbar.wav'),
+		// '_': path.join(extRoot, 'client', 'src', 'audio', 'underbar.wav'),
 		'-': path.join(extRoot, 'client', 'src', 'audio', 'bar.wav'),
 		':': path.join(extRoot, 'client', 'src', 'audio', 'column.wav'),
 	};
@@ -107,6 +107,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		'\\': 'backslash',
 		'.': 'dot',
 		',': 'comma',
+		'_': 'underbar',
 		// ─── new digit mappings ──────────────────────────────────────────
 		'0': 'zero',
 		'1': 'one',
@@ -124,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		'c': 'see',
 		'd': 'dee',
 		'e': 'ee',
-		'f': 'ef',
+		'f': 'eff',
 		'g': 'gee',
 		'h': 'aitch',
 		'i': 'eye',
@@ -311,9 +312,9 @@ export async function activate(context: vscode.ExtensionContext) {
 				}
 
 				for (const { text, category } of tokens) {
-					// ── A) Bypass comment (and string) tokens ──────────────────────────────
-					if (category === 'comment' || category === 'string') {
-						// treat the entire comment/string as plain text
+					// ── A) Comments stay whole, but STRING LITERALS get quote-earcons ────
+					if (category === 'comment') {
+						// comments: accumulate as before
 						if (bufferCat === category) {
 							buffer += text;
 						} else {
@@ -321,6 +322,22 @@ export async function activate(context: vscode.ExtensionContext) {
 							buffer = text;
 							bufferCat = category;
 						}
+						continue;
+					}
+					if (category === 'string') {
+						flush();
+						// assume text starts+ends with same quote char
+						const delim = text[0];
+						const content = text.slice(1, -1);
+
+						// 1) opening quote earcon
+						actions.push({ kind: 'earcon', token: delim, category });
+						// 2) inner content (may be empty)
+						if (content) {
+							actions.push({ kind: 'text', text: content, category });
+						}
+						// 3) closing quote earcon (toggle sound on second call via audio.ts)
+						actions.push({ kind: 'earcon', token: delim, category });
 						continue;
 					}
 
@@ -350,7 +367,8 @@ export async function activate(context: vscode.ExtensionContext) {
 						for (const part of text.split(/(_)/)) {
 							if (!part) continue;
 							if (part === '_') {
-								actions.push({ kind: 'earcon', token: '_', category });
+								// actions.push({ kind: 'earcon', token: '_', category });
+								actions.push({ kind: 'special', token: '_' });
 							} else {
 								// chunk words longer than 2, letter-by-letter else
 								if (part.length <= 2) {
