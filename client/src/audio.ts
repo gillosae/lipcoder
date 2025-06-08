@@ -9,6 +9,9 @@ import * as os from 'os';
 import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
 
+let currentSpeaker: Speaker | null = null;
+let currentFallback: ChildProcess | null = null;
+
 function hookChildErrors(cp: ChildProcess) {
     cp.on('error', err => {
         lipcoderLog.appendLine(`🔊 player “error” event: ${err.stack || err}`);
@@ -405,7 +408,20 @@ export function playWave(filePath: string, opts?: { isEarcon?: boolean; rate?: n
                 args = [filePath];
             }
             const p = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-            p.on('close', code => code === 0 ? resolve() : reject(new Error(`fallback player ${code}`)));
+            currentFallback = p;
+
+            p.on('close', (code) => {
+                // always clear the tracked process
+                currentFallback = null;
+
+                // code === 0  → normal finish
+                // code === null → was killed by stopPlayback()
+                if (code === 0 || code === null) {
+                    resolve();
+                } else {
+                    reject(new Error(`fallback player ${code}`));
+                }
+            });
         }
 
         reader.on('format', (format: any) => {
@@ -416,10 +432,16 @@ export function playWave(filePath: string, opts?: { isEarcon?: boolean; rate?: n
 
                 // Speed up earcons by increasing sampleRate
                 if (isEarcon) {
-                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * 1.8);
+                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * 2.4);
                 }
 
+                // ── Abort any previous playback ──────────────────────────────
+                if (currentSpeaker) { try { currentSpeaker.end() } catch { }; currentSpeaker = null; }
+                if (currentFallback) { try { currentFallback.kill() } catch { }; currentFallback = null; }
+                // ── Now start the new speaker instance ───────────────────────
                 const speaker = new Speaker(adjustedFormat);
+                currentSpeaker = speaker;
+
                 reader.pipe(speaker);
                 speaker.on('close', resolve);
                 speaker.on('error', err => {
@@ -467,4 +489,18 @@ export function generateTone(
         speaker.on('close', resolve);
         speaker.on('error', reject);
     });
+}
+
+/**
+ * Immediately aborts any in‐flight audio (earcon or fallback).
+ */
+export function stopPlayback(): void {
+    if (currentSpeaker) {
+        try { currentSpeaker.end(); } catch { }
+        currentSpeaker = null;
+    }
+    if (currentFallback) {
+        try { currentFallback.kill(); } catch { }
+        currentFallback = null;
+    }
 }

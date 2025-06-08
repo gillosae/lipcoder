@@ -1,5 +1,3 @@
-// client/src/extension.ts
-
 import * as vscode from 'vscode';
 import {
 	LanguageClient,
@@ -16,12 +14,17 @@ import {
 	speakToken,
 	setAudioDirectory,
 	genTokenAudio,
-	playWave
+	playWave,
+	stopPlayback
 } from './audio';
 import { lipcoderLog } from './logger';
 import { createAudioMap, specialCharMap } from './mapping';
 
 let typingSpeechEnabled = true; // global flag to control typing speech
+
+function delay(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export async function activate(context: vscode.ExtensionContext) {
 	// ── 0) TTS setup ───────────────────────────────────────────────────────────────
@@ -86,7 +89,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		documentSelector: [
 			{ scheme: 'file', language: 'javascript' },
 			{ scheme: 'file', language: 'typescript' },
-			{ scheme: 'file', language: 'python' },
+			// { scheme: 'file', language: 'python' },
 		],
 		synchronize: {
 			fileEvents: vscode.workspace.createFileSystemWatcher('**/*'),
@@ -621,9 +624,28 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	interface LineSeverityMap { [line: number]: vscode.DiagnosticSeverity }
+	const diagCache: Map<string /* uri */, LineSeverityMap> = new Map();
+
+	vscode.languages.onDidChangeDiagnostics(e => {
+		for (const uri of e.uris) {
+			const all = vscode.languages.getDiagnostics(uri)
+				.filter(d => d.source === 'Pylance');
+			const lineMap: LineSeverityMap = {};
+			for (const d of all) {
+				const ln = d.range.start.line;
+				// pick highest‐priority (Error < Warning < Info < Hint)
+				lineMap[ln] = Math.min(
+					lineMap[ln] ?? vscode.DiagnosticSeverity.Hint,
+					d.severity
+				);
+			}
+			diagCache.set(uri.toString(), lineMap);
+		}
+	});
+
 	vscode.workspace.onDidChangeTextDocument(async (event) => {
 		if (!typingSpeechEnabled) return;
-
 		const editor = vscode.window.activeTextEditor;
 		if (!editor || event.document !== editor.document) return;
 
@@ -631,10 +653,41 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (changes.length === 0) return;
 
 		for (const change of changes) {
-			const text = change.text;
-			if (text.length !== 1) continue;
+			// 1) ENTER key → choose enter.wav or enter2.wav on syntax error
+			if (change.text === '\n') {
+				stopPlayback();
 
-			const char = text;
+				const uriKey = event.document.uri.toString();
+				const lineIdx = change.range.start.line;
+				const sevMap = diagCache.get(uriKey) || {};
+				const sev = sevMap[lineIdx] ?? vscode.DiagnosticSeverity.Hint;
+
+				// map severities to your four files:
+				const fileMap = {
+					[vscode.DiagnosticSeverity.Error]: 'enter2.wav',
+					[vscode.DiagnosticSeverity.Warning]: 'enter2.wav',
+					[vscode.DiagnosticSeverity.Information]: 'enter2.wav',
+					[vscode.DiagnosticSeverity.Hint]: 'enter.wav',
+				} as const;
+
+				const earconFile = path.join(audioDir, 'earcon', fileMap[sev]);
+				await playWave(earconFile, { isEarcon: true });
+				continue;
+			}
+
+			// 2) BACKSPACE → single‐char deletion
+			//    change.text==='' and exactly one character removed
+			if (change.text === '' && change.rangeLength === 1) {
+				stopPlayback();
+				await playWave(path.join(audioDir, 'earcon', 'backspace.wav'), { isEarcon: true });
+				continue;
+			}
+
+			// 3) Otherwise, single‐char logic:
+			const char = change.text;
+			if (char.length !== 1) continue;
+
+			stopPlayback();
 
 			try {
 				if (audioMap[char]) {
