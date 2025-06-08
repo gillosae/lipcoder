@@ -15,7 +15,11 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:lipcoder.echoTest",
+    "onCommand:lipcoder.whereAmI",
+    "onCommand:lipcoder.readLineTokens"
+  ],
   "main": "./dist/client/extension.js",
   "contributes": {
     "commands": [

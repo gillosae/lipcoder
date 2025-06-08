@@ -1,67 +1,125 @@
+#!/usr/bin/env python3
 import argparse
 
 import soundfile as sf
 import torch
 
 
-def load_local_model(model_path: str, device):
-    """
-    Given a path to a TorchScript TTS model that already includes the vocoder,
-    load it on `device`. Assumes the model is saved with TorchScript.
-    """
-    model = torch.jit.load(model_path, map_location=device)
-    model.eval()
-    return model
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Run Silero-TTS inference from a local TorchScript checkpoint (v3+)."
+        description="Run Silero-TTS inference via Torch Hub and write a WAV file."
     )
     parser.add_argument(
-        "--model_path",
+        "--language",
+        type=str,
         required=True,
-        help="Path to the TorchScript TTS model that includes vocoder (e.g. v3_en.pt)",
+        help="Language code (e.g. 'en', 'ru', 'de').",
     )
     parser.add_argument(
-        "--speaker_id",
-        type=int,
-        default=0,
-        help="Integer speaker index (e.g. 0..N−1 for multi-speaker v3). Use model.available_speakers() to inspect.",
+        "--model_id",
+        type=str,
+        required=True,
+        help=(
+            "Silero model identifier (e.g. 'v3_en', 'v4_ru', 'v3_de'). "
+            "Check Silero’s repo for available models."
+        ),
+    )
+    parser.add_argument(
+        "--speaker",
+        type=str,
+        default=None,
+        help=(
+            "If the chosen model is multi-speaker (e.g. v3_en), pass a pseudo-speaker name "
+            "from `model.speakers`. For single-speaker v4 models, omit this."
+        ),
     )
     parser.add_argument(
         "--text",
+        type=str,
         required=True,
-        help='The text string to synthesize, e.g. "Hello, world!"',
+        help='The UTF-8 text to synthesize, e.g. "Hello, world!"',
     )
     parser.add_argument(
         "--output",
+        type=str,
         required=True,
-        help="Where to write the output WAV file (e.g. ./out.wav)",
+        help="Path to write the output WAV file (e.g. ./out.wav)",
     )
     parser.add_argument(
         "--sample_rate",
         type=int,
         default=24000,
-        help="Sample rate to synthesize at (v3 supports 8000/24000/48000; default=24000).",
+        help="Desired output sample rate: 8000, 24000, or 48000 (default=24000).",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Torch device to run on (e.g. 'cpu' or 'cuda').",
     )
     args = parser.parse_args()
 
-    # 1) Set device to CPU and limit threads
-    device = torch.device("cpu")
+    # 1) Determine device
+    if args.device.startswith("cuda") and torch.cuda.is_available():
+        device = torch.device(args.device)
+    else:
+        device = torch.device("cpu")
     torch.set_num_threads(4)
 
-    # 2) Load the Silero TTS model (which already contains the vocoder)
-    model = load_local_model(args.model_path, device)
-
-    # 3) Synthesize: model.apply_tts returns a 1-D FloatTensor of waveform samples
-    waveform_tensor = model.apply_tts(
-        text=args.text, speaker=args.speaker_id, sample_rate=args.sample_rate
+    # 2) Load Silero TTS from Torch Hub
+    print(f"[silero_tts_infer] Loading Silero {args.model_id} on {device}…")
+    hub_return = torch.hub.load(
+        repo_or_dir="snakers4/silero-models",
+        model="silero_tts",
+        language=args.language,
+        speaker=args.model_id,
+        device=str(device),
+        jit=False,  # get the Python version (not TorchScript)
     )
 
-    # 4) Save as WAV
-    sf.write(args.output, waveform_tensor.cpu().numpy(), args.sample_rate)
-    print(f"Saved synthesized audio to: {args.output}")
+    if not (isinstance(hub_return, tuple) and len(hub_return) >= 2):
+        raise RuntimeError(
+            f"Unexpected return from torch.hub.load for '{args.model_id}': {hub_return!r}\n"
+            "Expected at least two items: (model, example_text)."
+        )
+
+    silero_model, _ = hub_return[0], hub_return[1]
+
+    # 3) If multi-speaker model, pick or validate `--speaker`
+    all_speakers = getattr(silero_model, "speakers", None)
+    if all_speakers:
+        print(f"  • Available pseudo-speakers: {all_speakers}")
+        if args.speaker is None:
+            chosen_speaker = all_speakers[0]
+            print(f"  • No --speaker passed; defaulting to '{chosen_speaker}'")
+        elif args.speaker not in all_speakers:
+            raise ValueError(
+                f"Speaker '{args.speaker}' not in {all_speakers}. "
+                "Use one of the exact names listed above."
+            )
+        else:
+            chosen_speaker = args.speaker
+    else:
+        chosen_speaker = args.speaker  # likely None for single‐speaker models
+
+    silero_model.to(device)
+    # silero_model.eval()
+
+    # 4) Synthesize
+    print(
+        f'[silero_tts_infer] Synthesizing ▶ "{args.text}" '
+        f"(model={args.model_id}, speaker={chosen_speaker}, sr={args.sample_rate})"
+    )
+    with torch.no_grad():
+        waveform: torch.Tensor = silero_model.apply_tts(
+            text=args.text,
+            speaker=chosen_speaker,
+            sample_rate=args.sample_rate,
+        )
+
+    # 5) Save as WAV
+    sf.write(args.output, waveform.cpu().numpy(), args.sample_rate)
+    print(f"[silero_tts_infer] ✔ Saved synthesized audio to: {args.output}")
 
 
 if __name__ == "__main__":

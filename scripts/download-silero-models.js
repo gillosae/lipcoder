@@ -1,55 +1,82 @@
 // scripts/download-silero-models.js
+
 const { mkdirSync, existsSync, createWriteStream } = require('fs');
 const { join } = require('path');
 const https = require('https');
+const { version } = require('../package.json');
 
 /**
- * Download a file from `url` and save it into `destPath`.
- * Automatically follows 301/302 redirects.
+ * Download a file from `url` (private repo). If GITHUB_TOKEN is set,
+ * send it as an Authorization header so GitHub will let you download
+ * private‐repo release assets.
  */
 function downloadFile(url, destPath) {
     return new Promise((resolve, reject) => {
-        https.get(url, (response) => {
-            // Handle redirect (GitHub Release assets typically 302 => S3 URL)
-            if (response.statusCode === 301 || response.statusCode === 302) {
-                const redirectUrl = response.headers.location;
-                if (!redirectUrl) {
-                    return reject(new Error(`Redirected without a Location header: ${url}`));
+        // Build request options, adding Authorization if GH_TOKEN is defined
+        const token = process.env.GH_TOKEN || '';
+        const options = new URL(url);
+        if (token) {
+            options.headers = {
+                'Authorization': `token ${token}`,
+                'User-Agent': 'node.js',
+            };
+        } else {
+            // It’s a private repo, so 404 is expected if no token
+            console.warn('Warning: GH_TOKEN is not set. Requests to private releases will fail.');
+        }
+
+        https
+            .get(options, (response) => {
+                const { statusCode, headers } = response;
+
+                // Follow any redirect (3xx → headers.location)
+                if (statusCode >= 300 && statusCode < 400 && headers.location) {
+                    console.log(`↪ Redirect ${statusCode} → ${headers.location}`);
+                    return downloadFile(headers.location, destPath)
+                        .then(resolve)
+                        .catch(reject);
                 }
-                // Recursively follow the redirect
-                return downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
-            }
 
-            if (response.statusCode !== 200) {
-                return reject(new Error(`Failed to download ${url} (status ${response.statusCode})`));
-            }
+                // If not a successful 200, it’s an error (either 404 or some other failure)
+                if (statusCode !== 200) {
+                    return reject(
+                        new Error(`Failed to download ${url} (status ${statusCode}). ` +
+                            `Are you sure GH_TOKEN is correct and has repo:read permissions?`)
+                    );
+                }
 
-            // Pipe data into the file
-            const fileStream = createWriteStream(destPath);
-            response.pipe(fileStream);
-            fileStream.on('finish', () => {
-                fileStream.close(resolve);
+                // statusCode === 200: write the file to disk
+                const fileStream = createWriteStream(destPath);
+                response.pipe(fileStream);
+                fileStream.on('finish', () => {
+                    fileStream.close(resolve);
+                });
+            })
+            .on('error', (err) => {
+                reject(err);
             });
-        }).on('error', (err) => {
-            reject(err);
-        });
     });
 }
 
 async function main() {
-    // 1) Define where you want the models to live (relative to repo root)
+    // 1) Build model directory: client/src/models/silero/en/
     const modelDir = join(__dirname, '..', 'client', 'src', 'models', 'silero', 'en');
     mkdirSync(modelDir, { recursive: true });
 
-    // 2) List of [filename, url] pairs
+    // 2) Use v${version} as the release tag (so if version="0.0.1", we download from v0.0.1)
+    const releaseTag = `v${version}`;
+
+    // 3) List of [filename, URL] pairs pointing at your private‐repo release assets
     const filesToDownload = [
         [
             'v3_en.pt',
-            'https://github.com/gillosae/lipcoder/releases/download/v1.0.0/v3_en.pt'
+            // `https://github.com/gillosae/lipcoder/releases/download/${releaseTag}/v3_en.pt`,
+            `https://models.silero.ai/models/tts/en/v3_en.pt`,
         ],
         [
             'v3_en_indic.pt',
-            'https://github.com/gillosae/lipcoder/releases/download/v1.0.0/v3_en_indic.pt'
+            // `https://github.com/gillosae/lipcoder/releases/download/${releaseTag}/v3_en_indic.pt`,
+            `https://models.silero.ai/models/tts/en/v3_en_indic.pt`,
         ],
     ];
 
