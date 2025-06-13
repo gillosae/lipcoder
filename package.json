@@ -16,6 +16,7 @@
     "Other"
   ],
   "activationEvents": [
+    "*",
     "onLanguage:javascript",
     "onLanguage:typescript",
     "onLanguage:python",

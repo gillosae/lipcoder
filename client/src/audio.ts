@@ -8,6 +8,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as os from 'os';
 import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
+import { specialCharMap } from './mapping';
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
@@ -36,27 +37,117 @@ const earconTokens = [
 interface EarconData { format: any; pcm: Buffer }
 const earconCache: Record<string, EarconData> = {};
 
-/** Decode every earcon WAV once and stash its PCM + format. */
-export async function preloadEarcons() {
-    await Promise.all(earconTokens.map(token => {
-        const file = getTokenSound(token);
-        if (!file) return Promise.resolve();
-        return new Promise<void>((resolve, reject) => {
-            const reader = new wav.Reader();
-            const bufs: Buffer[] = [];
-            let fmt: any;
+// Cache for special-word TTS audio (format + PCM)
+export const specialWordCache: Record<string, EarconData> = {};
+/** Decode each special-word TTS once and stash in memory */
+export async function preloadSpecialWords() {
+    const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+    const words = Object.values(specialCharMap);
+    const concurrency = 5;
+    lipcoderLog.appendLine(`[preloadSpecialWords] Starting preload of ${words.length} words with concurrency=${concurrency}`);
+    const startTotal = Date.now();
 
-            reader.on('format', f => { fmt = f; });
-            reader.on('data', d => bufs.push(d));
-            reader.on('end', () => {
-                earconCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
-                resolve();
+    let idx = 0;
+    async function worker() {
+        while (true) {
+            const word = words[idx++];
+            if (!word) break;
+            const t0 = Date.now();
+            const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            const file = path.join(cacheDir, `text_${sanitized}.wav`);
+            await new Promise<void>((resolve, reject) => {
+                const reader = new wav.Reader();
+                const bufs: Buffer[] = [];
+                let fmt: any;
+                reader.on('format', f => { fmt = f; });
+                reader.on('data', d => bufs.push(d));
+                reader.on('end', () => {
+                    specialWordCache[word] = { format: fmt, pcm: Buffer.concat(bufs) };
+                    resolve();
+                });
+                reader.on('error', reject);
+                fs.createReadStream(file).pipe(reader);
             });
-            reader.on('error', reject);
+            const elapsed = Date.now() - t0;
+            lipcoderLog.appendLine(`[preloadSpecialWords] Loaded "${word}" in ${elapsed}ms`);
+        }
+    }
 
-            fs.createReadStream(file).pipe(reader);
-        });
-    }));
+    // Kick off workers
+    const workers = Array.from({ length: concurrency }, () => worker());
+    await Promise.all(workers);
+
+    const totalElapsed = Date.now() - startTotal;
+    lipcoderLog.appendLine(`[preloadSpecialWords] Completed loading all words in ${totalElapsed}ms`);
+}
+/** Play a preloaded special-word from memory */
+export function playSpecial(word: string): Promise<void> {
+    lipcoderLog.appendLine(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
+    const entry = specialWordCache[word];
+    if (!entry) {
+        // fallback to file-based playback
+        lipcoderLog.appendLine(`[playSpecial] fallback to file-based playback for "${word}"`);
+        const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+        const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        const file = path.join(cacheDir, `text_${sanitized}.wav`);
+        lipcoderLog.appendLine(`[DEBUG playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
+        return playWave(file);
+    }
+    return new Promise((resolve, reject) => {
+        const speaker = new Speaker(entry.format);
+        speaker.on('error', reject);
+        speaker.on('close', resolve);
+        speaker.write(entry.pcm);
+        speaker.end();
+    });
+}
+
+/** Decode every earcon WAV once and stash its PCM + format. */
+// export async function preloadEarcons() {
+//     lipcoderLog.appendLine("Start preloadEarcons");
+//     await Promise.all(earconTokens.map(token => {
+//         const file = getTokenSound(token);
+//         console.log(file);
+//         if (!file) {
+//             console.log(`no "${file}`);
+//             return Promise.resolve();
+//         }
+//         return new Promise<void>((resolve, reject) => {
+//             const reader = new wav.Reader();
+//             const bufs: Buffer[] = [];
+//             let fmt: any;
+
+//             reader.on('format', f => { fmt = f; });
+//             reader.on('data', d => bufs.push(d));
+//             reader.on('end', () => {
+//                 earconCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
+//                 resolve();
+//             });
+//             reader.on('error', reject);
+
+//             fs.createReadStream(file).pipe(reader);
+//         });
+//     }));
+// }
+export async function preloadEarcons() {
+    lipcoderLog.appendLine("Start preloadEarcons (raw buffers)");
+    const start = Date.now();
+    for (const token of earconTokens) {
+        const file = getTokenSound(token);
+        if (!file) {
+            console.log(`no "${file}`);
+            return Promise.resolve();
+        }
+        try {
+            const buf = fs.readFileSync(file);
+            earconRaw[token] = buf;
+            lipcoderLog.appendLine(`  loaded "${token}" (${buf.length} bytes)`);
+        } catch (e) {
+            lipcoderLog.appendLine(`  failed to load "${token}": ${e}`);
+        }
+    }
+    const total = Date.now() - start;
+    lipcoderLog.appendLine(`ALL earcons loaded in ${total}ms`);
 }
 
 
@@ -101,6 +192,7 @@ const categoryVoiceMap: Record<string, string> = {
 
 // ── Earcon directory & setup ──────────────────────────────────────────────────
 let audioDir = path.join(__dirname, 'audio', 'earcon');
+const earconDir = path.join(audioDir, 'earcon');
 export function setAudioDirectory(dir: string) {
     audioDir = dir;
 }
@@ -122,8 +214,66 @@ export async function genTokenAudio(
     category?: string,
     opts?: { speaker?: string }
 ): Promise<string> {
+    lipcoderLog.appendLine(`[genTokenAudio] START token="${token}" category="${category}"`);
+    lipcoderLog.appendLine(`[DEBUG genTokenAudio] audioDir="${audioDir}"`);
+
+    // 0) Pre-generated keyword audio?
+    if (category && category.startsWith('keyword_')) {
+        const lang = category.split('_')[1];      // “python” or “typescript”
+        const filename = token.toLowerCase();     // match your saved filenames
+        const filePath = path.join(audioDir, lang, `${filename}.wav`);
+        lipcoderLog.appendLine(`[DEBUG genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
+        if (fs.existsSync(filePath)) {
+            lipcoderLog.appendLine(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
+            return filePath;  // skip TTS entirely
+        }
+    }
+
+    // 0.5) Cache multi-character tokens to avoid re-generating TTS repeatedly
+    const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+    if (token.length > 1) {
+        // sanitize the token to a filesystem-safe name
+        const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
+        lipcoderLog.appendLine(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
+        if (fs.existsSync(cachedFile)) {
+            lipcoderLog.appendLine(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
+            return cachedFile;
+        }
+        // generate and save to the cache
+        lipcoderLog.appendLine(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
+        const { pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
+        const speakerName =
+            opts?.speaker
+            ?? (category && categoryVoiceMap[category])
+            ?? sileroConfig.defaultSpeaker!;
+        const args = [
+            scriptPath,
+            '--language', language,
+            '--model_id', modelId,
+            '--speaker', speakerName,
+            '--text', token,
+            '--sample_rate', String(sampleRate),
+            '--output', cachedFile,
+        ];
+        await new Promise<void>((resolve, reject) => {
+            const proc = spawn(pythonExe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            let stderr = '';
+            proc.stderr?.on('data', c => stderr += c.toString());
+            proc.on('error', reject);
+            proc.on('close', code => {
+                if (code !== 0) reject(new Error(`Silero exited ${code}\n${stderr}`));
+                else resolve();
+            });
+        });
+        lipcoderLog.appendLine(`[genTokenAudio] generated new TTS to ${cachedFile}`);
+        return cachedFile;
+    }
+
     // 1) Earcon?
     const wav = getTokenSound(token);
+    lipcoderLog.appendLine(`[DEBUG getTokenSound] token="${token}", audioDir="${audioDir}"`);
     if (wav) return wav;
 
     // 2) Skip blanks
@@ -168,13 +318,14 @@ export async function genTokenAudio(
         });
     });
 
+    lipcoderLog.appendLine(`[genTokenAudio] generated new TTS to ${outFile}`);
     return outFile;
 }
 
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
 function getTokenSound(token: string): string | null {
     if (token === ' ') {
-        return path.join(audioDir, 'space.wav');
+        return path.join(earconDir, 'space.wav');
     }
     if (getTokenSound.singleQuote === undefined) {
         getTokenSound.singleQuote = true;
@@ -183,12 +334,12 @@ function getTokenSound(token: string): string | null {
     if (token === "'") {
         const file = getTokenSound.singleQuote ? 'quote.wav' : 'quote2.wav';
         getTokenSound.singleQuote = !getTokenSound.singleQuote;
-        return path.join(audioDir, file);
+        return path.join(earconDir, file);
     }
     if (token === '"') {
         const file = getTokenSound.doubleQuote ? 'bigquote.wav' : 'bigquote2.wav';
         getTokenSound.doubleQuote = !getTokenSound.doubleQuote;
-        return path.join(audioDir, file);
+        return path.join(earconDir, file);
     }
     const map: Record<string, string> = {
         '{': 'brace.wav', '}': 'brace2.wav',
@@ -200,7 +351,7 @@ function getTokenSound(token: string): string | null {
         '.': 'dot.wav', ':': 'colon.wav', '-': 'bar.wav',
     };
     if (map[token]) {
-        return path.join(audioDir, map[token]);
+        return path.join(earconDir, map[token]);
     }
     return null;
 }

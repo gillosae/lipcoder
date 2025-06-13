@@ -1,3 +1,5 @@
+import * as wav from 'wav';
+import { specialWordCache } from './audio';
 import * as vscode from 'vscode';
 import {
 	LanguageClient,
@@ -15,7 +17,10 @@ import {
 	setAudioDirectory,
 	genTokenAudio,
 	playWave,
-	stopPlayback
+	stopPlayback,
+	preloadEarcons,
+	preloadSpecialWords,
+	playSpecial
 } from './audio';
 import { lipcoderLog } from './logger';
 import { createAudioMap, specialCharMap } from './mapping';
@@ -27,6 +32,9 @@ function delay(ms: number): Promise<void> {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+	console.log('[extension] activate() called');
+	lipcoderLog.appendLine('[extension] activate() called');
+	vscode.window.showInformationMessage('LipCoder: activate() called');
 	// ── 0) TTS setup ───────────────────────────────────────────────────────────────
 
 	// Dynamically import the ESM word‐list package
@@ -50,6 +58,29 @@ export async function activate(context: vscode.ExtensionContext) {
 	const scriptPath = path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py');
 
 	setAudioDirectory(audioDir);
+	// ── DEBUG: verify packaging paths and contents ────────────────────────────
+	console.log('[DEBUG] extRoot =', extRoot);
+	console.log('[DEBUG] audioDir =', audioDir);
+	try {
+		const earconFiles = fs.readdirSync(path.join(audioDir, 'earcon'));
+		console.log('[DEBUG] earcon files =', earconFiles);
+		lipcoderLog.appendLine(`DEBUG: earcon files: ${earconFiles.join(', ')}`);
+	} catch (e) {
+		console.error('[DEBUG] failed to list earcon:', e);
+		lipcoderLog.appendLine(`DEBUG: failed to list earcon: ${e}`);
+	}
+	['python', 'typescript'].forEach(lang => {
+		const dir = path.join(audioDir, lang);
+		try {
+			const files = fs.readdirSync(dir).filter(f => f.endsWith('.wav'));
+			console.log(`[DEBUG] ${lang} WAV files =`, files);
+			lipcoderLog.appendLine(`DEBUG: ${lang} WAV files: ${files.join(', ')}`);
+		} catch (e) {
+			console.error(`[DEBUG] failed to list ${lang} WAVs:`, e);
+			lipcoderLog.appendLine(`DEBUG: failed to list ${lang} WAVs: ${e}`);
+		}
+	});
+	// ── end DEBUG ───────────────────────────────────────────────────────────────
 	setBackend(TTSBackend.Silero, {
 		pythonExe,
 		scriptPath,
@@ -60,6 +91,60 @@ export async function activate(context: vscode.ExtensionContext) {
 		// gap: 0,
 		// speed: 400
 	});
+
+	// ── 0.1) Pre-generate earcons into cache ────────────────────────────
+	await preloadEarcons();
+	// Kick off special-word TTS preload in background (non-blocking)
+	Promise.all(
+		Object.values(specialCharMap).map(word =>
+			genTokenAudio(word, 'text').catch(err =>
+				lipcoderLog.appendLine(`Preloading special TTS failed for "${word}": ${err}`)
+			)
+		)
+	).then(() => lipcoderLog.appendLine('Background special-word TTS preload initiated'));
+	// ── 0.2) Preload Python/TS keyword WAVs in batches (non-blocking) ─────────
+	// (async () => {
+	// 	const keywordDirs = ['python', 'typescript'];
+	// 	const concurrency = 5;
+	// 	for (const lang of keywordDirs) {
+	// 		const dir = path.join(extRoot, 'client', 'audio', lang);
+	// 		let files: string[];
+	// 		try {
+	// 			files = await fs.promises.readdir(dir);
+	// 		} catch (e) {
+	// 			lipcoderLog.appendLine(`[keyword preload] Failed to read dir ${dir}: ${e}`);
+	// 			continue;
+	// 		}
+	// 		let index = 0;
+	// 		async function worker() {
+	// 			while (index < files.length) {
+	// 				const file = files[index++];
+	// 				if (!file.endsWith('.wav')) continue;
+	// 				const token = file.replace(/\.wav$/, '');
+	// 				const wavPath = path.join(dir, file);
+	// 				try {
+	// 					const reader = new wav.Reader();
+	// 					const bufs: Buffer[] = [];
+	// 					let fmt: any;
+	// 					reader.on('format', (f: any) => fmt = f);
+	// 					reader.on('data', (d: Buffer) => bufs.push(d));
+	// 					await new Promise<void>((resolve, reject) => {
+	// 						reader.on('end', resolve);
+	// 						reader.on('error', reject);
+	// 						fs.createReadStream(wavPath).pipe(reader);
+	// 					});
+	// 					lipcoderLog.appendLine("oh");
+	// 					specialWordCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
+	// 				} catch (e) {
+	// 					lipcoderLog.appendLine(`[keyword preload] Failed loading ${wavPath}: ${e}`);
+	// 				}
+	// 			}
+	// 		}
+	// 		// Launch workers for this language
+	// 		Array.from({ length: concurrency }).map(() => worker());
+	// 	}
+	// 	lipcoderLog.appendLine('[keyword preload] Launched batch keyword WAV preloading');
+	// })();
 
 	// ── 1) Build the unified audioMap ─────────────────────────────────────────────
 	const audioMap = createAudioMap(context);
@@ -89,7 +174,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		documentSelector: [
 			{ scheme: 'file', language: 'javascript' },
 			{ scheme: 'file', language: 'typescript' },
-			// { scheme: 'file', language: 'python' },
+			{ scheme: 'file', language: 'python' },
 		],
 		synchronize: {
 			fileEvents: vscode.workspace.createFileSystemWatcher('**/*'),
@@ -115,10 +200,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.echoTest', async () => {
 			try {
+				lipcoderLog.appendLine('[echoTest] invoked');
 				const res = await client.sendRequest<{ text: string }>(
 					'lipcoder/echo',
 					{ text: 'hello' }
 				);
+				lipcoderLog.appendLine(`[echoTest] response: ${res.text}`);
 				vscode.window.showInformationMessage(res.text);
 			} catch (err) {
 				vscode.window.showErrorMessage(`EchoTest failed: ${err}`);
@@ -213,6 +300,13 @@ export async function activate(context: vscode.ExtensionContext) {
 				while (tokens.length > 0 && /^\s+$/.test(tokens[0].text)) {
 					tokens.shift();
 				}
+
+				// Determine file language for keyword audio
+				const docLang = editor.document.languageId === 'python' ? 'python' : 'typescript';
+				tokens = tokens.map(tok => ({
+					text: tok.text,
+					category: tok.category === 'keyword' ? `keyword_${docLang}` : tok.category
+				}));
 
 				// ── Merge any [word] "_" [word] sequences back into a single token ─────────
 				const mergedTokens: typeof tokens = [];
@@ -791,9 +885,9 @@ export async function activate(context: vscode.ExtensionContext) {
 				if (audioMap[char]) {
 					await playWave(audioMap[char], { isEarcon: true }); // ✅ mark as earcon to apply rate
 				} else if (specialCharMap[char]) {
+					stopPlayback();
 					const word = specialCharMap[char];
-					const path = await genTokenAudio(word, 'text');
-					await playWave(path);
+					await playSpecial(word);
 				} else if (/^[a-zA-Z]$/.test(char)) {
 					const path = audioMap[char.toLowerCase()];
 					if (path) await playWave(path);
@@ -809,4 +903,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
 	// LanguageClient disposal is handled automatically via context.subscriptions
+	console.log('[extension] activate() completed');
+	lipcoderLog.appendLine('[extension] activate() completed');
 }

@@ -45,7 +45,8 @@
   },
   "files": [
     "dist/**",
-    "audio/**"
+    "audio/**",
+    "client/audio/**"
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
