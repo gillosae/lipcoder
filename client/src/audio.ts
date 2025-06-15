@@ -91,7 +91,7 @@ export function playSpecial(word: string): Promise<void> {
         const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
         const file = path.join(cacheDir, `text_${sanitized}.wav`);
         lipcoderLog.appendLine(`[DEBUG playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
-        return playWave(file);
+        return playWave(file, { isEarcon: true });
     }
     return new Promise((resolve, reject) => {
         const speaker = new Speaker(entry.format);
@@ -192,7 +192,7 @@ const categoryVoiceMap: Record<string, string> = {
 
 // ── Earcon directory & setup ──────────────────────────────────────────────────
 let audioDir = path.join(__dirname, 'audio', 'earcon');
-const earconDir = path.join(audioDir, 'earcon');
+// const earconDir = path.join(audioDir, 'earcon');
 export function setAudioDirectory(dir: string) {
     audioDir = dir;
 }
@@ -325,7 +325,7 @@ export async function genTokenAudio(
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
 function getTokenSound(token: string): string | null {
     if (token === ' ') {
-        return path.join(earconDir, 'space.wav');
+        return path.join(audioDir, 'earcon', 'space.wav');
     }
     if (getTokenSound.singleQuote === undefined) {
         getTokenSound.singleQuote = true;
@@ -334,12 +334,12 @@ function getTokenSound(token: string): string | null {
     if (token === "'") {
         const file = getTokenSound.singleQuote ? 'quote.wav' : 'quote2.wav';
         getTokenSound.singleQuote = !getTokenSound.singleQuote;
-        return path.join(earconDir, file);
+        return path.join(audioDir, 'earcon', file);
     }
     if (token === '"') {
         const file = getTokenSound.doubleQuote ? 'bigquote.wav' : 'bigquote2.wav';
         getTokenSound.doubleQuote = !getTokenSound.doubleQuote;
-        return path.join(earconDir, file);
+        return path.join(audioDir, 'earcon', file);
     }
     const map: Record<string, string> = {
         '{': 'brace.wav', '}': 'brace2.wav',
@@ -351,7 +351,7 @@ function getTokenSound(token: string): string | null {
         '.': 'dot.wav', ':': 'colon.wav', '-': 'bar.wav',
     };
     if (map[token]) {
-        return path.join(earconDir, map[token]);
+        return path.join(audioDir, 'earcon', map[token]);
     }
     return null;
 }

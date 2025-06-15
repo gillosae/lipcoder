@@ -763,6 +763,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		? editor.options.tabSize
 		: 4;  // fallback if somehow not a number
 
+	// Flag to skip indent sound once after Enter
+	let skipNextIndent = false;
+
 	vscode.workspace.onDidChangeTextDocument(async (event) => {
 		if (!typingSpeechEnabled) return;
 		const editor = vscode.window.activeTextEditor;
@@ -783,12 +786,13 @@ export async function activate(context: vscode.ExtensionContext) {
 			const uri = event.document.uri.toString();
 
 			// ── 1) ENTER FIRST: if *any* change is a newline, play it and bail ─────────
-			// const enterChange = changes.find(c => c.text === '\n');
-			if (changes.some(c => c.text === '\n')) {
+			// Detect Enter even when auto-indent is inserted (e.g., '\n    ')
+			if (changes.some(c => c.text.startsWith('\n'))) {
 				stopPlayback();
 
 				// pick the right enter sound
-				const enterLine = changes.find(c => c.text === '\n')!.range.start.line;
+				const newlineChange = changes.find(c => c.text.startsWith('\n'))!;
+				const enterLine = newlineChange.range.start.line;
 				const sevMap = diagCache.get(uri) || {};
 				const sev = sevMap[enterLine] ?? vscode.DiagnosticSeverity.Hint;
 				const fileMap = {
@@ -802,67 +806,52 @@ export async function activate(context: vscode.ExtensionContext) {
 
 				// reset indent state so the following auto-indent spaces look fresh
 				indentLevels.set(uri, 0);
-
+				skipNextIndent = true;
 				return;   // <<< bail out before indent logic
 			}
 
-			// ── 2) Now handle indent / de-indent in one pass ─────────────────────────────
-			// Get the *raw* old indent (could be > MAX_UNITS)
+			// ── 2) Handle indent for Tab, Backspace, and auto-indents ─────────────────
 			const oldRaw = indentLevels.get(uri) ?? 0;
-			const lineNum = event.contentChanges[0].range.start.line;
+			const lineNum = changes[0].range.start.line;
 			const lineText = event.document.lineAt(lineNum).text;
 			const leading = (lineText.match(/^\s*/)?.[0] || '');
 			const rawUnits = Math.floor(leading.length / tabSize);
 
-			if (rawUnits > oldRaw) {
-				// indent
-				if (rawUnits > MAX_UNITS) {
-					await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS - 1}.wav`), { isEarcon: true });
-				} else {
-					await playWave(path.join(audioDir, 'earcon', `indent_${rawUnits - 1}.wav`), { isEarcon: true });
-				}
-			}
-			else if (rawUnits < oldRaw) {
-				// de-indent
-				if (rawUnits >= MAX_UNITS) {
-					await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS}.wav`), { isEarcon: true });
-				} else {
-					const idx = rawUnits === 0 ? 9 : 9 - rawUnits;
+			if (skipNextIndent) {
+				skipNextIndent = false;
+				indentLevels.set(uri, rawUnits);
+			} else {
+				const isBackspace = changes.some(c => c.text === '' && c.rangeLength === 1);
+				// detect Tab key when VSCode inserts literal '\t' or spaces equal to tabSize
+				const isTab = changes.some(c =>
+					c.text === '\t'
+					|| (tabSize > 0 && c.text === ' '.repeat(tabSize))
+				);
+
+				if (isTab) {
+					// Manual Tab: indent_0 → indent_4
+					const idx = rawUnits > 4 ? 4 : rawUnits;
 					await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+					indentLevels.set(uri, rawUnits);
+
+				} else if (isBackspace) {
+					// Manual Backspace: indent_5 → indent_9
+					const idx = rawUnits + 5 > 9 ? 9 : rawUnits + 5;
+					await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+					indentLevels.set(uri, rawUnits);
+
+				} else {
+					// Auto-indent: same as before
+					if (rawUnits > oldRaw) {
+						const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits - 1;
+						await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+					} else if (rawUnits < oldRaw) {
+						const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits;
+						await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+					}
+					indentLevels.set(uri, rawUnits);
 				}
 			}
-
-
-			// // indent
-			// if (rawUnits > oldRaw) {
-			// 	if (rawUnits > MAX_UNITS) {
-			// 		// you’ve just gone past max → play indent_4.wav
-			// 		await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS - 1}.wav`), { isEarcon: true });
-			// 		indentLevels.set(uri, rawUnits);
-			// 	} else {
-			// 		// normal indent: 1→indent_0.wav, 2→indent_1.wav, …, 5→indent_4.wav
-			// 		const idx = rawUnits - 1;
-			// 		await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
-			// 		indentLevels.set(uri, rawUnits);
-			// 	}
-			// }
-			// // de-indent
-			// else if (rawUnits < oldRaw) {
-			// 	if (rawUnits >= MAX_UNITS) {
-			// 		// you deleted but you’re still ≥ max → play indent_5.wav
-			// 		await playWave(path.join(audioDir, 'earcon', `indent_${MAX_UNITS}.wav`), { isEarcon: true });
-			// 		indentLevels.set(uri, rawUnits);
-			// 	} else {
-			// 		// normal de-indent below max: mirror 0→9, 1→8, …, 4→5
-			// 		const idx = rawUnits === 0 ? 9 : 9 - rawUnits;
-			// 		await playWave(path.join(audioDir, 'earcon', `indent_${idx}.wav`), { isEarcon: true });
-			// 		indentLevels.set(uri, rawUnits);
-			// 	}
-			// }
-			// // else rawUnits == oldRaw → no change
-
-			// Finally, store the *raw* units for next time
-			indentLevels.set(uri, rawUnits);
 
 
 			// ── 3) Finally, handle plain backspace (single-char delete) ───────────────
