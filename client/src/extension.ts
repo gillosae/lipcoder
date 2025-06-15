@@ -20,12 +20,15 @@ import {
 	stopPlayback,
 	preloadEarcons,
 	preloadSpecialWords,
-	playSpecial
+	playSpecial,
+	playSequence
 } from './audio';
 import { lipcoderLog } from './logger';
 import { createAudioMap, specialCharMap } from './mapping';
 
 let typingSpeechEnabled = true; // global flag to control typing speech
+
+let playSpeed: number = 1.4; // LipCoder playback speed multiplier (default 1.0×)
 
 function delay(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -92,66 +95,80 @@ export async function activate(context: vscode.ExtensionContext) {
 		// speed: 400
 	});
 
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.setPlaySpeed', async () => {
+			const input = await vscode.window.showInputBox({
+				prompt: 'Set LipCoder playback speed multiplier (e.g., 1.0 = normal, 1.5 = 50% faster)',
+				value: playSpeed.toString()
+			});
+			if (input !== undefined) {
+				const val = parseFloat(input);
+				if (!isNaN(val) && val > 0) {
+					playSpeed = val;
+					vscode.window.showInformationMessage(`LipCoder playback speed set to ${val}×`);
+				} else {
+					vscode.window.showErrorMessage('Invalid playback speed. Enter a positive number.');
+				}
+			}
+		})
+	);
+
 	// ── 0.1) Pre-generate earcons into cache ────────────────────────────
 	await preloadEarcons();
-	// Kick off special-word TTS preload in background (non-blocking)
-	Promise.all(
-		Object.values(specialCharMap).map(word =>
-			genTokenAudio(word, 'text').catch(err =>
-				lipcoderLog.appendLine(`Preloading special TTS failed for "${word}": ${err}`)
-			)
-		)
-	).then(() => lipcoderLog.appendLine('Background special-word TTS preload initiated'));
+	lipcoderLog.appendLine('[DEBUG] Starting special-word TTS preload');
+	await preloadSpecialWords();
+	lipcoderLog.appendLine('[DEBUG] Completed special-word TTS preload');
 	// ── 0.2) Preload Python/TS keyword WAVs in batches (non-blocking) ─────────
-	// (async () => {
-	// 	const keywordDirs = ['python', 'typescript'];
-	// 	const concurrency = 5;
-	// 	for (const lang of keywordDirs) {
-	// 		const dir = path.join(extRoot, 'client', 'audio', lang);
-	// 		let files: string[];
-	// 		try {
-	// 			files = await fs.promises.readdir(dir);
-	// 		} catch (e) {
-	// 			lipcoderLog.appendLine(`[keyword preload] Failed to read dir ${dir}: ${e}`);
-	// 			continue;
-	// 		}
-	// 		let index = 0;
-	// 		async function worker() {
-	// 			while (index < files.length) {
-	// 				const file = files[index++];
-	// 				if (!file.endsWith('.wav')) continue;
-	// 				const token = file.replace(/\.wav$/, '');
-	// 				const wavPath = path.join(dir, file);
-	// 				try {
-	// 					const reader = new wav.Reader();
-	// 					const bufs: Buffer[] = [];
-	// 					let fmt: any;
-	// 					reader.on('format', (f: any) => fmt = f);
-	// 					reader.on('data', (d: Buffer) => bufs.push(d));
-	// 					await new Promise<void>((resolve, reject) => {
-	// 						reader.on('end', resolve);
-	// 						reader.on('error', reject);
-	// 						fs.createReadStream(wavPath).pipe(reader);
-	// 					});
-	// 					lipcoderLog.appendLine("oh");
-	// 					specialWordCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
-	// 				} catch (e) {
-	// 					lipcoderLog.appendLine(`[keyword preload] Failed loading ${wavPath}: ${e}`);
-	// 				}
-	// 			}
-	// 		}
-	// 		// Launch workers for this language
-	// 		Array.from({ length: concurrency }).map(() => worker());
-	// 	}
-	// 	lipcoderLog.appendLine('[keyword preload] Launched batch keyword WAV preloading');
-	// })();
+	await (async () => {
+		const keywordDirs = ['python', 'typescript'];
+		const concurrency = 5;
+		for (const lang of keywordDirs) {
+			const dir = path.join(extRoot, 'client', 'audio', lang);
+			let files: string[];
+			try {
+				files = await fs.promises.readdir(dir);
+			} catch (e) {
+				lipcoderLog.appendLine(`[keyword preload] Failed to read dir ${dir}: ${e}`);
+				continue;
+			}
+			let index = 0;
+			async function worker() {
+				while (index < files.length) {
+					const file = files[index++];
+					if (!file.endsWith('.wav')) continue;
+					const token = file.replace(/\.wav$/, '');
+					const wavPath = path.join(dir, file);
+					try {
+						const reader = new wav.Reader();
+						const bufs: Buffer[] = [];
+						let fmt: any;
+						reader.on('format', (f: any) => fmt = f);
+						reader.on('data', (d: Buffer) => bufs.push(d));
+						await new Promise<void>((resolve, reject) => {
+							reader.on('end', resolve);
+							reader.on('error', reject);
+							fs.createReadStream(wavPath).pipe(reader);
+						});
+						specialWordCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
+					} catch (e) {
+						lipcoderLog.appendLine(`[keyword preload] Failed loading ${wavPath}: ${e}`);
+					}
+				}
+			}
+			// Launch workers for this language
+			Array.from({ length: concurrency }).map(() => worker());
+		}
+		lipcoderLog.appendLine('[keyword preload] Launched batch keyword WAV preloading');
+	})();
 
 	// ── 1) Build the unified audioMap ─────────────────────────────────────────────
 	const audioMap = createAudioMap(context);
 
 	function isEarcon(ch: string): boolean {
-		// any single-character token that you want as an earcon
-		return ch.length === 1 && audioMap[ch] !== undefined;
+		// Only punctuation/symbol earcons here—digits (0–9) fall back to 'special'
+		return ch.length === 1
+			&& audioMap[ch] !== undefined
+			&& !/^\d$/.test(ch);
 	}
 	function isSpecial(ch: string): boolean {
 		return ch.length === 1 && specialCharMap[ch] !== undefined;
@@ -367,6 +384,55 @@ export async function activate(context: vscode.ExtensionContext) {
 				 * actions you already use for identifiers, numbers, punctuation, etc.
 				 */
 				function splitToken(text: string, category: string) {
+					const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in']);
+					const threeLenExceptions = new Set(['fmt']);
+					// 1) 2-letter words: split unless exception
+					if (/^[A-Za-z]{2}$/.test(text)) {
+						if (!twoLenExceptions.has(text.toLowerCase())) {
+							for (const ch of text) actions.push({ kind: 'text', text: ch, category });
+						} else {
+							actions.push({ kind: 'text', text, category });
+						}
+						return;
+					}
+					// 2) 3-letter words: if in dictionary && not exception, whole; else split
+					if (/^[A-Za-z]{3}$/.test(text)) {
+						const lower = text.toLowerCase();
+						if (isDictionaryWord(text) && !threeLenExceptions.has(lower)) {
+							actions.push({ kind: 'text', text, category });
+						} else {
+							for (const ch of text) actions.push({ kind: 'text', text: ch, category });
+						}
+						return;
+					}
+					// ── X) If this token contains any special characters, split and group runs ──
+					if (/[\\{},]/.test(text)) {
+						let buf = '';
+						for (const ch of text) {
+							if (/[\\{},]/.test(ch)) {
+								// flush buffered text first
+								if (buf) {
+									actions.push({ kind: 'text', text: buf, category });
+									buf = '';
+								}
+								// emit special or earcon
+								if (isEarcon(ch)) {
+									actions.push({ kind: 'earcon', token: ch, category });
+								} else if (isSpecial(ch)) {
+									actions.push({ kind: 'special', token: ch });
+								} else {
+									actions.push({ kind: 'text', text: ch, category });
+								}
+							} else {
+								buf += ch;
+							}
+						}
+						// flush any remaining buffered text
+						if (buf) {
+							actions.push({ kind: 'text', text: buf, category });
+						}
+						return;
+					}
 					// C) Dictionary words
 					if (/^[A-Za-z]+$/.test(text) && isDictionaryWord(text)) {
 						actions.push({ kind: 'text', text, category });
@@ -392,8 +458,25 @@ export async function activate(context: vscode.ExtensionContext) {
 					if (/[A-Za-z]/.test(text) && /\d|[^A-Za-z0-9]/.test(text)) {
 						for (const run of text.match(/[A-Za-z]+|\d+|[^A-Za-z0-9]+/g)!) {
 							if (/^[A-Za-z]+$/.test(run)) {
-								if (run.length <= 2) {
-									for (const ch of run) actions.push({ kind: 'text', text: ch, category });
+								const lower = run.toLowerCase();
+								if (run.length === 2) {
+									// Two-letter run: split unless in exceptions
+									if (!twoLenExceptions.has(lower)) {
+										for (const ch of run) {
+											actions.push({ kind: 'text', text: ch, category });
+										}
+									} else {
+										actions.push({ kind: 'text', text: run, category });
+									}
+								} else if (run.length === 3) {
+									// Three-letter run: keep whole unless in exceptions (in which case split)
+									if (threeLenExceptions.has(lower)) {
+										for (const ch of run) {
+											actions.push({ kind: 'text', text: ch, category });
+										}
+									} else {
+										actions.push({ kind: 'text', text: run, category });
+									}
 								} else {
 									actions.push({ kind: 'text', text: run, category });
 								}
@@ -423,7 +506,6 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 					// Pure punctuation/digits/runs
-					// if ([...text].every(ch => isEarcon(ch) || isSpecial(ch))) {
 					if (!/^[A-Za-z]+$/.test(text) && [...text].every(ch => isEarcon(ch) || isSpecial(ch))) {
 						for (const ch of text) {
 							if (isEarcon(ch)) actions.push({ kind: 'earcon', token: ch, category });
@@ -440,6 +522,30 @@ export async function activate(context: vscode.ExtensionContext) {
 				console.log('⏺ raw LSP tokens:', tokens);
 
 				for (const { text, category } of tokens) {
+					// 1) Two-letter tokens: split into letters unless whitelisted
+					if (/^[A-Za-z]{2}$/.test(text) && !['keyword', 'comment', 'string'].includes(category)) {
+						console.log(`↳ two‐letter split for “${text}” at index`);
+						flush();
+						const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in']);
+						if (!twoLenExceptions.has(text.toLowerCase())) {
+							for (const ch of text) actions.push({ kind: 'text', text: ch, category });
+						} else {
+							actions.push({ kind: 'text', text, category });
+						}
+						continue;
+					}
+					// 2) Three-letter tokens: if in dictionary and not exception, read whole; else split
+					if (/^[A-Za-z]{3}$/.test(text) && !['keyword', 'comment', 'string'].includes(category)) {
+						flush();
+						const threeLenExceptions = new Set(['fmt']);
+						const lower = text.toLowerCase();
+						if (isDictionaryWord(text) && !threeLenExceptions.has(lower)) {
+							actions.push({ kind: 'text', text, category });
+						} else {
+							for (const ch of text) actions.push({ kind: 'text', text: ch, category });
+						}
+						continue;
+					}
 					if (text.includes('_')) {
 						flush();
 						console.log('▶▶ underscore-split token:', JSON.stringify(text));
@@ -462,9 +568,8 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 
-					// ── A) Comments stay whole, but STRING LITERALS get quote-earcons ────
+					// ── A) Comments stay whole ──────────────────────────────────────────────
 					if (category === 'comment') {
-						// comments: accumulate as before
 						if (bufferCat === category) {
 							buffer += text;
 						} else {
@@ -474,28 +579,18 @@ export async function activate(context: vscode.ExtensionContext) {
 						}
 						continue;
 					}
-					if (
-						category === 'string'
-						|| (
-							(text.startsWith('"') && text.endsWith('"'))
-							|| (text.startsWith("'") && text.endsWith("'"))
-						)
-					) {
-						// make sure any buffered text is flushed first
+					// ── B) STRING LITERALS: detect prefixes & delimiters robustly ────────────
+					const stringMatch = /^(?:[rbufRBUF]*)(['"])([\s\S]*?)\1$/.exec(text);
+					if (stringMatch || category === 'string') {
+						// flush any buffered text first
 						flush();
-						// assume text starts+ends with same quote char
-						const delim = text[0];
-						const content = text.slice(1, -1);
-
-						// 1) opening quote earcon
+						const delim = stringMatch ? stringMatch[1] : text[0];
+						const content = stringMatch ? stringMatch[2] : text.slice(1, -1);
+						// opening quote earcon
 						actions.push({ kind: 'earcon', token: delim, category });
-
-						// 2) split the inner content exactly like any other token
-						if (content) {
-							splitToken(content, category);
-						}
-
-						// 3) closing quote earcon
+						// split inner content
+						if (content) splitToken(content, category);
+						// closing quote earcon
 						actions.push({ kind: 'earcon', token: delim, category });
 						continue;
 					}
@@ -513,13 +608,13 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 
+
 					// ── C) Dictionary words: read whole if in our word list ───────
 					if (/^[A-Za-z]+$/.test(text) && isDictionaryWord(text)) {
 						flush();
 						actions.push({ kind: 'text', text, category });
 						continue;
 					}
-
 					// ── C) UNDERSCORE SPLITTING (now first!) ────────────────────────────────
 					if (text.includes('_')) {
 						flush();
@@ -655,37 +750,79 @@ export async function activate(context: vscode.ExtensionContext) {
 				// final flush
 				if (accText) mergedActions.push({ kind: 'text', text: accText, category: accCat! });
 
+				// Strip any leading characters in a text chunk that were just played as an earcon
+				for (let i = 1; i < mergedActions.length; i++) {
+					const prev = mergedActions[i - 1];
+					const curr = mergedActions[i];
+					if (prev.kind === 'earcon' && curr.kind === 'text') {
+						let txt = curr.text;
+						// Remove all repeating leading tokens
+						while (txt.startsWith(prev.token)) {
+							txt = txt.slice(prev.token.length);
+						}
+						curr.text = txt;
+					}
+				}
+
+				// Remove consecutive duplicate special tokens (e.g., repeated digits)
+				let deduped: Action[] = [];
+				for (const act of mergedActions) {
+					const prev = deduped[deduped.length - 1];
+					if (
+						prev
+						&& act.kind === 'special'
+						&& prev.kind === 'special'
+						&& act.token === prev.token
+					) {
+						continue; // skip duplicate
+					}
+					deduped.push(act);
+				}
+				mergedActions.splice(0, mergedActions.length, ...deduped);
+				console.log('🔍 mergedActions:', mergedActions);
+
 				// 3) Pipeline TTS: kick off all generation immediately
 				const audioFiles = mergedActions.map(act => {
 					if (act.kind === 'earcon') {
-						// earcon WAV is already on disk
 						return Promise.resolve(audioMap[act.token]);
 					} else if (act.kind === 'special') {
-						// map symbol → word, then generate
 						const word = specialCharMap[act.token];
 						return genTokenAudio(word, 'text');
+					} else if (act.kind === 'text' && act.text.length === 1 && audioMap[act.text]) {
+						// direct letter audio
+						return Promise.resolve(audioMap[act.text]);
 					} else {
-						// generate TTS for text chunk
 						const ttsCat = act.category === 'string' ? 'text' : act.category;
 						return genTokenAudio(act.text, ttsCat);
 					}
 				});
 
-				// 4) Play in order, overlapping gen of [i+1] with play of [i], abortable
-				if (audioFiles.length > 0) {
-					let prevGen = audioFiles[0];
-					for (let i = 0; i < audioFiles.length - 1; i++) {
-						if (signal.aborted) break;
-						const file = await prevGen;
-
-						if (signal.aborted) break;
-						prevGen = audioFiles[i + 1];
-						await playWave(file);
+				// 4) Play in order, after ensuring all audio is generated
+				const files = await Promise.all(audioFiles);
+				// Instrument playback loop with timing logs
+				lipcoderLog.appendLine('[diagnostic] Starting playback of tokens');
+				for (let idx = 0; idx < mergedActions.length; idx++) {
+					const act = mergedActions[idx];
+					const file = files[idx];
+					const start = process.hrtime.bigint();
+					lipcoderLog.appendLine(`[diagnostic] About to play token ${idx} kind=${act.kind}`);
+					if (act.kind === 'text') {
+						// Regular text chunks via PCM streamer
+						await playSequence([file], { rate: playSpeed });
+					} else if (act.kind === 'earcon') {
+						// Punctuation/symbol earcons with a brief pause
+						await playWave(file, { isEarcon: true });
+						const pauseMs = 200 / playSpeed;
+						await delay(pauseMs);
+					} else if (act.kind === 'special') {
+						// Spoken words for symbols/digits
+						await playSequence([file], { rate: playSpeed });
 					}
-					if (!signal.aborted) {
-						await playWave(await prevGen);
-					}
+					const end = process.hrtime.bigint();
+					const ms = Number(end - start) / 1e6;
+					lipcoderLog.appendLine(`[diagnostic] Played token ${idx} in ${ms.toFixed(2)}ms`);
 				}
+				lipcoderLog.appendLine('[diagnostic] Completed playback of all tokens');
 
 			} catch (err: any) {
 				// persist into the LipCoder Output channel:

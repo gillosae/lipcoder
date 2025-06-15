@@ -7,6 +7,7 @@ const PUNCTUATION_FILES: Record<string, string> = {
     '<': 'anglebracket.wav', '>': 'anglebracket2.wav',
     '[': 'squarebracket.wav', ']': 'squarebracket2.wav',
     '(': 'parenthesis.wav', ')': 'parenthesis2.wav',
+    ',': 'comma.wav',
     ';': 'semicolon.wav', '/': 'slash.wav',
     '-': 'bar.wav', ':': 'colon.wav',
     "'": 'quote.wav', '"': 'bigquote.wav',

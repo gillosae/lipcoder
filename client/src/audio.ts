@@ -9,6 +9,7 @@ import * as os from 'os';
 import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
 import { specialCharMap } from './mapping';
+// For playWave: ensure these are in scope
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
@@ -30,7 +31,7 @@ function hookChildErrors(cp: ChildProcess) {
 const earconTokens = [
     ' ', "'", '"',
     '{', '}', '<', '>', '[', ']', '(', ')',
-    ',', ';', '/', '.', '-', ':', //'_', 
+    ',', ';', '/', '.', '-', ':', '\\'
 ];
 
 // Cache for each token: { format, pcmBuffer }
@@ -183,7 +184,7 @@ let sileroConfig: SileroConfig = {
 const categoryVoiceMap: Record<string, string> = {
     keyword: 'en_1',
     type: 'en_2',
-    literal: 'en_4',
+    literal: 'en_8',
     variable: 'en_5',
     operator: 'en_6',
     comment: 'en_7',
@@ -327,6 +328,9 @@ function getTokenSound(token: string): string | null {
     if (token === ' ') {
         return path.join(audioDir, 'earcon', 'space.wav');
     }
+    if (token === '\\') {
+        return path.join(audioDir, 'earcon', 'backslash.wav');
+    }
     if (getTokenSound.singleQuote === undefined) {
         getTokenSound.singleQuote = true;
         getTokenSound.doubleQuote = true;
@@ -369,26 +373,60 @@ export function playEarcon(token: string): Promise<void> {
         return Promise.resolve();
     }
 
-    // lazy-load the raw file once
+    // Lazy-load the raw file once
     if (!earconRaw[token]) {
         earconRaw[token] = fs.readFileSync(file);
     }
     const buf = earconRaw[token];
+    // Parse header fields: channels @22, sampleRate @24, bitDepth @34
+    const channels = buf.readUInt16LE(22);
+    const sampleRate = buf.readUInt32LE(24);
+    const bitDepth = buf.readUInt16LE(34);
+    // Locate the "data" subchunk (skipping any extra chunks) and slice out PCM
+    const dataIdx = buf.indexOf(Buffer.from('data'));
+    if (dataIdx < 0) throw new Error(`No data chunk in earcon ${file}`);
+    const pcm = buf.slice(dataIdx + 8);
+    // Include signed/float flags for Speaker
+    const fmt = { channels, sampleRate, bitDepth, signed: true, float: false };
 
-    // assume 44-byte header, then PCM16LE mono at sileroConfig.sampleRate
-    const pcm = buf.slice(44);
-    const fmt = {
-        channels: 1,
-        bitDepth: 16,
-        sampleRate: sileroConfig.sampleRate,
-    };
-
-    return new Promise((resolve, reject) => {
-        const speaker = new Speaker(fmt);
-        speaker.on('error', reject);
-        speaker.on('close', resolve);
-        speaker.write(pcm);
-        speaker.end();
+    return new Promise((resolve) => {
+        try {
+            const speaker = new Speaker(fmt);
+            speaker.on('error', (err) => {
+                lipcoderLog.appendLine(`[playEarcon] Speaker error: ${err.stack || err}`);
+                // Fallback to external player
+                let cmd: string, args: string[];
+                if (process.platform === 'darwin') {
+                    cmd = 'afplay'; args = [file];
+                } else if (process.platform === 'win32') {
+                    cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
+                } else if (process.platform === 'linux') {
+                    cmd = 'aplay'; args = [file];
+                } else {
+                    cmd = 'aplay'; args = [file];
+                }
+                const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+                cp.on('close', () => resolve());
+            });
+            speaker.on('close', () => resolve());
+            speaker.write(pcm);
+            speaker.end();
+        } catch (err: any) {
+            lipcoderLog.appendLine(`[playEarcon] Exception: ${err.stack || err}`);
+            // Fallback external
+            let cmd: string, args: string[];
+            if (process.platform === 'darwin') {
+                cmd = 'afplay'; args = [file];
+            } else if (process.platform === 'win32') {
+                cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
+            } else if (process.platform === 'linux') {
+                cmd = 'aplay'; args = [file];
+            } else {
+                cmd = 'aplay'; args = [file];
+            }
+            const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+            cp.on('close', () => resolve());
+        }
     });
 }
 
@@ -527,33 +565,50 @@ export function playWave(
     filePath: string,
     opts?: { isEarcon?: boolean; rate?: number }
 ): Promise<void> {
+    // Quick fallback for WAVs with a JUNK chunk to avoid wav.Reader errors/delay
+    try {
+        const fd = fs.openSync(filePath, 'r');
+        const junkBuf = Buffer.alloc(4);
+        // Read bytes at offset 12 (chunk ID of first subchunk)
+        fs.readSync(fd, junkBuf, 0, 4, 12);
+        fs.closeSync(fd);
+        if (junkBuf.toString('ascii') === 'JUNK') {
+            lipcoderLog.appendLine(`[playWave] Detected JUNK chunk in ${filePath}, playing via raw earcon playback`);
+            // Find the token corresponding to this earcon file
+            const fname = path.basename(filePath);
+            let tokenFound: string | undefined;
+            for (const t of earconTokens) {
+                const p = getTokenSound(t);
+                if (p && path.basename(p) === fname) {
+                    tokenFound = t;
+                    break;
+                }
+            }
+            if (tokenFound) {
+                return playEarcon(tokenFound);
+            }
+            // Fallback to wav.Reader if not a known earcon
+        }
+    } catch {
+        // ignore, proceed as normal
+    }
     // 1) If this is an earcon, bypass wav.Reader completely
     if (opts?.isEarcon) {
-        let cmd: string, args: string[];
-        if (process.platform === 'darwin') {
-            cmd = 'afplay';
-            args = [filePath];
-        } else if (process.platform === 'win32') {
-            cmd = 'powershell';
-            args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
-        } else if (process.platform === 'linux') {
-            cmd = 'play';
-            args = [filePath];
-        } else {
-            cmd = 'aplay';
-            args = [filePath];
+        lipcoderLog.appendLine(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
+        // Determine token and use playEarcon
+        const fname = path.basename(filePath);
+        let tokenFound: string | undefined;
+        for (const t of earconTokens) {
+            const p = getTokenSound(t);
+            if (p && path.basename(p) === fname) {
+                tokenFound = t;
+                break;
+            }
         }
-
-        // spawn and return that process
-        const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-        return new Promise((resolve, reject) => {
-            currentFallback = cp;
-            cp.on('close', code => {
-                currentFallback = null;
-                if (code === 0 || code === null) resolve();
-                else reject(new Error(`fallback player ${code}`));
-            });
-        });
+        if (tokenFound) {
+            return playEarcon(tokenFound);
+        }
+        // Fallback to wav.Reader if not found
     }
 
     // 2) Otherwise, your existing wav.Reader → Speaker logic…
@@ -612,10 +667,11 @@ export function playWave(
             lipcoderLog.appendLine(`🔊 got format: ${JSON.stringify(format)}`);
             try {
                 const isEarcon = opts?.isEarcon ?? false;
+                const rate = opts?.rate;
                 const adjustedFormat = { ...format };
-
-                // Speed up earcons by increasing sampleRate
-                if (isEarcon) {
+                if (rate !== undefined) {
+                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * rate);
+                } else if (isEarcon) {
                     adjustedFormat.sampleRate = Math.floor(format.sampleRate * 2.4);
                 }
 
@@ -687,4 +743,68 @@ export function stopPlayback(): void {
         try { currentFallback.kill(); } catch { }
         currentFallback = null;
     }
+}
+
+/**
+ * Play multiple WAV files back-to-back with zero latency by concatenating PCM.
+ * If opts.rate is given and not 1, use SoX to time-stretch without pitch change.
+ */
+export async function playSequence(
+    filePaths: string[],
+    opts?: { rate?: number }
+): Promise<void> {
+    if (filePaths.length === 0) return;
+    // Use SoX for time-stretching with pitch preservation if rate !== 1
+    if (opts?.rate && opts.rate !== 1) {
+        // Use SoX to play files concatenated with tempo adjustment to maintain pitch
+        const cmd = 'sox';
+        const args = [...filePaths, '-d', 'tempo', String(opts.rate)];
+        const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+        return new Promise<void>((resolve, reject) => {
+            currentFallback = cp;
+            cp.on('close', code => {
+                currentFallback = null;
+                if (code === 0 || code === null) resolve();
+                else reject(new Error(`sox tempo player exited ${code}`));
+            });
+        });
+    }
+    // Raw PCM concatenation for rate === 1
+    const entries = filePaths.map(filePath => {
+        const buf = fs.readFileSync(filePath);
+
+        // Header offsets: channels @22 (UInt16LE), sampleRate @24 (UInt32LE), bitsPerSample @34 (UInt16LE)
+        const channels = buf.readUInt16LE(22);
+        const sampleRate = buf.readUInt32LE(24);
+        const bitDepth = buf.readUInt16LE(34);
+
+        // Find the “data” tag, then skip the next 4 bytes (size) to get to PCM data
+        const dataIdx = buf.indexOf(Buffer.from('data'));
+        if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
+        const pcm = buf.slice(dataIdx + 8);
+
+        return {
+            format: {
+                channels,
+                sampleRate,
+                bitDepth,
+                signed: true,
+                float: false
+            },
+            pcm
+        };
+    });
+
+    // Concatenate all PCM into one buffer
+    const allPCM = Buffer.concat(entries.map(e => e.pcm));
+    const fmt = entries[0].format;
+
+    // Play it back in a single Speaker instance
+    return new Promise<void>((resolve, reject) => {
+        const speaker = new Speaker(fmt);
+        speaker.on('close', resolve);
+        speaker.on('error', reject);
+        speaker.write(allPCM);
+        speaker.end();
+    });
 }
