@@ -8,8 +8,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as os from 'os';
 import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
-import { specialCharMap } from './mapping';
-// For playWave: ensure these are in scope
+import { earconTokens, getTokenSound } from './tokens';
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
@@ -26,14 +25,6 @@ function hookChildErrors(cp: ChildProcess) {
     return cp;
 }
 
-// ── Preload Earcons into Memory ──────────────────────────────────────────────
-// List every token that uses a WAV earcon:
-const earconTokens = [
-    ' ', "'", '"',
-    '{', '}', '<', '>', '[', ']', '(', ')',
-    ',', ';', '/', '.', '-', ':', '\\'
-];
-
 // Cache for each token: { format, pcmBuffer }
 interface EarconData { format: any; pcm: Buffer }
 const earconCache: Record<string, EarconData> = {};
@@ -41,46 +32,7 @@ const earconCache: Record<string, EarconData> = {};
 // Cache for special-word TTS audio (format + PCM)
 export const specialWordCache: Record<string, EarconData> = {};
 /** Decode each special-word TTS once and stash in memory */
-export async function preloadSpecialWords() {
-    const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
-    const words = Object.values(specialCharMap);
-    const concurrency = 5;
-    lipcoderLog.appendLine(`[preloadSpecialWords] Starting preload of ${words.length} words with concurrency=${concurrency}`);
-    const startTotal = Date.now();
 
-    let idx = 0;
-    async function worker() {
-        while (true) {
-            const word = words[idx++];
-            if (!word) break;
-            const t0 = Date.now();
-            const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-            const file = path.join(cacheDir, `text_${sanitized}.wav`);
-            await new Promise<void>((resolve, reject) => {
-                const reader = new wav.Reader();
-                const bufs: Buffer[] = [];
-                let fmt: any;
-                reader.on('format', f => { fmt = f; });
-                reader.on('data', d => bufs.push(d));
-                reader.on('end', () => {
-                    specialWordCache[word] = { format: fmt, pcm: Buffer.concat(bufs) };
-                    resolve();
-                });
-                reader.on('error', reject);
-                fs.createReadStream(file).pipe(reader);
-            });
-            const elapsed = Date.now() - t0;
-            lipcoderLog.appendLine(`[preloadSpecialWords] Loaded "${word}" in ${elapsed}ms`);
-        }
-    }
-
-    // Kick off workers
-    const workers = Array.from({ length: concurrency }, () => worker());
-    await Promise.all(workers);
-
-    const totalElapsed = Date.now() - startTotal;
-    lipcoderLog.appendLine(`[preloadSpecialWords] Completed loading all words in ${totalElapsed}ms`);
-}
 /** Play a preloaded special-word from memory */
 export function playSpecial(word: string): Promise<void> {
     lipcoderLog.appendLine(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
@@ -103,54 +55,6 @@ export function playSpecial(word: string): Promise<void> {
     });
 }
 
-/** Decode every earcon WAV once and stash its PCM + format. */
-// export async function preloadEarcons() {
-//     lipcoderLog.appendLine("Start preloadEarcons");
-//     await Promise.all(earconTokens.map(token => {
-//         const file = getTokenSound(token);
-//         console.log(file);
-//         if (!file) {
-//             console.log(`no "${file}`);
-//             return Promise.resolve();
-//         }
-//         return new Promise<void>((resolve, reject) => {
-//             const reader = new wav.Reader();
-//             const bufs: Buffer[] = [];
-//             let fmt: any;
-
-//             reader.on('format', f => { fmt = f; });
-//             reader.on('data', d => bufs.push(d));
-//             reader.on('end', () => {
-//                 earconCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
-//                 resolve();
-//             });
-//             reader.on('error', reject);
-
-//             fs.createReadStream(file).pipe(reader);
-//         });
-//     }));
-// }
-export async function preloadEarcons() {
-    lipcoderLog.appendLine("Start preloadEarcons (raw buffers)");
-    const start = Date.now();
-    for (const token of earconTokens) {
-        const file = getTokenSound(token);
-        if (!file) {
-            console.log(`no "${file}`);
-            return Promise.resolve();
-        }
-        try {
-            const buf = fs.readFileSync(file);
-            earconRaw[token] = buf;
-            lipcoderLog.appendLine(`  loaded "${token}" (${buf.length} bytes)`);
-        } catch (e) {
-            lipcoderLog.appendLine(`  failed to load "${token}": ${e}`);
-        }
-    }
-    const total = Date.now() - start;
-    lipcoderLog.appendLine(`ALL earcons loaded in ${total}ms`);
-}
-
 
 // ── TTS Backends & Config ─────────────────────────────────────────────────────
 export enum TTSBackend {
@@ -159,7 +63,7 @@ export enum TTSBackend {
 }
 
 export interface SileroConfig {
-    pythonExe: string;
+    pythonPath: string;
     scriptPath: string;
     language: string;
     modelId: string;
@@ -171,7 +75,7 @@ export interface SileroConfig {
 
 let currentBackend = TTSBackend.Silero;
 let sileroConfig: SileroConfig = {
-    pythonExe: '',
+    pythonPath: '',
     scriptPath: '',
     language: 'en',
     modelId: 'v3_en',
@@ -182,12 +86,12 @@ let sileroConfig: SileroConfig = {
 
 // ── Category → voice mapping ──────────────────────────────────────────────────
 const categoryVoiceMap: Record<string, string> = {
-    keyword: 'en_1',
-    type: 'en_2',
-    literal: 'en_8',
-    variable: 'en_5',
-    operator: 'en_6',
-    comment: 'en_7',
+    variable: 'en_3',
+    operator: 'en_15',
+    keyword: 'en_35',
+    literal: 'en_5',
+    comment: 'en_41',
+    type: 'en_80',
 };
 
 
@@ -244,10 +148,11 @@ export async function genTokenAudio(
         }
         // generate and save to the cache
         lipcoderLog.appendLine(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
-        const { pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
+        const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
+        const baseCategory = category?.split('_')[0];
         const speakerName =
             opts?.speaker
-            ?? (category && categoryVoiceMap[category])
+            ?? (baseCategory && categoryVoiceMap[baseCategory])
             ?? sileroConfig.defaultSpeaker!;
         const args = [
             scriptPath,
@@ -281,13 +186,14 @@ export async function genTokenAudio(
     if (!token.trim()) throw new Error('No text to TTS for token');
 
     // 3) Determine which Silero speaker to use
+    const baseCategory = category?.split('_')[0];
     const speakerName =
         opts?.speaker
-        ?? (category && categoryVoiceMap[category])
+        ?? (baseCategory && categoryVoiceMap[baseCategory])
         ?? sileroConfig.defaultSpeaker!;
 
     // 4) Validate & build outFile as before…
-    const { pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
+    const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
     if (!fs.existsSync(pythonExe)) throw new Error(`Python not found: ${pythonExe}`);
     if (!fs.existsSync(scriptPath)) throw new Error(`Silero script not found: ${scriptPath}`);
 
@@ -323,49 +229,9 @@ export async function genTokenAudio(
     return outFile;
 }
 
-// ── Earcon lookup ─────────────────────────────────────────────────────────────
-function getTokenSound(token: string): string | null {
-    if (token === ' ') {
-        return path.join(audioDir, 'earcon', 'space.wav');
-    }
-    if (token === '\\') {
-        return path.join(audioDir, 'earcon', 'backslash.wav');
-    }
-    if (getTokenSound.singleQuote === undefined) {
-        getTokenSound.singleQuote = true;
-        getTokenSound.doubleQuote = true;
-    }
-    if (token === "'") {
-        const file = getTokenSound.singleQuote ? 'quote.wav' : 'quote2.wav';
-        getTokenSound.singleQuote = !getTokenSound.singleQuote;
-        return path.join(audioDir, 'earcon', file);
-    }
-    if (token === '"') {
-        const file = getTokenSound.doubleQuote ? 'bigquote.wav' : 'bigquote2.wav';
-        getTokenSound.doubleQuote = !getTokenSound.doubleQuote;
-        return path.join(audioDir, 'earcon', file);
-    }
-    const map: Record<string, string> = {
-        '{': 'brace.wav', '}': 'brace2.wav',
-        '<': 'anglebracket.wav', '>': 'anglebracket2.wav',
-        '[': 'squarebracket.wav', ']': 'squarebracket2.wav',
-        '(': 'parenthesis.wav', ')': 'parenthesis2.wav',
-        ',': 'comma.wav', ';': 'semicolon.wav',
-        '/': 'slash.wav', // '_': 'underbar.wav',
-        '.': 'dot.wav', ':': 'colon.wav', '-': 'bar.wav',
-    };
-    if (map[token]) {
-        return path.join(audioDir, 'earcon', map[token]);
-    }
-    return null;
-}
-namespace getTokenSound {
-    export let singleQuote: boolean;
-    export let doubleQuote: boolean;
-}
 
+export const earconRaw: Record<string, Buffer> = {};
 
-const earconRaw: Record<string, Buffer> = {};
 export function playEarcon(token: string): Promise<void> {
     const file = getTokenSound(token);
     if (!file) {
@@ -432,7 +298,7 @@ export function playEarcon(token: string): Promise<void> {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 /** Returns true if we have a WAV earcon for this single-character token */
-function isEarcon(token: string): boolean {
+export function isEarcon(token: string): boolean {
     return getTokenSound(token) !== null;
 }
 
@@ -452,9 +318,10 @@ export async function speakToken(
         return;
     }
     // Choose voice
+    const baseCategory = category?.split('_')[0];
     const speakerName =
         opts?.speaker
-        ?? (category && categoryVoiceMap[category])
+        ?? (baseCategory && categoryVoiceMap[baseCategory])
         ?? sileroConfig.defaultSpeaker!;
 
     // Generate async file, then play it
@@ -495,7 +362,7 @@ function speakWithSilero(
         return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
-        const { pythonExe, scriptPath, language, modelId, defaultSpeaker, sampleRate } = sileroConfig;
+        const { pythonPath: pythonExe, scriptPath, language, modelId, defaultSpeaker, sampleRate } = sileroConfig;
 
         // debug: log what we’re about to run
         console.log('[Silero] running:',

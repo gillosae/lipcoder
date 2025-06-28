@@ -1,4 +1,3 @@
-// client/src/audiomap.ts
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 
@@ -82,6 +81,17 @@ export function createAudioMap(ctx: ExtensionContext): Record<string, string> {
         ...rangeMap(0, 9, NUMBER_DIR),
         ...alphabetMap(ALPHABET_DIR),
         ' ': path.join(EARCON_DIR, 'space.wav'),
+        '_': path.join(SPECIAL_DIR, 'underbar.wav'),
         ...mapFiles(SPECIAL_TOKENS, SPECIAL_DIR)
     };
+}
+
+export function isEarcon(ch: string, audioMap: Record<string, string>): boolean {
+    // Only punctuation/symbol earcons here—digits (0–9) fall back to 'special'
+    return ch.length === 1
+        && audioMap[ch] !== undefined
+        && !/^\d$/.test(ch);
+}
+export function isSpecial(ch: string): boolean {
+    return ch.length === 1 && specialCharMap[ch] !== undefined;
 }
