@@ -9,9 +9,32 @@ import * as os from 'os';
 import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
 import { earconTokens, getTokenSound } from './tokens';
+// import { stopPlayback } from './audio';
+
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
+let currentReader: wav.Reader | null = null;
+let currentFileStream: fs.ReadStream | null = null;
+
+// Immediate external playback for low-latency abortable audio
+function playImmediate(filePath: string): Promise<void> {
+    // Kill any in-flight audio first
+    stopPlayback();
+    // Choose platform player
+    let cmd: string, args: string[];
+    if (process.platform === 'darwin') {
+        cmd = 'afplay'; args = [filePath];
+    } else if (process.platform === 'win32') {
+        cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
+    } else {
+        // Linux and others; use SoX 'play'
+        cmd = 'play'; args = [filePath];
+    }
+    const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+    currentFallback = cp;
+    return new Promise<void>(resolve => cp.on('close', () => resolve()));
+}
 
 function hookChildErrors(cp: ChildProcess) {
     cp.on('error', err => {
@@ -28,6 +51,36 @@ function hookChildErrors(cp: ChildProcess) {
 // Cache for each token: { format, pcmBuffer }
 interface EarconData { format: any; pcm: Buffer }
 const earconCache: Record<string, EarconData> = {};
+
+// Cache for arbitrary WAV files for immediate playback
+const wavCache: Record<string, { format: any; pcm: Buffer }> = {};
+
+function playCachedWav(filePath: string): Promise<void> {
+    // Load and cache PCM+format if needed
+    let entry = wavCache[filePath];
+    if (!entry) {
+        const buf = fs.readFileSync(filePath);
+        const channels = buf.readUInt16LE(22);
+        const sampleRate = buf.readUInt32LE(24);
+        const bitDepth = buf.readUInt16LE(34);
+        const dataIdx = buf.indexOf(Buffer.from('data'));
+        if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
+        const pcm = buf.slice(dataIdx + 8);
+        entry = { format: { channels, sampleRate, bitDepth, signed: true, float: false }, pcm };
+        wavCache[filePath] = entry;
+    }
+    return new Promise<void>((resolve, reject) => {
+        // Halt any prior playback
+        stopPlayback();
+        // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+        const speaker = new Speaker({ ...entry.format, samplesPerFrame: 128 } as any);
+        currentSpeaker = speaker;
+        speaker.on('close', resolve);
+        speaker.on('error', reject);
+        speaker.write(entry.pcm);
+        speaker.end();
+    });
+}
 
 // Cache for special-word TTS audio (format + PCM)
 export const specialWordCache: Record<string, EarconData> = {};
@@ -252,9 +305,15 @@ export function playEarcon(token: string): Promise<void> {
     // Include signed/float flags for Speaker
     const fmt = { channels, sampleRate, bitDepth, signed: true, float: false };
 
+    // Ensure any prior playback is halted
+    stopPlayback();
+
     return new Promise((resolve) => {
         try {
-            const speaker = new Speaker(fmt);
+            // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+            const speaker = new Speaker({ ...fmt, samplesPerFrame: 128 } as any);
+            // Track this earcon speaker for stopPlayback()
+            currentSpeaker = speaker;
             speaker.on('error', (err) => {
                 lipcoderLog.appendLine(`[playEarcon] Speaker error: ${err.stack || err}`);
                 // Fallback to external player
@@ -269,6 +328,7 @@ export function playEarcon(token: string): Promise<void> {
                     cmd = 'aplay'; args = [file];
                 }
                 const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+                currentFallback = cp;
                 cp.on('close', () => resolve());
             });
             speaker.on('close', () => resolve());
@@ -288,10 +348,12 @@ export function playEarcon(token: string): Promise<void> {
                 cmd = 'aplay'; args = [file];
             }
             const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+            currentFallback = cp;
             cp.on('close', () => resolve());
         }
     });
 }
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 /** Returns true if we have a WAV earcon for this single-character token */
@@ -322,113 +384,84 @@ export async function speakToken(
         ?? sileroConfig.defaultSpeaker!;
 
     // Generate async file, then play it
-    const filePath = await genTokenAudio(token, speakerName);
+    // const filePath = await genTokenAudio(token, speakerName);
+    // return playWave(filePath);
+    const filePath = await genTokenAudio(
+        token,
+        category,                // <-- keeps your "literal_line.wav" or "literal_nineteen.wav"
+        { speaker: speakerName } // <-- still uses the right Silero voice
+    );
     return playWave(filePath);
-}
-
-
-
-// ── eSpeak TTS ─────────────────────────────────────────────────────────────────
-function speakWithEspeak(
-    text: string,
-    opts?: { voice?: string; pitch?: number; gap?: number; speed?: number }
-): Promise<void> {
-    const safeText = text.replace(/"/g, '\\"');
-    const args: string[] = ['-v', opts?.voice ?? 'en-us'];
-    if (opts?.pitch !== undefined) {
-        args.push('-p', String(opts.pitch));
-    }
-    args.push('-g', String(opts?.gap ?? 0));
-    args.push('-s', String(opts?.speed ?? 250));
-    args.push(safeText);
-
-    return new Promise((resolve, reject) => {
-        const proc = spawn('espeak', args, { stdio: 'ignore' });
-        proc.on('error', reject);
-        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`espeak ${code}`)));
-    });
-}
-
-// ── Silero TTS (Hub-only) ──────────────────────────────────────────────────────
-function speakWithSilero(
-    text: string,
-    opts?: { speakerName?: string }
-): Promise<void> {
-    // guard again in the Silero-specific layer
-    if (!text.trim()) {
-        return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-        const { pythonPath: pythonExe, scriptPath, language, modelId, defaultSpeaker, sampleRate } = sileroConfig;
-
-        // debug: log what we’re about to run
-        console.log('[Silero] running:',
-            pythonExe,
-            scriptPath,
-            '--language', language,
-            '--model_id', modelId,
-            '--speaker', (opts?.speakerName ?? defaultSpeaker),
-            '--text', text,
-            '--sample_rate', sampleRate
-        );
-
-        if (!fs.existsSync(pythonExe)) {
-            return reject(new Error(`Python not found: ${pythonExe}`));
-        }
-        if (!fs.existsSync(scriptPath)) {
-            return reject(new Error(`Silero script not found: ${scriptPath}`));
-        }
-
-        const tmpDir = path.join(os.tmpdir(), 'lipcoder_silero_tts');
-        if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-        const outFile = path.join(tmpDir, `tts_${Date.now()}.wav`);
-
-        const args = [
-            scriptPath,
-            '--language', language,
-            '--model_id', modelId,
-            '--speaker', opts?.speakerName ?? defaultSpeaker!,
-            '--text', text,
-            '--sample_rate', String(sampleRate),
-            // '--gap', String(sileroConfig.gap ?? 0),
-            // '--speed', String(sileroConfig.speed ?? 250),
-            '--output', outFile,
-        ];
-
-        const proc = spawn(pythonExe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-        let stderr = '';
-        proc.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-
-        proc.on('error', e => reject(e));
-
-        proc.on('close', async code => {
-            if (code !== 0) {
-                return reject(new Error(
-                    `Silero exited ${code}\n` +
-                    `Command: ${pythonExe} ${args.join(' ')}\n` +
-                    `Error output:\n${stderr}`
-                ));
-            }
-            try {
-                await playWave(outFile);
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
 }
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
 let playQueue = Promise.resolve();
 
+// Helper to perform WAV playback immediately without queueing
+function doPlay(filePath: string, opts?: { isEarcon?: boolean; rate?: number }): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        const fileStream = fs.createReadStream(filePath);
+        currentFileStream = fileStream;
+        const reader = new wav.Reader();
+        currentReader = reader;
+        let fallback = false;
+        function doFallback(err: any) {
+            lipcoderLog.appendLine(`🛑 wav-stream error: ${err.stack || err}`);
+            if (fallback) return;
+            fallback = true;
+            reader.removeAllListeners();
+            fileStream.unpipe(reader);
+            fileStream.destroy();
+            let cmd: string, args: string[];
+            if (process.platform === 'darwin') {
+                cmd = 'afplay'; args = [filePath];
+            } else if (process.platform === 'win32') {
+                cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
+            } else if (process.platform === 'linux') {
+                cmd = 'play'; args = [filePath];
+            } else {
+                cmd = 'aplay'; args = [filePath];
+            }
+            const p = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+            currentFallback = p;
+            p.on('close', (code) => {
+                currentFallback = null;
+                if (code === 0 || code === null) resolve(); else reject(new Error(`fallback player ${code}`));
+            });
+        }
+        reader.on('format', (format: any) => {
+            lipcoderLog.appendLine(`🔊 got format: ${JSON.stringify(format)}`);
+            try {
+                const adjusted = { ...format };
+                if (opts?.rate !== undefined) adjusted.sampleRate = Math.floor(format.sampleRate * opts.rate!);
+                else if (opts?.isEarcon) adjusted.sampleRate = Math.floor(format.sampleRate * 2.4);
+                if (currentSpeaker) { try { currentSpeaker.end(); } catch { } currentSpeaker = null; }
+                if (currentFallback) { try { currentFallback.kill(); } catch { } currentFallback = null; }
+                // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+                const speaker = new Speaker({ ...adjusted, samplesPerFrame: 128 } as any);
+                currentSpeaker = speaker;
+                reader.pipe(speaker);
+                speaker.on('close', resolve);
+                speaker.on('error', err => { lipcoderLog.appendLine(`🛑 Speaker error: ${err.stack || err}`); reject(err); });
+            } catch (err) {
+                doFallback(err);
+            }
+        });
+        reader.on('error', doFallback);
+        fileStream.on('error', doFallback);
+        fileStream.pipe(reader);
+    });
+}
+
 export function playWave(
     filePath: string,
-    opts?: { isEarcon?: boolean; rate?: number }
+    opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean }
 ): Promise<void> {
+    if (opts?.immediate) {
+        const p = playImmediate(filePath);
+        playQueue = p.catch(() => { });
+        return p;
+    }
     // Quick fallback for WAVs with a JUNK chunk to avoid wav.Reader errors/delay
     try {
         const fd = fs.openSync(filePath, 'r');
@@ -476,93 +509,7 @@ export function playWave(
     }
 
     // 2) Otherwise, your existing wav.Reader → Speaker logic…
-    playQueue = playQueue.then(() => new Promise<void>((resolve, reject) => {
-        const fileStream = fs.createReadStream(filePath);
-        const reader = new wav.Reader();
-
-        let fallback = false;
-        function doFallback(err: any) {
-            lipcoderLog.appendLine(`🛑 wav-stream error: ${err.stack || err}`);
-
-            if (fallback) return;
-            fallback = true;
-
-            // Clean up the failed stream
-            reader.removeAllListeners();
-            fileStream.unpipe(reader);
-            fileStream.destroy();
-
-            let cmd: string, args: string[];
-            if (process.platform === 'darwin') {
-                // Use built-in afplay on macOS
-                cmd = 'afplay';
-                args = [filePath];
-            } else if (process.platform === 'win32') {
-                // Use PowerShell SoundPlayer on Windows
-                cmd = 'powershell';
-                args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
-            } else if (process.platform === 'linux') {
-                // Prefer `play` (SoX) on Linux if installed
-                cmd = 'play';
-                args = [filePath];
-            } else {
-                // Fallback to aplay
-                cmd = 'aplay';
-                args = [filePath];
-            }
-            const p = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-            currentFallback = p;
-
-            p.on('close', (code) => {
-                // always clear the tracked process
-                currentFallback = null;
-
-                // code === 0  → normal finish
-                // code === null → was killed by stopPlayback()
-                if (code === 0 || code === null) {
-                    resolve();
-                } else {
-                    reject(new Error(`fallback player ${code}`));
-                }
-            });
-        }
-
-        reader.on('format', (format: any) => {
-            lipcoderLog.appendLine(`🔊 got format: ${JSON.stringify(format)}`);
-            try {
-                const isEarcon = opts?.isEarcon ?? false;
-                const rate = opts?.rate;
-                const adjustedFormat = { ...format };
-                if (rate !== undefined) {
-                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * rate);
-                } else if (isEarcon) {
-                    adjustedFormat.sampleRate = Math.floor(format.sampleRate * 2.4);
-                }
-
-                // ── Abort any previous playback ──────────────────────────────
-                if (currentSpeaker) { try { currentSpeaker.end() } catch { }; currentSpeaker = null; }
-                if (currentFallback) { try { currentFallback.kill() } catch { }; currentFallback = null; }
-                // ── Now start the new speaker instance ───────────────────────
-                const speaker = new Speaker(adjustedFormat);
-                currentSpeaker = speaker;
-
-                reader.pipe(speaker);
-                speaker.on('close', resolve);
-                speaker.on('error', err => {
-                    // Log speaker-level errors
-                    lipcoderLog.appendLine(`🛑 Speaker error: ${err.stack || err}`);
-                    reject(err);
-                });
-            } catch (err) {
-                doFallback(err);
-            }
-        });
-
-        reader.on('error', doFallback);
-        fileStream.on('error', doFallback);
-        fileStream.pipe(reader);
-    }));
-
+    playQueue = playQueue.then(() => doPlay(filePath, opts));
     return playQueue;
 }
 
@@ -600,13 +547,21 @@ export function generateTone(
  */
 export function stopPlayback(): void {
     if (currentSpeaker) {
-        try { currentSpeaker.end(); } catch { }
+        try {
+            // force-kill the speaker stream immediately
+            currentSpeaker.destroy();
+        } catch { }
         currentSpeaker = null;
     }
     if (currentFallback) {
-        try { currentFallback.kill(); } catch { }
+        try { currentFallback.kill('SIGKILL'); } catch { }
         currentFallback = null;
     }
+    // Abort any active WAV streams
+    if (currentReader) { try { currentReader.destroy(); } catch { } currentReader = null; }
+    if (currentFileStream) { try { currentFileStream.close(); } catch { } currentFileStream = null; }
+    // Clear any queued playback tasks
+    playQueue = Promise.resolve();
 }
 
 /**

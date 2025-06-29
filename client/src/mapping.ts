@@ -44,6 +44,49 @@ export const specialCharMap: Record<string, string> = {
     x: 'ex', y: 'why', z: 'zee',
 };
 
+// Converts numbers 0–3000 to English words
+function numberToWords(num: number): string {
+    const ones = [
+        'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'
+    ];
+    const teens = [
+        'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+        'sixteen', 'seventeen', 'eighteen', 'nineteen'
+    ];
+    const tens = [
+        '', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'
+    ];
+    if (num < 10) return ones[num];
+    if (num < 20) return teens[num - 10];
+    if (num < 100) {
+        const t = Math.floor(num / 10);
+        const r = num % 10;
+        return r === 0 ? tens[t] : `${tens[t]}-${ones[r]}`;
+    }
+    if (num < 1000) {
+        const h = Math.floor(num / 100);
+        const r = num % 100;
+        return r === 0
+            ? `${ones[h]} hundred`
+            : `${ones[h]} hundred ${numberToWords(r)}`;
+    }
+    // 1000–3000
+    const th = Math.floor(num / 1000);
+    const r = num % 1000;
+    return r === 0
+        ? `${ones[th]} thousand`
+        : `${ones[th]} thousand ${numberToWords(r)}`;
+}
+
+// Precompute mappings for 0–3000
+export const numberMap: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (let i = 0; i <= 3000; i++) {
+        map[i.toString()] = numberToWords(i);
+    }
+    return map;
+})();
+
 function mapFiles(mapping: Record<string, string>, dir: string) {
     return Object.fromEntries(
         Object.entries(mapping).map(([k, f]) => [k, path.join(dir, f)])

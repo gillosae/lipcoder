@@ -1,3 +1,4 @@
+import { genTokenAudio } from './audio';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as wav from 'wav';
@@ -118,6 +119,13 @@ export async function preloadEverything(context: ExtensionContext) {
     preloadSpecialWords()
         .then(() => log('[DEBUG] Completed special-word TTS preload'))
         .catch(err => log(`[DEBUG] preloadSpecialWords error: ${err}`));
+    // Pre-generate TTS for the word 'line'
+    try {
+        await genTokenAudio('line', 'literal');
+        log('[DEBUG] Preloaded TTS for "line"');
+    } catch (e) {
+        log(`[DEBUG] Failed to preload "line": ${e}`);
+    }
     // ── 0.2) Preload Python/TS keyword WAVs in batches (non-blocking) ─────────
     await preloadKeywordWavs(context.extensionPath);
 }

@@ -13,6 +13,7 @@ import { registerToggleTypingSpeech } from './features/toggle_typing_speech';
 import { startLanguageClient } from './language_client';
 import { updateLineSeverity } from './features/line_severity';
 import { readTextTokens } from './features/read_text_tokens';
+import { registerReadCurrentLine } from './features/current_line';
 
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -69,6 +70,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerReadLineTokens(context, client, currentAbortController, audioMap);
 	registerStopReadLineTokens(context, client, currentAbortController);
 	registerToggleTypingSpeech(context, client);
+	registerReadCurrentLine(context);
 
 	const diagCache = updateLineSeverity();
 

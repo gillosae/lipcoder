@@ -18,6 +18,8 @@ export async function readTextTokens(
     audioMap: Record<string, string>,
 ): Promise<void> {
     for (const change of changes) {
+        // Immediately halt any currently playing audio when a new key event occurs
+        stopPlayback();
         log(`change.text:' ${JSON.stringify(change.text)},
             rangeLength: ${change.rangeLength},
             startChar: ${change.range.start.character}`);
@@ -41,7 +43,7 @@ export async function readTextTokens(
                 [vscode.DiagnosticSeverity.Hint]: 'enter.wav',
             } as const;
             const enterFile = path.join(config.audioPath(), 'earcon', fileMap[sev]);
-            await playWave(enterFile, { isEarcon: true });
+            playWave(enterFile, { isEarcon: true, immediate: true });
 
             // reset indent state so the following auto-indent spaces look fresh
             indentLevels.set(uri, 0);
@@ -70,23 +72,23 @@ export async function readTextTokens(
             if (isTab) {
                 // Manual Tab: indent_0 → indent_4
                 const idx = rawUnits > 4 ? 4 : rawUnits;
-                await playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
                 indentLevels.set(uri, rawUnits);
 
             } else if (isBackspace) {
                 // Manual Backspace: indent_5 → indent_9
                 const idx = rawUnits + 5 > 9 ? 9 : rawUnits + 5;
-                await playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
                 indentLevels.set(uri, rawUnits);
 
             } else {
                 // Auto-indent: same as before
                 if (rawUnits > oldRaw) {
                     const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits - 1;
-                    await playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
                 } else if (rawUnits < oldRaw) {
                     const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits;
-                    await playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true });
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
                 }
                 indentLevels.set(uri, rawUnits);
             }
@@ -98,29 +100,49 @@ export async function readTextTokens(
         for (const change of changes) {
             if (change.text === '' && change.rangeLength === 1) {
                 stopPlayback();
-                await playWave(path.join(config.audioPath(), 'earcon', 'backspace.wav'), { isEarcon: true });
+                playWave(path.join(config.audioPath(), 'earcon', 'backspace.wav'), { isEarcon: true, immediate: true });
                 break;
             }
         }
 
-        // 4) Otherwise, single‐char logic:
-        const char = change.text;
-        if (char.length !== 1) continue;
-
+        // 4) Handle multi-character and single-character logic
+        const text = change.text;
+        if (text.length > 1) {
+            // Break grouped input into individual tokens
+            for (const ch of text) {
+                stopPlayback();
+                try {
+                    if (audioMap[ch]) {
+                        playWave(audioMap[ch], { isEarcon: true, immediate: true });
+                    } else if (specialCharMap[ch]) {
+                        stopPlayback();
+                        playSpecial(specialCharMap[ch]);
+                    } else if (/^[a-zA-Z]$/.test(ch)) {
+                        const tokenPath = audioMap[ch.toLowerCase()];
+                        if (tokenPath) playWave(tokenPath, { immediate: true });
+                    } else {
+                        console.log('🚫 No audio found for grouped char:', ch);
+                    }
+                } catch (err) {
+                    console.error('Typing audio error:', err);
+                }
+            }
+            continue;
+        }
+        // Single-character logic
+        const char = text;
         stopPlayback();
-
         try {
             if (audioMap[char]) {
-                await playWave(audioMap[char], { isEarcon: true }); // ✅ mark as earcon to apply rate
+                playWave(audioMap[char], { isEarcon: true, immediate: true });
             } else if (specialCharMap[char]) {
                 stopPlayback();
-                const word = specialCharMap[char];
-                await playSpecial(word);
+                playSpecial(specialCharMap[char]);
             } else if (/^[a-zA-Z]$/.test(char)) {
-                const path = audioMap[char.toLowerCase()];
-                if (path) await playWave(path);
+                const tokenPath = audioMap[char.toLowerCase()];
+                if (tokenPath) playWave(tokenPath, { immediate: true });
             } else {
-                console.log('🚫 No audio found for:', char);
+                console.log('🚫 No audio found for char:', char);
             }
         } catch (err) {
             console.error('Typing audio error:', err);
