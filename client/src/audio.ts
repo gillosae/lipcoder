@@ -98,9 +98,6 @@ const categoryVoiceMap: Record<string, string> = {
 // ── Earcon directory & setup ──────────────────────────────────────────────────
 let audioDir = path.join(__dirname, 'audio', 'earcon');
 // const earconDir = path.join(audioDir, 'earcon');
-export function setAudioDirectory(dir: string) {
-    audioDir = dir;
-}
 
 // ── Configure TTS backend (Silero or Espeak) ─────────────────────────────────
 export function setBackend(

@@ -1,7 +1,5 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { setBackend, TTSBackend, setAudioDirectory } from './audio';
+import { setBackend, TTSBackend } from './audio';
 import { createAudioMap } from './mapping';
 import { preloadEverything } from './preload';
 import { config, initConfig } from './config';
@@ -17,7 +15,6 @@ import { updateLineSeverity } from './features/line_severity';
 import { readTextTokens } from './features/read_text_tokens';
 
 
-
 export async function activate(context: vscode.ExtensionContext) {
 	// Provide the extension root to our config
 	initConfig(context);
@@ -26,26 +23,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// 0) TTS setup ───────────────────────────────────────────────────────────────
 	loadDictionaryWord();
-
-	setAudioDirectory(config.audioPath());
-	// ── DEBUG: verify packaging paths and contents ────────────────────────────
-	try {
-		const earconFiles = fs.readdirSync(path.join(config.audioPath(), 'earcon'));
-		log(`DEBUG: earcon files: ${earconFiles.join(', ')}`);
-	} catch (e) {
-		log(`DEBUG: failed to list earcon: ${e}`);
-	}
-	['python', 'typescript'].forEach(lang => {
-		const dir = path.join(config.audioPath(), lang);
-		try {
-			const files = fs.readdirSync(dir).filter(f => f.endsWith('.wav'));
-			log(`DEBUG: ${lang} WAV files: ${files.join(', ')}`);
-		} catch (e) {
-			log(`DEBUG: failed to list ${lang} WAVs: ${e}`);
-		}
-	});
-	// ── end DEBUG ───────────────────────────────────────────────────────────────
-
 
 	setBackend(TTSBackend.Silero, {
 		pythonPath: config.pythonPath(),
@@ -120,8 +97,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
 	// 6) Track Text Change ───────────────────────────────────────────────────────
-	// Flag to skip indent sound once after Enter
-	let skipNextIndent = false;
+	let skipNextIndent = false; // Flag to skip indent sound once after Enter
 
 	vscode.workspace.onDidChangeTextDocument(async (event) => {
 		if (!config.typingSpeechEnabled) return;
@@ -138,6 +114,5 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-	// LanguageClient disposal is handled automatically via context.subscriptions
 	log('[extension] activate() completed');
 }

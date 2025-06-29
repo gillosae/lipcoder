@@ -4,7 +4,7 @@ import { config } from '../config';
 import { LineSeverityMap } from './line_severity';
 import { playSpecial, playWave, stopPlayback } from '../audio';
 import { specialCharMap } from '../mapping';
-
+import { log } from '../utils';
 
 
 export async function readTextTokens(
@@ -18,9 +18,9 @@ export async function readTextTokens(
     audioMap: Record<string, string>,
 ): Promise<void> {
     for (const change of changes) {
-        console.log('⟶ change.text:', JSON.stringify(change.text),
-            'rangeLength:', change.rangeLength,
-            'startChar:', change.range.start.character);
+        log(`change.text:' ${JSON.stringify(change.text)},
+            rangeLength: ${change.rangeLength},
+            startChar: ${change.range.start.character}`);
 
         const uri = event.document.uri.toString();
 
