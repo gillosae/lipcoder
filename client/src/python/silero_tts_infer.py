@@ -48,8 +48,8 @@ def main():
     parser.add_argument(
         "--sample_rate",
         type=int,
-        default=24000,
-        help="Desired output sample rate: 8000, 24000, or 48000 (default=24000).",
+        default=8000,
+        help="Desired output sample rate: 8000, 24000, or 48000 (default=12000).",
     )
     parser.add_argument(
         "--device",

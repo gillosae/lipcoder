@@ -11,6 +11,11 @@ import { lipcoderLog } from './logger';
 import { earconTokens, getTokenSound } from './tokens';
 // import { stopPlayback } from './audio';
 
+import { fetch, Agent } from 'undici';
+
+// Keep-alive agent for HTTP fetch to reuse connections
+const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
+
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
@@ -133,7 +138,7 @@ let sileroConfig: SileroConfig = {
     language: 'en',
     modelId: 'v3_en',
     defaultSpeaker: 'en_3',
-    sampleRate: 24000,
+    sampleRate: 8000,
 };
 
 
@@ -204,26 +209,32 @@ export async function genTokenAudio(
             opts?.speaker
             ?? (baseCategory && categoryVoiceMap[baseCategory])
             ?? sileroConfig.defaultSpeaker!;
-        const args = [
-            scriptPath,
-            '--language', language,
-            '--model_id', modelId,
-            '--speaker', speakerName,
-            '--text', token,
-            '--sample_rate', String(sampleRate),
-            '--output', cachedFile,
-        ];
-        await new Promise<void>((resolve, reject) => {
-            const proc = spawn(pythonExe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-            let stderr = '';
-            proc.stderr?.on('data', c => stderr += c.toString());
-            proc.on('error', reject);
-            proc.on('close', code => {
-                if (code !== 0) reject(new Error(`Silero exited ${code}\n${stderr}`));
-                else resolve();
-            });
+        // Send text to long-running Silero server instead of spawning
+        const res = await fetch('http://localhost:5002/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: token,
+                speaker: speakerName,
+                sample_rate: sampleRate,
+            }),
+            dispatcher: keepAliveAgent
         });
-        lipcoderLog.appendLine(`[genTokenAudio] generated new TTS to ${cachedFile}`);
+        if (!res.ok) {
+            // Capture and log the error body for debugging
+            let errorBody: string;
+            try {
+                errorBody = await res.text();
+            } catch {
+                errorBody = '<unable to read response body>';
+            }
+            lipcoderLog.appendLine(
+                `[genTokenAudio] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
+            );
+            throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
+        }
+        const wavBuffer = Buffer.from(await res.arrayBuffer());
+        fs.writeFileSync(cachedFile, wavBuffer);
         return cachedFile;
     }
 
@@ -367,31 +378,31 @@ export async function speakToken(
     category?: string,
     opts?: { speaker?: string }
 ): Promise<void> {
-    console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
-    // Earcon?
-    if (isEarcon(token)) {
-        return playEarcon(token);
+    try {
+        console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
+        if (isEarcon(token)) {
+            return await playEarcon(token);
+        }
+        if (!token.trim()) {
+            return;
+        }
+        const baseCategory = category?.split('_')[0];
+        const speakerName =
+            opts?.speaker
+            ?? (baseCategory && categoryVoiceMap[baseCategory])
+            ?? sileroConfig.defaultSpeaker!;
+        const filePath = await genTokenAudio(token, category, { speaker: speakerName });
+        return await playWave(filePath);
+    } catch (err: any) {
+        lipcoderLog.appendLine(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
+        // swallow error to avoid unhandled rejection
     }
-    // Skip blank
-    if (!token.trim()) {
-        return;
-    }
-    // Choose voice
-    const baseCategory = category?.split('_')[0];
-    const speakerName =
-        opts?.speaker
-        ?? (baseCategory && categoryVoiceMap[baseCategory])
-        ?? sileroConfig.defaultSpeaker!;
+}
 
-    // Generate async file, then play it
-    // const filePath = await genTokenAudio(token, speakerName);
-    // return playWave(filePath);
-    const filePath = await genTokenAudio(
-        token,
-        category,                // <-- keeps your "literal_line.wav" or "literal_nineteen.wav"
-        { speaker: speakerName } // <-- still uses the right Silero voice
-    );
-    return playWave(filePath);
+export async function speakTokenList(tokens: string[], category?: string): Promise<void> {
+    for (const token of tokens) {
+        await speakToken(token, category);
+    }
 }
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────

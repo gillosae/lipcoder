@@ -20,9 +20,7 @@ export async function readTextTokens(
     for (const change of changes) {
         // Immediately halt any currently playing audio when a new key event occurs
         stopPlayback();
-        log(`change.text:' ${JSON.stringify(change.text)},
-            rangeLength: ${change.rangeLength},
-            startChar: ${change.range.start.character}`);
+        log(`change.text:' ${JSON.stringify(change.text)}, rangeLength: ${change.rangeLength}, startChar: ${change.range.start.character}`);
 
         const uri = event.document.uri.toString();
 

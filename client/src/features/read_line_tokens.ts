@@ -30,6 +30,14 @@ function isDictionaryWord(token: string): boolean {
     return dictWords.has(token.toLowerCase());
 }
 
+// Helper to split a CamelCase identifier
+function isCamelCase(id: string) {
+    return /[a-z][A-Z]/.test(id);
+}
+function splitCamel(id: string): string[] {
+    return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) || [id];
+}
+
 export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient, currentAbortController: AbortController | null, audioMap: Record<string, string>) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readLineTokens', async () => {
@@ -115,14 +123,6 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
                     actions.push({ kind: 'text', text: buffer, category: bufferCat! });
                     buffer = '';
                     bufferCat = null;
-                }
-
-                // Helper to split a CamelCase identifier
-                function isCamelCase(id: string) {
-                    return /[a-z][A-Z]/.test(id);
-                }
-                function splitCamel(id: string): string[] {
-                    return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) || [id];
                 }
 
                 /**
@@ -373,7 +373,7 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
                     // ── C) UNDERSCORE SPLITTING (now first!) ────────────────────────────────
                     if (text.includes('_')) {
                         flush();
-                        console.log('▶▶ underscore‐split token:', JSON.stringify(text));
+                        console.log('▶▶ underscore-split token:', JSON.stringify(text));
                         for (const part of text.split(/(_)/)) {
                             if (!part) continue;
                             if (part === '_') {

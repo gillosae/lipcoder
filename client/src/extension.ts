@@ -1,3 +1,4 @@
+import { readWordTokens } from './features/read_word_tokens';
 import * as vscode from 'vscode';
 import { setBackend, TTSBackend } from './audio';
 import { createAudioMap } from './mapping';
@@ -98,6 +99,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
 
+	// Toggle between token and word reading mode
+	let useWordMode = false;
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.toggleReadMode', () => {
+			useWordMode = !useWordMode;
+			vscode.window.showInformationMessage(
+				`LipCoder: ${useWordMode ? 'Word' : 'Token'} reading mode`
+			);
+		})
+	);
+
 	// 6) Track Text Change ───────────────────────────────────────────────────────
 	let skipNextIndent = false; // Flag to skip indent sound once after Enter
 
@@ -110,8 +122,20 @@ export async function activate(context: vscode.ExtensionContext) {
 		const changes = event.contentChanges;
 		if (changes.length === 0) return;
 
-		readTextTokens(event, diagCache, changes, indentLevels, tabSize, skipNextIndent, MAX_INDENT_UNITS, audioMap);
-
+		if (useWordMode) {
+			readWordTokens(event, changes);
+		} else {
+			readTextTokens(
+				event,
+				diagCache,
+				changes,
+				indentLevels,
+				tabSize,
+				skipNextIndent,
+				MAX_INDENT_UNITS,
+				audioMap
+			);
+		}
 	});
 }
 
