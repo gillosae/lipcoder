@@ -10,11 +10,26 @@ import { Readable } from 'stream';
 import { lipcoderLog } from './logger';
 import { earconTokens, getTokenSound } from './tokens';
 // import { stopPlayback } from './audio';
+import { log } from './utils';
 
+import { config } from './config';
+import { numberMap } from './mapping';
 import { fetch, Agent } from 'undici';
+
 
 // Keep-alive agent for HTTP fetch to reuse connections
 const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
+
+function findTokenSound(token: string): string | null {
+    const primary = getTokenSound(token);
+    if (primary) return primary;
+    const lower = token.toLowerCase();
+    const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
+    if (fs.existsSync(alphaPath)) return alphaPath;
+    const numPath = path.join(config.numberPath(), `${lower}.wav`);
+    if (fs.existsSync(numPath)) return numPath;
+    return null;
+}
 
 
 let currentSpeaker: Speaker | null = null;
@@ -239,7 +254,7 @@ export async function genTokenAudio(
     }
 
     // 1) Earcon?
-    const wav = getTokenSound(token);
+    const wav = findTokenSound(token);
     lipcoderLog.appendLine(`[DEBUG getTokenSound] token="${token}", audioDir="${audioDir}"`);
     if (wav) return wav;
 
@@ -294,7 +309,7 @@ export async function genTokenAudio(
 export const earconRaw: Record<string, Buffer> = {};
 
 export function playEarcon(token: string): Promise<void> {
-    const file = getTokenSound(token);
+    const file = findTokenSound(token);
     if (!file) {
         // no earcon mapped
         return Promise.resolve();
@@ -369,7 +384,15 @@ export function playEarcon(token: string): Promise<void> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 /** Returns true if we have a WAV earcon for this single-character token */
 export function isEarcon(token: string): boolean {
-    return getTokenSound(token) !== null;
+    return findTokenSound(token) !== null;
+}
+
+export function isAlphabet(token: string): boolean {
+    return /^[A-Za-z]$/.test(token);
+}
+
+export function isNumber(token: string): boolean {
+    return /^\d$/.test(token);
 }
 
 // ── Speak a token (generate + play) ───────────────────────────────────────────
@@ -401,9 +424,42 @@ export async function speakToken(
 
 export async function speakTokenList(tokens: string[], category?: string): Promise<void> {
     for (const token of tokens) {
-        await speakToken(token, category);
+        log(`speakTokenList token="${token}" category="${category}"`);
+        // Alphabet letters A–Z
+        if (isAlphabet(token)) {
+            const lower = token.toLowerCase();
+            const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
+            log(`${alphaPath}`);
+            if (fs.existsSync(alphaPath)) {
+                log("exists");
+                await playCachedWav(alphaPath);
+            } else {
+                log("doesnt exist");
+                await speakToken(token, 'literal');
+            }
+        }
+        // Digits 0–9
+        else if (isNumber(token)) {
+            const numPath = path.join(config.numberPath(), `${token}.wav`);
+            if (fs.existsSync(numPath)) {
+                await playCachedWav(numPath);
+            } else {
+                const word = numberMap[token] || token;
+                await speakToken(word, 'literal');
+            }
+        }
+        // Punctuation or special earcons
+        else if (isEarcon(token)) {
+            await playEarcon(token);
+        }
+        // Fallback: TTS for any other token
+        else {
+            await speakToken(token, category);
+        }
     }
 }
+
+
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
 let playQueue = Promise.resolve();

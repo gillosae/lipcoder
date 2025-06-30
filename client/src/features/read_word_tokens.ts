@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
-import { stopPlayback, speakToken, isEarcon } from '../audio';
+import { stopPlayback, playEarcon, speakToken, isEarcon, speakTokenList } from '../audio';
 import { earconTokens } from '../tokens';
 import { config } from '../config';
 import { log } from '../utils';
+import { splitWordChunks } from './word_logic';
 
 const bufferMap = new Map<string, string>();
 
@@ -23,23 +24,10 @@ export async function readWordTokens(
             const word = buf.trim();
             if (word) {
                 log(`[readWordTokens] speaking word="${word}"`);
-                // Find the longest earcon token that matches the end of the word
-                let matched: string | undefined;
-                for (const token of earconTokens.sort((a, b) => b.length - a.length)) {
-                    if (word.endsWith(token)) {
-                        matched = token;
-                        break;
-                    }
-                }
-                if (matched) {
-                    const main = word.slice(0, -matched.length);
-                    if (main) {
-                        await speakToken(main, 'literal', { speaker: 'en_3' });
-                    }
-                    await speakToken(matched);
-                } else {
-                    await speakToken(word, 'literal', { speaker: 'en_3' });
-                }
+                const tokens = /^\d+$/.test(word)
+                    ? [word]
+                    : splitWordChunks(word);
+                await speakTokenList(tokens, 'literal');
             }
             // optionally speak the space itself as an earcon or omit
             bufferMap.set(uri, '');

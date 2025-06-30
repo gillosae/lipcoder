@@ -9,6 +9,8 @@ import { config } from '../config';
 import { lipcoderLog } from '../logger';
 import { specialCharMap } from '../mapping';
 import { genTokenAudio, playWave, playSequence } from '../audio';
+import { splitWordChunks } from './word_logic';
+import { speakTokenList } from '../audio';
 
 let wordListPath: string;
 let dictWords: Set<string> = new Set<string>();

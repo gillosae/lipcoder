@@ -15,6 +15,9 @@ export const config = {
     playSpeed: 1.4,              // playback speed multiplier
 
     audioPath: () => path.join(extRoot, 'client', 'audio'),
+    alphabetPath: () => path.join(extRoot, 'client', 'audio', 'alphabet'),
+    earconPath: () => path.join(extRoot, 'client', 'audio', 'earcon'),
+    numberPath: () => path.join(extRoot, 'client', 'audio', 'number'),
     pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
 
@@ -23,6 +26,9 @@ export const config = {
     playSpeed: number;
 
     audioPath: () => string;
+    alphabetPath: () => string;
+    earconPath: () => string;
+    numberPath: () => string;
     pythonPath: () => string;
     scriptPath: () => string;
 };

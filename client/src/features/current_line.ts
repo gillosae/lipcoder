@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { speakToken } from '../audio';
 import { numberMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
+import { log } from '../utils';
 
 // Track last preloaded line to avoid repeated spawns
 let lastPreloadedLine: number | undefined;

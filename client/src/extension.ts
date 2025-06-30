@@ -8,7 +8,8 @@ import { log } from './utils';
 
 import { registerEchoTest } from './features/echo_test';
 import { registerWhereAmI } from './features/where_am_i';
-import { loadDictionaryWord, registerReadLineTokens } from './features/read_line_tokens';
+import { registerReadLineTokens } from './features/read_line_tokens';
+import { loadDictionaryWord } from './features/word_logic';
 import { registerStopReadLineTokens } from './features/stop_read_line_tokens';
 import { registerToggleTypingSpeech } from './features/toggle_typing_speech';
 import { startLanguageClient } from './language_client';
@@ -24,16 +25,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	vscode.window.showInformationMessage('LipCoder: activate() called');
 
 	// 0) TTS setup ───────────────────────────────────────────────────────────────
-	loadDictionaryWord();
+	await loadDictionaryWord();
 
-	setBackend(TTSBackend.Silero, {
-		pythonPath: config.pythonPath(),
-		scriptPath: config.scriptPath(),
-		language: 'en',
-		modelId: 'v3_en',
-		defaultSpeaker: 'en_3',
-		sampleRate: 24000,
-	});
+	// Use Silero for TTS
+	setBackend(TTSBackend.Silero);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.setPlaySpeed', async () => {
@@ -55,6 +50,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Module-scope controller for cancellation
 	let currentAbortController: AbortController | null = null;
+
+	// Track last cursor line to detect line changes
+	let lastCursorLine: number | null = null;
+	// Prevent recursive readLineTokens calls
+	let isReadingLine = false;
+	// Debounce timer to prevent rapid, repeated readLineTokens calls
+	let readLineTimer: NodeJS.Timeout | null = null;
 
 	// 1) Pre-generate earcons into cache ────────────────────────────
 	preloadEverything(context);
@@ -85,7 +87,32 @@ export async function activate(context: vscode.ExtensionContext) {
 		? editor.options.tabSize
 		: 4;  // fallback if somehow not a number
 
-	vscode.window.onDidChangeTextEditorSelection(e => {
+	vscode.window.onDidChangeTextEditorSelection(async (e) => {
+		// Detect cursor line change and trigger line reading (debounced)
+		const editor = vscode.window.activeTextEditor;
+		if (editor) {
+			const currentLine = editor.selection.active.line;
+			if (currentLine !== lastCursorLine) {
+				lastCursorLine = currentLine;
+				// Clear any pending readLineTokens invocation
+				if (readLineTimer) {
+					clearTimeout(readLineTimer);
+				}
+				readLineTimer = setTimeout(async () => {
+					if (isReadingLine) {
+						return;
+					}
+					isReadingLine = true;
+					try {
+						await vscode.commands.executeCommand('lipcoder.readLineTokens');
+					} catch (err) {
+						console.error('Error invoking readLineTokens:', err);
+					} finally {
+						isReadingLine = false;
+					}
+				}, 300);
+			}
+		}
 		const uri = e.textEditor.document.uri.toString();
 		const lineNum = e.selections[0].start.line;
 		const lineText = e.textEditor.document.lineAt(lineNum).text;
