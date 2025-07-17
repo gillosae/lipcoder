@@ -20,6 +20,7 @@ export const config = {
     numberPath: () => path.join(extRoot, 'client', 'audio', 'number'),
     pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
+    specialPath: () => path.join(config.audioPath(), 'special'),
 
 } as {
     typingSpeechEnabled: boolean;
@@ -31,4 +32,5 @@ export const config = {
     numberPath: () => string;
     pythonPath: () => string;
     scriptPath: () => string;
+    specialPath: () => string;
 };

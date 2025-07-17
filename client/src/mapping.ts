@@ -17,7 +17,7 @@ const SPECIAL_TOKENS: Record<string, string> = {
     at: 'at.wav', backslash: 'backslash.wav',
     backtick: 'backtick.wav', bar: 'bar.wav',
     caret: 'caret.wav', comma: 'comma.wav',
-    dot: 'dot.wav', dollar: 'dollar.wav',
+    dollar: 'dollar.wav', //dot: 'dot.wav', 
     equals: 'equals.wav', excitation: 'excitation.wav',
     percent: 'percent.wav', plus: 'plus.wav',
     question: 'question.wav', sharp: 'sharp.wav',
@@ -32,7 +32,8 @@ export const specialCharMap: Record<string, string> = {
     '%': 'percent', '^': 'caret', '&': 'ampersand', '*': 'asterisk',
     '+': 'plus', '~': 'tilde', '|': 'bar', '?': 'question',
     '₩': 'won', '=': 'equals', '`': 'backtick', '\\': 'backslash',
-    '.': 'dot', ',': 'comma', '_': 'underbar',
+    '.': 'dot',  // ← add this line
+    ',': 'comma', '_': 'underbar',
     // digits → word
     '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
     '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
@@ -129,12 +130,25 @@ export function createAudioMap(ctx: ExtensionContext): Record<string, string> {
     };
 }
 
-export function isEarcon(ch: string, audioMap: Record<string, string>): boolean {
-    // Only punctuation/symbol earcons here—digits (0–9) fall back to 'special'
-    return ch.length === 1
-        && audioMap[ch] !== undefined
-        && !/^\d$/.test(ch);
+export function isEarcon(ch: string): boolean {
+    // Single-char earcons include both punctuation and special‐token mappings
+    return (
+        ch.length === 1
+        && (
+            PUNCTUATION_FILES[ch] !== undefined
+            || specialCharMap[ch] !== undefined
+        )
+    );
 }
+
 export function isSpecial(ch: string): boolean {
     return ch.length === 1 && specialCharMap[ch] !== undefined;
+}
+
+export function isAlphabet(token: string): boolean {
+    return /^[A-Za-z]$/.test(token);
+}
+
+export function isNumber(token: string): boolean {
+    return /^\d$/.test(token);
 }

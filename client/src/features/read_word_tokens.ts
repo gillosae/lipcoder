@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
-import { stopPlayback, playEarcon, speakToken, isEarcon, speakTokenList } from '../audio';
-import { earconTokens } from '../tokens';
-import { config } from '../config';
+import { stopPlayback, speakTokenList } from '../audio';
 import { log } from '../utils';
 import { splitWordChunks } from './word_logic';
 
@@ -27,7 +25,7 @@ export async function readWordTokens(
                 const tokens = /^\d+$/.test(word)
                     ? [word]
                     : splitWordChunks(word);
-                await speakTokenList(tokens, 'literal');
+                await speakTokenList([{ tokens, category: 'literal' }]);
             }
             // optionally speak the space itself as an earcon or omit
             bufferMap.set(uri, '');

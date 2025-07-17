@@ -2,10 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { config } from '../config';
 import { LineSeverityMap } from './line_severity';
-import { playSpecial, playWave, stopPlayback } from '../audio';
-import { specialCharMap } from '../mapping';
+import { playSpecial, playWave, stopPlayback, playEarcon } from '../audio';
+import { isEarcon, specialCharMap } from '../mapping';
 import { log } from '../utils';
-
 
 export async function readTextTokens(
     event: vscode.TextDocumentChangeEvent,
@@ -114,7 +113,11 @@ export async function readTextTokens(
                         playWave(audioMap[ch], { isEarcon: true, immediate: true });
                     } else if (specialCharMap[ch]) {
                         stopPlayback();
-                        playSpecial(specialCharMap[ch]);
+                        if (isEarcon(ch)) {
+                            await playEarcon(ch);
+                        } else {
+                            await playSpecial(specialCharMap[ch]);
+                        }
                     } else if (/^[a-zA-Z]$/.test(ch)) {
                         const tokenPath = audioMap[ch.toLowerCase()];
                         if (tokenPath) playWave(tokenPath, { immediate: true });
@@ -135,7 +138,11 @@ export async function readTextTokens(
                 playWave(audioMap[char], { isEarcon: true, immediate: true });
             } else if (specialCharMap[char]) {
                 stopPlayback();
-                playSpecial(specialCharMap[char]);
+                if (isEarcon(char)) {
+                    await playEarcon(char);
+                } else {
+                    await playSpecial(specialCharMap[char]);
+                }
             } else if (/^[a-zA-Z]$/.test(char)) {
                 const tokenPath = audioMap[char.toLowerCase()];
                 if (tokenPath) playWave(tokenPath, { immediate: true });

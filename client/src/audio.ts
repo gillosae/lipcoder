@@ -1,5 +1,3 @@
-// client/src/audio.ts
-
 import * as fs from 'fs';
 import * as path from 'path';
 import Speaker from 'speaker';
@@ -13,29 +11,83 @@ import { earconTokens, getTokenSound } from './tokens';
 import { log } from './utils';
 
 import { config } from './config';
-import { numberMap } from './mapping';
+import { numberMap, isAlphabet, isEarcon, isNumber, isSpecial, specialCharMap } from './mapping';
 import { fetch, Agent } from 'undici';
 
 
 // Keep-alive agent for HTTP fetch to reuse connections
 const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
 
-function findTokenSound(token: string): string | null {
-    const primary = getTokenSound(token);
-    if (primary) return primary;
-    const lower = token.toLowerCase();
-    const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
-    if (fs.existsSync(alphaPath)) return alphaPath;
-    const numPath = path.join(config.numberPath(), `${lower}.wav`);
-    if (fs.existsSync(numPath)) return numPath;
-    return null;
-}
-
-
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
 let currentReader: wav.Reader | null = null;
 let currentFileStream: fs.ReadStream | null = null;
+
+// ── TTS Backends & Config ─────────────────────────────────────────────────────
+export enum TTSBackend {
+    Silero = 'silero',
+    Espeak = 'espeak',
+}
+
+export interface SileroConfig {
+    pythonPath: string;
+    scriptPath: string;
+    language: string;
+    modelId: string;
+    defaultSpeaker?: string;
+    sampleRate: number;
+}
+
+let currentBackend = TTSBackend.Silero;
+let sileroConfig: SileroConfig = {
+    pythonPath: '',
+    scriptPath: '',
+    language: 'en',
+    modelId: 'v3_en',
+    defaultSpeaker: 'en_3',
+    sampleRate: 8000,
+};
+
+
+const categoryVoiceMap: Record<string, string> = {
+    variable: 'en_3',
+    operator: 'en_15',
+    keyword: 'en_35',
+    literal: 'en_5',
+    comment: 'en_41',
+    type: 'en_80',
+};
+
+
+// ──  ──────────────────────────────────────────────────
+function findTokenSound(token: string): string | null {
+    const primary = getTokenSound(token);
+    if (primary) return primary;
+
+    const lower = token.toLowerCase();
+    // Alphabet folder (letters)
+    const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
+    if (fs.existsSync(alphaPath)) return alphaPath;
+
+    // Number folder (digits)
+    const numPath = path.join(config.numberPath(), `${lower}.wav`);
+    if (fs.existsSync(numPath)) return numPath;
+
+    // Special‐tokens folder: map single-char token to its spoken name
+    const specialName = specialCharMap[token];
+    if (specialName) {
+        // First check the “special” folder (underbar, equals, etc.)
+        const specialFile = path.join(config.specialPath(), `${specialName}.wav`);
+        if (fs.existsSync(specialFile)) return specialFile;
+        // Then fall back to the earcon folder (for punctuation like bigquote)
+        const fallbackEarcon = path.join(config.earconPath(), `${specialName}.wav`);
+        if (fs.existsSync(fallbackEarcon)) return fallbackEarcon;
+    }
+
+    return null;
+}
+
+
 
 // Immediate external playback for low-latency abortable audio
 function playImmediate(filePath: string): Promise<void> {
@@ -58,11 +110,11 @@ function playImmediate(filePath: string): Promise<void> {
 
 function hookChildErrors(cp: ChildProcess) {
     cp.on('error', err => {
-        lipcoderLog.appendLine(`🔊 player “error” event: ${err.stack || err}`);
+        log(`🔊 player “error” event: ${err.stack || err}`);
     });
     if (cp.stderr) {
         cp.stderr.on('data', chunk => {
-            lipcoderLog.appendLine(`🔊 player stderr: ${chunk.toString().trim()}`);
+            log(`🔊 player stderr: ${chunk.toString().trim()}`);
         });
     }
     return cp;
@@ -108,15 +160,15 @@ export const specialWordCache: Record<string, EarconData> = {};
 
 /** Play a preloaded special-word from memory */
 export function playSpecial(word: string): Promise<void> {
-    lipcoderLog.appendLine(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
+    log(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
     const entry = specialWordCache[word];
     if (!entry) {
         // fallback to file-based playback
-        lipcoderLog.appendLine(`[playSpecial] fallback to file-based playback for "${word}"`);
+        log(`[playSpecial] fallback to file-based playback for "${word}"`);
         const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
         const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
         const file = path.join(cacheDir, `text_${sanitized}.wav`);
-        lipcoderLog.appendLine(`[DEBUG playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
+        log(`[playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
         return playWave(file, { isEarcon: true });
     }
     return new Promise((resolve, reject) => {
@@ -127,50 +179,6 @@ export function playSpecial(word: string): Promise<void> {
         speaker.end();
     });
 }
-
-
-// ── TTS Backends & Config ─────────────────────────────────────────────────────
-export enum TTSBackend {
-    Silero = 'silero',
-    Espeak = 'espeak',
-}
-
-export interface SileroConfig {
-    pythonPath: string;
-    scriptPath: string;
-    language: string;
-    modelId: string;
-    defaultSpeaker?: string;
-    sampleRate: number;
-    // gap?: number; /** silence padding between chunks (ms) */
-    // speed?: number; /** playback speed (higher = faster) */
-}
-
-let currentBackend = TTSBackend.Silero;
-let sileroConfig: SileroConfig = {
-    pythonPath: '',
-    scriptPath: '',
-    language: 'en',
-    modelId: 'v3_en',
-    defaultSpeaker: 'en_3',
-    sampleRate: 8000,
-};
-
-
-// ── Category → voice mapping ──────────────────────────────────────────────────
-const categoryVoiceMap: Record<string, string> = {
-    variable: 'en_3',
-    operator: 'en_15',
-    keyword: 'en_35',
-    literal: 'en_5',
-    comment: 'en_41',
-    type: 'en_80',
-};
-
-
-// ── Earcon directory & setup ──────────────────────────────────────────────────
-let audioDir = path.join(__dirname, 'audio', 'earcon');
-// const earconDir = path.join(audioDir, 'earcon');
 
 // ── Configure TTS backend (Silero or Espeak) ─────────────────────────────────
 export function setBackend(
@@ -189,17 +197,16 @@ export async function genTokenAudio(
     category?: string,
     opts?: { speaker?: string }
 ): Promise<string> {
-    lipcoderLog.appendLine(`[genTokenAudio] START token="${token}" category="${category}"`);
-    lipcoderLog.appendLine(`[DEBUG genTokenAudio] audioDir="${audioDir}"`);
+    log(`[genTokenAudio] START token="${token}" category="${category}"`);
 
     // 0) Pre-generated keyword audio?
     if (category && category.startsWith('keyword_')) {
         const lang = category.split('_')[1];      // “python” or “typescript”
         const filename = token.toLowerCase();     // match your saved filenames
-        const filePath = path.join(audioDir, lang, `${filename}.wav`);
-        lipcoderLog.appendLine(`[DEBUG genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
+        const filePath = path.join(config.earconPath(), lang, `${filename}.wav`);
+        log(`[genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
         if (fs.existsSync(filePath)) {
-            lipcoderLog.appendLine(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
+            log(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
             return filePath;  // skip TTS entirely
         }
     }
@@ -211,13 +218,13 @@ export async function genTokenAudio(
         // sanitize the token to a filesystem-safe name
         const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
         const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
-        lipcoderLog.appendLine(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
+        log(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
-            lipcoderLog.appendLine(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
+            log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
             return cachedFile;
         }
         // generate and save to the cache
-        lipcoderLog.appendLine(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
+        log(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
         const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
         const baseCategory = category?.split('_')[0];
         const speakerName =
@@ -243,7 +250,7 @@ export async function genTokenAudio(
             } catch {
                 errorBody = '<unable to read response body>';
             }
-            lipcoderLog.appendLine(
+            log(
                 `[genTokenAudio] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
             );
             throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
@@ -255,7 +262,7 @@ export async function genTokenAudio(
 
     // 1) Earcon?
     const wav = findTokenSound(token);
-    lipcoderLog.appendLine(`[DEBUG getTokenSound] token="${token}", audioDir="${audioDir}"`);
+    log(`[getTokenSound] token="${token}", earconDir="${config.earconPath()}"`);
     if (wav) return wav;
 
     // 2) Skip blanks
@@ -301,7 +308,7 @@ export async function genTokenAudio(
         });
     });
 
-    lipcoderLog.appendLine(`[genTokenAudio] generated new TTS to ${outFile}`);
+    log(`[genTokenAudio] generated new TTS to ${outFile}`);
     return outFile;
 }
 
@@ -331,8 +338,6 @@ export function playEarcon(token: string): Promise<void> {
     // Include signed/float flags for Speaker
     const fmt = { channels, sampleRate, bitDepth, signed: true, float: false };
 
-    // Ensure any prior playback is halted
-    stopPlayback();
 
     return new Promise((resolve) => {
         try {
@@ -341,7 +346,7 @@ export function playEarcon(token: string): Promise<void> {
             // Track this earcon speaker for stopPlayback()
             currentSpeaker = speaker;
             speaker.on('error', (err) => {
-                lipcoderLog.appendLine(`[playEarcon] Speaker error: ${err.stack || err}`);
+                log(`[playEarcon] Speaker error: ${err.stack || err}`);
                 // Fallback to external player
                 let cmd: string, args: string[];
                 if (process.platform === 'darwin') {
@@ -361,7 +366,7 @@ export function playEarcon(token: string): Promise<void> {
             speaker.write(pcm);
             speaker.end();
         } catch (err: any) {
-            lipcoderLog.appendLine(`[playEarcon] Exception: ${err.stack || err}`);
+            log(`[playEarcon] Exception: ${err.stack || err}`);
             // Fallback external
             let cmd: string, args: string[];
             if (process.platform === 'darwin') {
@@ -381,20 +386,6 @@ export function playEarcon(token: string): Promise<void> {
 }
 
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-/** Returns true if we have a WAV earcon for this single-character token */
-export function isEarcon(token: string): boolean {
-    return findTokenSound(token) !== null;
-}
-
-export function isAlphabet(token: string): boolean {
-    return /^[A-Za-z]$/.test(token);
-}
-
-export function isNumber(token: string): boolean {
-    return /^\d$/.test(token);
-}
-
 // ── Speak a token (generate + play) ───────────────────────────────────────────
 export async function speakToken(
     token: string,
@@ -402,13 +393,24 @@ export async function speakToken(
     opts?: { speaker?: string }
 ): Promise<void> {
     try {
-        console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
-        if (isEarcon(token)) {
+        log(`[speakTokenList] token="${token}" category="${category}"`);
+        if (isAlphabet(token)) {
+            const lower = token.toLowerCase();
+            const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
+            if (fs.existsSync(alphaPath)) {
+                return await playCachedWav(alphaPath);
+            }
+        } else if (isNumber(token)) {
+            const numPath = path.join(config.numberPath(), `${token}.wav`);
+            if (fs.existsSync(numPath)) {
+                return await playCachedWav(numPath);
+            }
+        } else if (isEarcon(token)) {
             return await playEarcon(token);
         }
-        if (!token.trim()) {
-            return;
-        }
+
+        console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
+        // existing fallback TTS logic...
         const baseCategory = category?.split('_')[0];
         const speakerName =
             opts?.speaker
@@ -417,48 +419,23 @@ export async function speakToken(
         const filePath = await genTokenAudio(token, category, { speaker: speakerName });
         return await playWave(filePath);
     } catch (err: any) {
-        lipcoderLog.appendLine(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
-        // swallow error to avoid unhandled rejection
+        log(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
     }
 }
 
-export async function speakTokenList(tokens: string[], category?: string): Promise<void> {
-    for (const token of tokens) {
-        log(`speakTokenList token="${token}" category="${category}"`);
-        // Alphabet letters A–Z
-        if (isAlphabet(token)) {
-            const lower = token.toLowerCase();
-            const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
-            log(`${alphaPath}`);
-            if (fs.existsSync(alphaPath)) {
-                log("exists");
-                await playCachedWav(alphaPath);
-            } else {
-                log("doesnt exist");
-                await speakToken(token, 'literal');
-            }
-        }
-        // Digits 0–9
-        else if (isNumber(token)) {
-            const numPath = path.join(config.numberPath(), `${token}.wav`);
-            if (fs.existsSync(numPath)) {
-                await playCachedWav(numPath);
-            } else {
-                const word = numberMap[token] || token;
-                await speakToken(word, 'literal');
-            }
-        }
-        // Punctuation or special earcons
-        else if (isEarcon(token)) {
-            await playEarcon(token);
-        }
-        // Fallback: TTS for any other token
-        else {
+export type TokenChunk = {
+    tokens: string[];
+    category?: string;
+};
+
+export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal): Promise<void> {
+    for (const { tokens, category } of chunks) {
+        for (const token of tokens) {
+            if (signal?.aborted) return;
             await speakToken(token, category);
         }
     }
 }
-
 
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
@@ -473,7 +450,7 @@ function doPlay(filePath: string, opts?: { isEarcon?: boolean; rate?: number }):
         currentReader = reader;
         let fallback = false;
         function doFallback(err: any) {
-            lipcoderLog.appendLine(`🛑 wav-stream error: ${err.stack || err}`);
+            log(`🛑 wav-stream error: ${err.stack || err}`);
             if (fallback) return;
             fallback = true;
             reader.removeAllListeners();
@@ -497,7 +474,7 @@ function doPlay(filePath: string, opts?: { isEarcon?: boolean; rate?: number }):
             });
         }
         reader.on('format', (format: any) => {
-            lipcoderLog.appendLine(`🔊 got format: ${JSON.stringify(format)}`);
+            log(`🔊 got format: ${JSON.stringify(format)}`);
             try {
                 const adjusted = { ...format };
                 if (opts?.rate !== undefined) adjusted.sampleRate = Math.floor(format.sampleRate * opts.rate!);
@@ -509,7 +486,7 @@ function doPlay(filePath: string, opts?: { isEarcon?: boolean; rate?: number }):
                 currentSpeaker = speaker;
                 reader.pipe(speaker);
                 speaker.on('close', resolve);
-                speaker.on('error', err => { lipcoderLog.appendLine(`🛑 Speaker error: ${err.stack || err}`); reject(err); });
+                speaker.on('error', err => { log(`🛑 Speaker error: ${err.stack || err}`); reject(err); });
             } catch (err) {
                 doFallback(err);
             }
@@ -524,6 +501,11 @@ export function playWave(
     filePath: string,
     opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean }
 ): Promise<void> {
+    // Skip playback if the file doesn't exist
+    if (!fs.existsSync(filePath)) {
+        log(`🔕 playWave skipping missing file: ${filePath}`);
+        return Promise.resolve();
+    }
     if (opts?.immediate) {
         const p = playImmediate(filePath);
         playQueue = p.catch(() => { });
@@ -537,7 +519,7 @@ export function playWave(
         fs.readSync(fd, junkBuf, 0, 4, 12);
         fs.closeSync(fd);
         if (junkBuf.toString('ascii') === 'JUNK') {
-            lipcoderLog.appendLine(`[playWave] Detected JUNK chunk in ${filePath}, playing via raw earcon playback`);
+            log(`[playWave] Detected JUNK chunk in ${filePath}, playing via raw earcon playback`);
             // Find the token corresponding to this earcon file
             const fname = path.basename(filePath);
             let tokenFound: string | undefined;
@@ -558,7 +540,7 @@ export function playWave(
     }
     // 1) If this is an earcon, bypass wav.Reader completely
     if (opts?.isEarcon) {
-        lipcoderLog.appendLine(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
+        log(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
         // Determine token and use playEarcon
         const fname = path.basename(filePath);
         let tokenFound: string | undefined;
@@ -639,6 +621,16 @@ export async function playSequence(
     filePaths: string[],
     opts?: { rate?: number }
 ): Promise<void> {
+    // Filter out missing files before playback
+    const existingFiles = filePaths.filter(fp => {
+        if (!fs.existsSync(fp)) {
+            log(`🔕 playSequence skipping missing file: ${fp}`);
+            return false;
+        }
+        return true;
+    });
+    // Use existingFiles from now on
+    filePaths = existingFiles;
     if (filePaths.length === 0) return;
     // Use SoX for time-stretching with pitch preservation if rate !== 1
     if (opts?.rate && opts.rate !== 1) {

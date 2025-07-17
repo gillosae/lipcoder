@@ -48,8 +48,8 @@ export function splitWordChunks(text: string): string[] {
         const subChunks = isCamelCase(chunk) ? splitCamel(chunk) : [chunk];
 
         for (const sub of subChunks) {
-            // 2. Further split on runs of letters, digits, or non-alphanumerics
-            const runs = sub.match(/[A-Za-z]+|\d+|[^\w\s]+/g);
+            // 2. Further split on runs of letters, digits, underscores (one at a time), or non-alphanumerics
+            const runs = sub.match(/[A-Za-z]+|\d+|_|[^\w\s]/g);
             if (!runs) continue;
 
             for (const run of runs) {

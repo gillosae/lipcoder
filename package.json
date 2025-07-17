@@ -27,7 +27,10 @@
     "onCommand:lipcoder.whereAmI",
     "onCommand:lipcoder.readLineTokens",
     "onCommand:lipcoder.stopReadLineTokens",
-    "onCommand:lipcoder.toggleTypingSpeech"
+    "onCommand:lipcoder.toggleTypingSpeech",
+    "onCommand:lipcoder.readFunctionTokens",
+    "onCommand:lipcoder.explorerUp",
+    "onCommand:lipcoder.explorerDown"
   ],
   "main": "./dist/client/extension.js",
   "contributes": {
@@ -63,6 +66,38 @@
       {
         "command": "lipcoder.toggleReadMode",
         "title": "LipCoder: Toggle Read Mode"
+      },
+      {
+        "command": "lipcoder.readFunctionTokens",
+        "title": "LipCoder: Read Function Tokens"
+      },
+      {
+        "command": "lipcoder.breadcrumb",
+        "title": "LipCoder: Read Breadcrumb"
+      },
+      {
+        "command": "lipcoder.symbolTree",
+        "title": "LipCoder: Speak Symbol Tree"
+      },
+      {
+        "command": "lipcoder.switchPanel",
+        "title": "LipCoder: Switch Panel"
+      },
+      {
+        "command": "lipcoder.functionList",
+        "title": "LipCoder: Function List"
+      },
+      {
+        "command": "lipcoder.fileTree",
+        "title": "LipCoder: File Tree"
+      },
+      {
+        "command": "lipcoder.explorerUp",
+        "title": "LipCoder: Explorer Up"
+      },
+      {
+        "command": "lipcoder.explorerDown",
+        "title": "LipCoder: Explorer Down"
       }
     ],
     "keybindings": [
@@ -81,6 +116,21 @@
         "key": "ctrl+alt+m",
         "command": "lipcoder.toggleReadMode",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.readFunctionTokens",
+        "key": "ctrl+alt+f",
+        "when": "editorTextFocus"
+      },
+      {
+        "key": "up",
+        "command": "lipcoder.explorerUp",
+        "when": "explorerViewletVisible && explorerViewletFocus"
+      },
+      {
+        "key": "down",
+        "command": "lipcoder.explorerDown",
+        "when": "explorerViewletVisible && explorerViewletFocus"
       }
     ]
   },
