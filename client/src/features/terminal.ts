@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { spawn, ChildProcess } from 'child_process';
 import type { ExtensionContext } from 'vscode';
 import { speakToken, speakTokenList } from '../audio';
 import { stopReadLineTokens } from './stop_read_line_tokens';
@@ -16,27 +15,36 @@ let currentCharIndex = -1;
 export function registerTerminalReader(context: ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.openTerminal', () => {
+            let pty: any;
+            try {
+                pty = require('node-pty');
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    'LipCoder: Failed to load node-pty. Ensure it is installed and rebuilt for VS Code\'s Electron: run `npm install node-pty && npm rebuild node-pty --runtime=electron --target=' + process.versions.electron + ' --disturl=https://atom.io/download/electron` in the client folder.'
+                );
+                return;
+            }
             // Reset buffers
             terminalLines = [];
             currentLineIndex = -1;
             currentCharIndex = -1;
 
-            // Spawn the user's shell as a background process
+            // Spawn a real PTY running the user's shell
             const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL']!;
-            const proc: ChildProcess = spawn(shell, [], {
+            const ptyProcess = pty.spawn(shell, [], {
+                name: 'xterm-color',
                 cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath,
-                shell: true
+                env: process.env
             });
 
-            // Event emitters for the pseudoterminal
+            // Emitters for the terminal UI
             const writeEmitter = new vscode.EventEmitter<string>();
             const closeEmitter = new vscode.EventEmitter<void>();
 
-            // Forward shell stdout into the VS Code terminal and buffer lines
-            proc.stdout!.on('data', (chunk: Buffer) => {
-                const data = chunk.toString();
+            // Forward PTY output into VS Code terminal and buffer lines
+            ptyProcess.onData((data: string) => {
                 writeEmitter.fire(data);
-
+                // Buffer each non-empty line for navigation
                 const parts = data.split(/\r?\n/);
                 for (const part of parts) {
                     if (part.trim()) {
@@ -46,43 +54,34 @@ export function registerTerminalReader(context: ExtensionContext) {
                 currentLineIndex = terminalLines.length - 1;
                 currentCharIndex = -1;
             });
-
-            proc.stderr!.on('data', (chunk: Buffer) => {
-                writeEmitter.fire(chunk.toString());
-            });
-
-            proc.on('close', () => {
+            ptyProcess.onExit(() => {
                 closeEmitter.fire();
             });
 
-            // Create a pseudoterminal to drive the VS Code terminal UI
-            const pty: vscode.Pseudoterminal = {
+            // Create a true PTY-based pseudoterminal
+            const ptyTerminal: vscode.Pseudoterminal = {
                 onDidWrite: writeEmitter.event,
                 onDidClose: closeEmitter.event,
-                open: () => {
-                    // No special setup needed on open
-                },
+                open: () => { /* no-op */ },
                 close: () => {
-                    proc.kill();
+                    ptyProcess.kill();
                 },
-                handleInput: (data: string) => {
-                    // Stop any ongoing line-read or other audio
+                handleInput: (input: string) => {
+                    // (Re)stop any other speech
                     stopReadLineTokens();
                     stopPlayback();
-
-                    // Echo each typed character
-                    for (const ch of data) {
+                    // Write into the PTY (handles erase/backspace)
+                    ptyProcess.write(input);
+                    // Echo each character spoken
+                    for (const ch of input) {
                         speakToken(ch);
                     }
-
-                    // Forward the input to the shell process
-                    proc.stdin!.write(data);
                 }
             };
 
-            // Create and show the custom terminal
-            const term = vscode.window.createTerminal({ name: 'LipCoder', pty });
-            term.show();
+            // Show the custom terminal
+            const terminal = vscode.window.createTerminal({ name: 'LipCoder', pty: ptyTerminal });
+            terminal.show();
         }),
 
         // Navigate to next buffered terminal line and speak it

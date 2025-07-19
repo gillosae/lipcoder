@@ -11,6 +11,13 @@ import { speakTokenList } from '../audio';
 // Controller to cancel ongoing line-read audio
 export let lineAbortController = new AbortController();
 
+export function stopReadLineTokens(): void {
+    // Abort any ongoing speech
+    lineAbortController.abort();
+    // Reset for next invocation
+    lineAbortController = new AbortController();
+}
+
 
 export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient, currentAbortController: AbortController | null, audioMap: Record<string, string>) {
     context.subscriptions.push(

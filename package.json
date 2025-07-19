@@ -16,21 +16,7 @@
     "Other"
   ],
   "activationEvents": [
-    "*",
-    "onLanguage:javascript",
-    "onLanguage:typescript",
-    "onLanguage:python",
-    "onCommand:lipcoder.echoTest",
-    "onCommand:lipcoder.whereAmI",
-    "onCommand:lipcoder.readLineTokens",
-    "onCommand:lipcoder.echoTest",
-    "onCommand:lipcoder.whereAmI",
-    "onCommand:lipcoder.readLineTokens",
-    "onCommand:lipcoder.stopReadLineTokens",
-    "onCommand:lipcoder.toggleTypingSpeech",
-    "onCommand:lipcoder.readFunctionTokens",
-    "onCommand:lipcoder.explorerUp",
-    "onCommand:lipcoder.explorerDown"
+    "*"
   ],
   "main": "./dist/client/extension.js",
   "contributes": {
@@ -98,6 +84,14 @@
       {
         "command": "lipcoder.explorerDown",
         "title": "LipCoder: Explorer Down"
+      },
+      {
+        "command": "lipcoder.openTerminal",
+        "title": "LipCoder: Open Pseudo Terminal"
+      },
+      {
+        "command": "lipcoder.formatCode",
+        "title": "LipCoder: Format Code"
       }
     ],
     "keybindings": [
@@ -131,6 +125,11 @@
         "key": "down",
         "command": "lipcoder.explorerDown",
         "when": "explorerViewletVisible && explorerViewletFocus"
+      },
+      {
+        "command": "lipcoder.formatCode",
+        "key": "shift+alt+f",
+        "when": "editorTextFocus && !editorReadonly"
       }
     ]
   },
@@ -152,6 +151,7 @@
     "postinstall": "node ./scripts/download-silero-models.js"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/node-fetch": "^2.6.12",

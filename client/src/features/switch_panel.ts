@@ -14,7 +14,8 @@ export function registerSwitchPanel(context: ExtensionContext) {
             const panels: PanelItem[] = [
                 { label: 'Explorer', command: 'workbench.view.explorer' },
                 { label: 'Editor', command: 'workbench.action.focusActiveEditorGroup' },
-                { label: 'Terminal', command: 'workbench.action.terminal.focus' },
+                // { label: 'Terminal', command: 'workbench.action.terminal.focus' },
+                { label: 'Terminal', command: 'lipcoder.openTerminal' },
                 { label: 'Problems', command: 'workbench.actions.view.problems' },
                 { label: 'Output', command: 'workbench.action.output.toggleOutput' },
                 { label: 'Debug Console', command: 'workbench.debug.action.toggleRepl' },

@@ -7,6 +7,16 @@ import * as path from 'path';
 import { config } from '../config';
 
 export function registerSymbolTree(context: ExtensionContext) {
+
+    // When workspace is loaded, open Explorer, focus its tree, then read the file tree
+    // vscode.commands.executeCommand('workbench.view.explorer')
+    // 	.then(async () => {
+    // 		// Move focus into the file list
+    // 		await vscode.commands.executeCommand('workbench.files.action.focusFilesExplorer');
+    // 		// Finally read out the tree
+    // 		await vscode.commands.executeCommand('lipcoder.fileTree');
+    // 	});
+
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.symbolTree', async () => {
             const editor = vscode.window.activeTextEditor;
