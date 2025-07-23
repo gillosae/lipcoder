@@ -5,7 +5,6 @@ import * as wav from 'wav';
 import { spawn, ChildProcess } from 'child_process';
 import * as os from 'os';
 import { Readable } from 'stream';
-import { lipcoderLog } from './logger';
 import { earconTokens, getTokenSound } from './tokens';
 // import { stopPlayback } from './audio';
 import { log } from './utils';

@@ -2,21 +2,11 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
-import { playWave, speakToken } from '../audio';
+import { playWave, speakToken, stopPlayback } from '../audio';
 import * as path from 'path';
 import { config } from '../config';
 
 export function registerSymbolTree(context: ExtensionContext) {
-
-    // When workspace is loaded, open Explorer, focus its tree, then read the file tree
-    // vscode.commands.executeCommand('workbench.view.explorer')
-    // 	.then(async () => {
-    // 		// Move focus into the file list
-    // 		await vscode.commands.executeCommand('workbench.files.action.focusFilesExplorer');
-    // 		// Finally read out the tree
-    // 		await vscode.commands.executeCommand('lipcoder.fileTree');
-    // 	});
-
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.symbolTree', async () => {
             const editor = vscode.window.activeTextEditor;
@@ -24,53 +14,110 @@ export function registerSymbolTree(context: ExtensionContext) {
                 vscode.window.showWarningMessage('Open a file first!');
                 return;
             }
+            const originalSelection = editor.selection;
             const uri = editor.document.uri;
-            // 1) Fetch the symbol tree for the current file
+
+            // 1) Fetch document symbols
             const tree = (await vscode.commands.executeCommand<DocumentSymbol[]>(
                 'vscode.executeDocumentSymbolProvider',
                 uri
             )) || [];
-            console.log('Symbol tree:', tree);
-            // Visualize the symbol tree as an ASCII diagram in the console
-            function printTree(nodes: DocumentSymbol[], indent = '') {
-                nodes.forEach((node, idx) => {
-                    const isLast = idx === nodes.length - 1;
-                    const pointer = isLast ? '└─ ' : '├─ ';
-                    console.log(`${indent}${pointer}${vscode.SymbolKind[node.kind]}: ${node.name}`);
-                    const childIndent = indent + (isLast ? '   ' : '│  ');
-                    if (node.children && node.children.length) {
-                        printTree(node.children, childIndent);
-                    }
-                });
-            }
-            printTree(tree);
-            // 2) Flatten & annotate with depth
-            const chunks: { tokens: string[]; depth: number }[] = [];
-            function walk(nodes: DocumentSymbol[], depth = 0) {
+
+            // 2) Flatten into a list with label, depth, line
+            const syms: { label: string; depth: number; line: number }[] = [];
+            function walk(nodes: DocumentSymbol[], depth: number) {
                 for (const node of nodes) {
-                    // e.g. ["class", "Foo"] or ["function", "bar"]
-                    const kindName = vscode.SymbolKind[node.kind].toLowerCase();
-                    chunks.push({ tokens: [kindName, node.name], depth });
-                    if (node.children.length) {
+                    const kind = vscode.SymbolKind[node.kind].toLowerCase();
+                    const name = node.name;
+                    const label = `${kind}: ${name}`;
+                    syms.push({ label, depth, line: node.range.start.line });
+                    if (node.children && node.children.length) {
                         walk(node.children, depth + 1);
                     }
                 }
             }
             walk(tree, 0);
 
-            // Max indent constant
-            const MAX_INDENT_UNITS = 5;
-
-            // 4) Sonify symbol tree with indent earcons and TTS
-            for (const { tokens, depth } of chunks) {
-                // Play indent earcon based on depth
-                const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                const file = path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`);
-                await playWave(file, { isEarcon: true, immediate: true });
-                // Speak symbol kind and name
-                await speakToken(tokens[0]); // e.g., "class" or "function"
-                await speakToken(tokens[1], `symbol_${tokens[0]}`); // the identifier name
+            if (syms.length === 0) {
+                vscode.window.showInformationMessage('No symbols found in this file.');
+                return;
             }
+
+            // Setup QuickPick
+            let accepted = false;
+            let autoTimer: NodeJS.Timeout | null = null;
+            let hideHandled = false;
+
+            const quickPick = vscode.window.createQuickPick<{ label: string; depth: number; line: number }>();
+            quickPick.items = syms.map(s => ({
+                label: `${'\u00A0\u00A0'.repeat(s.depth)}${s.label}`,
+                depth: s.depth,
+                line: s.line
+            }));
+            quickPick.placeholder = 'Select a symbol…';
+
+            // Handle movement
+            quickPick.onDidChangeActive(async active => {
+                if (autoTimer) {
+                    clearInterval(autoTimer);
+                    autoTimer = null;
+                }
+                const sel = active[0];
+                if (sel) {
+                    const { line, label, depth } = sel;
+                    const pos = new vscode.Position(line, 0);
+                    editor.selection = new vscode.Selection(pos, pos);
+                    editor.revealRange(new vscode.Range(pos, pos));
+                    stopPlayback();
+                    const MAX_INDENT_UNITS = 5;
+                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
+                    speakToken(label);
+                }
+            });
+
+            // Accept
+            quickPick.onDidAccept(() => {
+                accepted = true;
+                const sel = quickPick.activeItems[0];
+                if (sel) {
+                    const { label, line, depth } = sel;
+                    const MAX_INDENT_UNITS = 5;
+                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
+                    speakToken(`moved to symbol ${label} line ${line + 1}`);
+                }
+                quickPick.hide();
+            });
+
+            quickPick.onDidHide(() => {
+                if (hideHandled) return;
+                hideHandled = true;
+                if (!accepted) {
+                    const pos = originalSelection.active;
+                    editor.selection = originalSelection;
+                    editor.revealRange(new vscode.Range(pos, pos));
+                    speakToken(`back to line ${pos.line + 1}`);
+                }
+                quickPick.dispose();
+            });
+
+            quickPick.show();
+            speakToken('symbols');
+
+            // Auto-iterate
+            let idx = 0;
+            autoTimer = setInterval(() => {
+                if (idx >= quickPick.items.length) {
+                    clearInterval(autoTimer!);
+                    autoTimer = null;
+                    return;
+                }
+                quickPick.activeItems = [quickPick.items[idx]];
+                idx++;
+            }, 1000);
         })
     );
 }

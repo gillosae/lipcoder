@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
-import type { SymbolInformation } from 'vscode-languageserver-types';
 import type { DocumentSymbol } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { speakToken } from '../audio';
-import { log } from '../utils';
+import { stopPlayback, speakToken } from '../audio';
 
 export function registerBreadcrumb(
     context: ExtensionContext,
@@ -14,77 +13,85 @@ export function registerBreadcrumb(
         vscode.commands.registerCommand('lipcoder.breadcrumb', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
-                vscode.window.showWarningMessage('No active editor!');
+                vscode.window.showWarningMessage('Open a file first!');
                 return;
             }
-
-            // Build the file‐path breadcrumb
-            const uri = editor.document.uri.toString();
-            const relativePath = vscode.workspace.asRelativePath(editor.document.uri);
-            const breadcrumb = relativePath.split(/[\\/\\\\]/).join(' ');
-
-            // Try to locate the smallest enclosing symbol
-            let namePart = '';
-            try {
-                // Fetch symbols via VS Code API (works for all languages, including Python)
-                const raw = (await vscode.commands.executeCommand<
-                    (SymbolInformation | DocumentSymbol)[]
-                >(
-                    'vscode.executeDocumentSymbolProvider',
-                    editor.document.uri
-                )) || [];
-                // Flatten into SymbolInformation[]
-                const symbols: SymbolInformation[] = [];
-                function collect(item: any) {
-                    if (item.location) {
-                        symbols.push(item as SymbolInformation);
-                    } else if (item.range && item.selectionRange) {
-                        symbols.push({
-                            name: item.name,
-                            kind: item.kind,
-                            location: { uri, range: item.range },
-                        } as SymbolInformation);
-                        if (Array.isArray(item.children)) {
-                            item.children.forEach(collect);
-                        }
+            const originalSelection = editor.selection;
+            const pos = editor.selection.active;
+            const uri = editor.document.uri;
+            const relativePath = vscode.workspace.asRelativePath(uri);
+            // Fetch all document symbols
+            const tree = (await vscode.commands.executeCommand<DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                uri
+            )) || [];
+            // Find path of symbols containing the cursor
+            function findPath(nodes: DocumentSymbol[]): { label: string; line: number }[] {
+                for (const node of nodes) {
+                    if (
+                        (pos.line > node.range.start.line ||
+                            (pos.line === node.range.start.line && pos.character >= node.range.start.character)) &&
+                        (pos.line < node.range.end.line ||
+                            (pos.line === node.range.end.line && pos.character <= node.range.end.character))
+                    ) {
+                        const label = `${vscode.SymbolKind[node.kind].toLowerCase()}: ${node.name}`;
+                        const childPath = findPath(node.children || []);
+                        return [{ label, line: node.range.start.line }, ...childPath];
                     }
                 }
-                raw.forEach(collect);
-                // Find symbols enclosing cursor
-                const pos = editor.selection.active;
-                const containing = symbols
-                    .filter(s => {
-                        const r = s.location.range;
-                        return (
-                            (pos.line > r.start.line ||
-                                (pos.line === r.start.line && pos.character >= r.start.character)) &&
-                            (pos.line < r.end.line ||
-                                (pos.line === r.end.line && pos.character <= r.end.character))
-                        );
-                    })
-                    .sort((a, b) => {
-                        const lenA = a.location.range.end.line - a.location.range.start.line;
-                        const lenB = b.location.range.end.line - b.location.range.start.line;
-                        return lenA - lenB;
-                    });
-                if (containing.length > 0) {
-                    namePart = containing[0].name;
+                return [];
+            }
+            const pathItems = findPath(tree);
+            // Speak current location
+            const message = pathItems.length
+                ? `You are in ${relativePath} ${pathItems[0].label}`
+                : `You are in ${relativePath}`;
+            await speakToken(message);
+            if (pathItems.length === 0) {
+                vscode.window.showInformationMessage(message);
+                return;
+            }
+            // QuickPick for navigation
+            let accepted = false;
+            let hideHandled = false;
+            const quickPick = vscode.window.createQuickPick<{ label: string; line: number }>();
+            quickPick.items = pathItems.map(item => ({
+                label: item.label,
+                line: item.line
+            }));
+            quickPick.placeholder = 'Navigate breadcrumb…';
+            quickPick.onDidChangeActive(active => {
+                stopPlayback();
+                const sel = active[0];
+                if (sel) {
+                    const { line, label } = sel;
+                    const p = new vscode.Position(line, 0);
+                    editor.selection = new vscode.Selection(p, p);
+                    editor.revealRange(new vscode.Range(p, p));
+                    speakToken(label);
                 }
-            } catch (err) {
-                log(`breadcrumb symbol lookup failed: ${err}`);
-            }
-
-            // Show & speak the result
-            const message =
-                namePart.length > 0
-                    ? `You are in ${breadcrumb} ${namePart} function`
-                    : `You are in ${breadcrumb}`;
-            vscode.window.showInformationMessage(message);
-            try {
-                await speakToken(message);
-            } catch {
-                // ignore TTS errors
-            }
+            });
+            quickPick.onDidAccept(() => {
+                accepted = true;
+                const sel = quickPick.activeItems[0];
+                if (sel) {
+                    speakToken(`moved to ${sel.label} line ${sel.line + 1}`);
+                }
+                quickPick.hide();
+            });
+            quickPick.onDidHide(() => {
+                if (!hideHandled) {
+                    hideHandled = true;
+                    if (!accepted) {
+                        const pos0 = originalSelection.active;
+                        editor.selection = originalSelection;
+                        editor.revealRange(new vscode.Range(pos0, pos0));
+                        speakToken(`back to line ${pos0.line + 1}`);
+                    }
+                    quickPick.dispose();
+                }
+            });
+            quickPick.show();
         })
     );
 }

@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 import torch
 import os
 import uuid
-from silero_asr
 
 app = Flask(__name__)
 

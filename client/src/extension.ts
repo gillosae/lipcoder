@@ -5,7 +5,7 @@ import { createAudioMap } from './mapping';
 import { preloadEverything } from './preload';
 import { config, initConfig } from './config';
 import { installDependencies } from './install_dependencies';
-import { lipcoderLog } from './logger';
+import { log } from './utils';
 
 import { registerEchoTest } from './features/echo_test';
 import { registerWhereAmI } from './features/where_am_i';
@@ -28,17 +28,18 @@ import { registerNavEditor } from './features/nav_editor';
 import { registerPlaySpeed } from './features/playspeed';
 
 import { registerChatCompletions } from './llm';
+import { registerSetAPIKey } from './features/set_api_key';
 
 export async function activate(context: vscode.ExtensionContext) {
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
 	installDependencies().catch(err => console.error('installDependencies failed:', err));
-	lipcoderLog.appendLine('🔍 Extension Host running on Electron v' + process.versions.electron);
+	log('🔍 Extension Host running on Electron v' + process.versions.electron);
 
-	lipcoderLog.appendLine('🔍 Extension Host running on Electron v' + process.versions.electron);
+	log('🔍 Extension Host running on Electron v' + process.versions.electron);
 
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
-	lipcoderLog.appendLine('[extension] activate() called');
+	log('[extension] activate() called');
 	vscode.window.showInformationMessage('LipCoder: activate() called');
 
 	// 2) TTS setup ───────────────────────────────────────────────────────────────────────
@@ -74,66 +75,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerFormatCode(context);
 	registerNavExplorer(context);
 	registerNavEditor(context, audioMap);
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.setOpenAIAPIKey', async () => {
-			const apiKey = await vscode.window.showInputBox({
-				prompt: 'Enter your OpenAI API key',
-				ignoreFocusOut: true,
-				placeHolder: 'sk-...'
-			});
-			if (apiKey) {
-				await vscode.workspace.getConfiguration('lipcoder').update(
-					'openaiApiKey', apiKey, vscode.ConfigurationTarget.Global
-				);
-				vscode.window.showInformationMessage('OpenAI API key saved.');
-			}
-		})
-	);
+	registerSetAPIKey(context);
 	registerChatCompletions(context);
 
-	// Accept or reject inline suggestions via key commands
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.acceptSuggestion', async () => {
-			const editor = vscode.window.activeTextEditor;
-			if (
-				editor &&
-				lastSuggestion &&
-				editor.selection.active.line === lastSuggestion.line &&
-				!lastSuggestion.read
-			) {
-				// First Shift+Enter: play alert beep then read suggestion
-				playEarcon('client/audio/alert/suggestion.wav');
-				stopPlayback();
-				speakToken(lastSuggestion.suggestion);
-				markSuggestionRead();
-			} else {
-				// Second Shift+Enter: accept suggestion
-				await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
-				clearLastSuggestion();
-			}
-		})
-	);
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.rejectSuggestion', async () => {
-			const editor = vscode.window.activeTextEditor;
-			if (
-				editor &&
-				lastSuggestion &&
-				editor.selection.active.line === lastSuggestion.line
-			) {
-				// Reject current suggestion
-				clearLastSuggestion();
-				await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
-			} else {
-				// Fallback: hide any suggestion
-				await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
-			}
-		})
-	);
-
-	// (Code continuation suggestion after idle removed)
 }
 
 export function deactivate() {
-	lipcoderLog.appendLine('[extension] activate() completed');
+	log('[extension] activate() completed');
 }

@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
-import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion } from '../llm';
+import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
 
-import { stopPlayback, playWave, speakToken } from '../audio';
+import { stopPlayback, playWave, speakToken, playEarcon } from '../audio';
 import * as path from 'path';
 import { log } from '../utils';
 
@@ -53,7 +53,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 `Return only the code to insert at the current cursor position in line ${currentLine}, ` +
                 `given the following context:\n${contextText}`;
 
-            log(`Inline prompt: ${userPrompt}`);
+            // log(`Inline prompt: ${userPrompt}`);
 
             const resp = await client.chat.completions.create({
                 model: "gpt-4o-mini",
@@ -123,6 +123,46 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.cancelSuggestion', () => {
             clearLastSuggestion();
+        })
+    );
+
+    // Commands: accept or reject suggestions via Shift+Enter / Backspace
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.acceptSuggestion', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (
+                editor &&
+                lastSuggestion &&
+                editor.selection.active.line === lastSuggestion.line &&
+                !lastSuggestion.read
+            ) {
+                // First Shift+Enter: play alert beep then read suggestion
+                playEarcon('client/audio/alert/suggestion.wav');
+                stopPlayback();
+                await speakToken(lastSuggestion.suggestion);
+                markSuggestionRead();
+            } else {
+                // Second Shift+Enter: accept suggestion
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
+                clearLastSuggestion();
+            }
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.rejectSuggestion', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (
+                editor &&
+                lastSuggestion &&
+                editor.selection.active.line === lastSuggestion.line
+            ) {
+                // Reject current suggestion
+                clearLastSuggestion();
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            } else {
+                // Fallback: hide any suggestion
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            }
         })
     );
 }
