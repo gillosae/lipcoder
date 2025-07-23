@@ -1,3 +1,5 @@
+import { suggestCodeContinuation } from '../llm';
+import { speakToken } from '../audio';
 import * as fs from 'fs';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
@@ -68,6 +70,14 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
                     .join(' ');
                 console.log(`[readLineTokens] speak sequence: ${spokenSeq}`);
                 await speakTokenList(validChunks, lineAbortController.signal);
+                // After reading tokens, suggest code continuation
+                const currentLineText = editor.document.lineAt(line).text;
+                const codeSuggestion = await suggestCodeContinuation(currentLineText);
+                if (codeSuggestion) {
+                    // Stop any ongoing playback before speaking the suggestion
+                    stopPlayback();
+                    speakToken(codeSuggestion);
+                }
             } catch (err: any) {
                 console.error('readLineTokens error:', err);
             }

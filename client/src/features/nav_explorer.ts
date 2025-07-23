@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { stopReadLineTokens } from './stop_read_line_tokens';
+import { stopReadLineTokens } from './stop_reading';
 import { stopPlayback, speakToken } from '../audio';
 
 export function registerNavExplorer(context: vscode.ExtensionContext) {

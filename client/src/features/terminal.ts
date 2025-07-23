@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import { speakToken, speakTokenList } from '../audio';
-import { stopReadLineTokens } from './stop_read_line_tokens';
+import { stopReadLineTokens } from './stop_reading';
 import { stopPlayback } from '../audio';
 
 let terminalLines: string[] = [];

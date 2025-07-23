@@ -41,7 +41,29 @@
           ".py"
         ]
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "key": "enter",
+        "command": "editor.action.inlineSuggest.commit",
+        "when": "inlineSuggestionVisible"
+      },
+      {
+        "key": "shift+enter",
+        "command": "editor.action.inlineSuggest.hide",
+        "when": "inlineSuggestionVisible"
+      }
+    ],
+    "configuration": {
+      "title": "LipCoder",
+      "properties": {
+        "lipcoder.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your OpenAI API key for ChatGPT completions."
+        }
+      }
+    }
   },
   "files": [
     "dist/**",
@@ -58,7 +80,8 @@
   "description": "",
   "dependencies": {
     "node-pty": "^1.0.0",
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "openai": "^4.3.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

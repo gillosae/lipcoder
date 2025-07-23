@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { isFileTreeReading } from './file_tree';
-import { stopReadLineTokens } from './stop_read_line_tokens';
+import { stopReadLineTokens } from './stop_reading';
 import { stopPlayback, speakToken } from '../audio';
 import { readWordTokens } from './read_word_tokens';
 import { readTextTokens } from './read_text_tokens';

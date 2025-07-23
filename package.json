@@ -92,6 +92,10 @@
       {
         "command": "lipcoder.formatCode",
         "title": "LipCoder: Format Code"
+      },
+      {
+        "command": "lipcoder.setOpenAIAPIKey",
+        "title": "LipCoder: Set OpenAI API Key"
       }
     ],
     "keybindings": [
@@ -130,8 +134,33 @@
         "command": "lipcoder.formatCode",
         "key": "shift+alt+f",
         "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "lipcoder.acceptSuggestion",
+        "key": "shift+enter",
+        "when": "inlineSuggestionVisible"
+      },
+      {
+        "command": "lipcoder.rejectSuggestion",
+        "key": "escape",
+        "when": "editorTextFocus && inlineSuggestionVisible"
+      },
+      {
+        "command": "lipcoder.rejectSuggestion",
+        "key": "backspace",
+        "when": "editorTextFocus && inlineSuggestionVisible"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "LipCoder",
+      "properties": {
+        "lipcoder.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your OpenAI API key for ChatGPT completions."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
