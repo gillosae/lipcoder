@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 import torch
 import os
 import uuid
+import numpy as np
 
 app = Flask(__name__)
 
@@ -28,17 +29,20 @@ def asr():
     temp_path = os.path.join('/tmp', f"asr_{uuid.uuid4().hex}.wav")
     audio_file.save(temp_path)
 
-    # Read and preprocess (resample to 16 kHz)
-    wav = read_audio(temp_path, sampling_rate=16000)
-    batches = split_into_batches([wav], batch_size=1)
-    input_data = prepare_model_input(batches, device=device)
+    try:
+        # Use the Silero workflow: split_into_batches expects file paths
+        batches = split_into_batches([temp_path], batch_size=1)
+        input_data = prepare_model_input(read_batch(batches[0]), device=device)
 
-    # Run inference and decode
-    output = model(input_data)
-    result = decoder(output[0].cpu())
-    os.remove(temp_path)
-
-    return jsonify({'text': result})
+        # Run inference and decode
+        output = model(input_data)
+        result = decoder(output[0].cpu())
+        
+        return jsonify({'text': result})
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 if __name__ == '__main__':
     # Run a WSGI server on port 5003
