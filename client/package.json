@@ -63,7 +63,34 @@
           "description": "Your OpenAI API key for ChatGPT completions."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "lipcoder.startASRStreaming",
+        "title": "Start ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRStreaming",
+        "title": "Stop ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleASRStreaming",
+        "title": "Toggle ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showASROutput",
+        "title": "Show ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearASROutput",
+        "title": "Clear ASR Output",
+        "category": "LipCoder"
+      }
+    ]
   },
   "files": [
     "dist/**",

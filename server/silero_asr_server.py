@@ -1,11 +1,13 @@
 from asgiref.wsgi import WsgiToAsgi
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import torch
 import os
 import uuid
 import numpy as np
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Initialize device and load the Silero STT model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

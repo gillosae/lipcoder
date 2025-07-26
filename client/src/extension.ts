@@ -29,6 +29,7 @@ import { registerPlaySpeed } from './features/playspeed';
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
+import { registerASRStreaming } from './features/asr_streaming';
 
 export async function activate(context: vscode.ExtensionContext) {
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
@@ -72,6 +73,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerSetAPIKey(context);
 	registerChatCompletions(context);
 	registerVibeCodingCommands(context);
+	registerASRStreaming(context);
 
 }
 

@@ -13,7 +13,7 @@ tts_model = SileroTTS(
     model_id='v3_en',
     language='en',
     speaker='en_3',
-    sample_rate=8000,
+    sample_rate=24000,
     device=device
 )
 
@@ -25,7 +25,7 @@ def tts():
     data = request.json
     text = data['text']
     speaker = data.get('speaker', 'en_3')
-    sample_rate = data.get('sample_rate', 16000)
+    sample_rate = data.get('sample_rate', 24000)
 
     # Update model parameters
     tts_model.speaker = speaker
