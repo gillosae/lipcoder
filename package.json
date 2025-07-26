@@ -96,6 +96,10 @@
       {
         "command": "lipcoder.setOpenAIAPIKey",
         "title": "LipCoder: Set OpenAI API Key"
+      },
+      {
+        "command": "lipcoder.vibeCoding",
+        "title": "LipCoder: Vibe Coding - Modify Code with Natural Language"
       }
     ],
     "keybindings": [
@@ -149,6 +153,11 @@
         "command": "lipcoder.rejectSuggestion",
         "key": "backspace",
         "when": "editorTextFocus && inlineSuggestionVisible"
+      },
+      {
+        "command": "lipcoder.vibeCoding",
+        "key": "ctrl+shift+v",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {

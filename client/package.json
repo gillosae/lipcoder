@@ -1,7 +1,7 @@
 {
   "name": "client",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "../dist/client/extension.js",
   "activationEvents": [
     "onLanguage:javascript",
     "onLanguage:typescript",
@@ -79,9 +79,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "diff": "^8.0.2",
     "node-pty": "^1.0.0",
-    "vscode-languageclient": "^9.0.1",
-    "openai": "^4.3.0"
+    "openai": "^4.3.0",
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

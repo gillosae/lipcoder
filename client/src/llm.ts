@@ -109,3 +109,4 @@ export async function suggestCodeContinuation(line: string): Promise<string> {
     log(`OpenAI Continuation Received: ${suggestion}`);
     return suggestion;
 }
+

@@ -28,6 +28,7 @@ import { registerPlaySpeed } from './features/playspeed';
 
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
+import { registerVibeCodingCommands } from './features/vibe_coding';
 
 export async function activate(context: vscode.ExtensionContext) {
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
@@ -70,9 +71,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerNavEditor(context, audioMap);
 	registerSetAPIKey(context);
 	registerChatCompletions(context);
+	registerVibeCodingCommands(context);
 
 }
 
 export function deactivate() {
-
+	log("lipcoder deactivate");
 }

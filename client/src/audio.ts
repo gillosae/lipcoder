@@ -5,51 +5,37 @@ import * as wav from 'wav';
 import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
-import { earconTokens, getTokenSound } from './tokens';
 import { log } from './utils';
+import { config } from './config';
+import { isAlphabet, isNumber } from './mapping';
 
-import { config, categoryVoiceMap, sileroConfig } from './config';
-import { numberMap, isAlphabet, isEarcon, isNumber, isSpecial, specialCharMap } from './mapping';
-import { fetch, Agent } from 'undici';
+// Import from the new modules
+import { playEarcon, stopEarconPlayback, isEarconToken, findTokenSound, earconRaw } from './earcon';
+import { genTokenAudio, playSpecial, isTTSRequired, getSpeakerForCategory, specialWordCache } from './tts';
 
-
-// Keep-alive agent for HTTP fetch to reuse connections
-const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
+// Re-export functions that other modules expect from audio.ts
+export { genTokenAudio, playSpecial, specialWordCache } from './tts';
+export { playEarcon, earconRaw } from './earcon';
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
 let currentReader: wav.Reader | null = null;
 let currentFileStream: fs.ReadStream | null = null;
 
+// Cache for arbitrary WAV files for immediate playback
+const wavCache: Record<string, { format: any; pcm: Buffer }> = {};
 
-function findTokenSound(token: string): string | null {
-    const primary = getTokenSound(token);
-    if (primary) return primary;
-
-    const lower = token.toLowerCase();
-    // Alphabet folder (letters)
-    const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
-    if (fs.existsSync(alphaPath)) return alphaPath;
-
-    // Number folder (digits)
-    const numPath = path.join(config.numberPath(), `${lower}.wav`);
-    if (fs.existsSync(numPath)) return numPath;
-
-    // Special‐tokens folder: map single-char token to its spoken name
-    const specialName = specialCharMap[token];
-    if (specialName) {
-        // First check the “special” folder (underbar, equals, etc.)
-        const specialFile = path.join(config.specialPath(), `${specialName}.wav`);
-        if (fs.existsSync(specialFile)) return specialFile;
-        // Then fall back to the earcon folder (for punctuation like bigquote)
-        const fallbackEarcon = path.join(config.earconPath(), `${specialName}.wav`);
-        if (fs.existsSync(fallbackEarcon)) return fallbackEarcon;
+function hookChildErrors(cp: ChildProcess) {
+    cp.on('error', err => {
+        log(`🔊 player "error" event: ${err.stack || err}`);
+    });
+    if (cp.stderr) {
+        cp.stderr.on('data', chunk => {
+            log(`🔊 player stderr: ${chunk.toString().trim()}`);
+        });
     }
-
-    return null;
+    return cp;
 }
-
-
 
 // Immediate external playback for low-latency abortable audio
 function playImmediate(filePath: string): Promise<void> {
@@ -69,25 +55,6 @@ function playImmediate(filePath: string): Promise<void> {
     currentFallback = cp;
     return new Promise<void>(resolve => cp.on('close', () => resolve()));
 }
-
-function hookChildErrors(cp: ChildProcess) {
-    cp.on('error', err => {
-        log(`🔊 player “error” event: ${err.stack || err}`);
-    });
-    if (cp.stderr) {
-        cp.stderr.on('data', chunk => {
-            log(`🔊 player stderr: ${chunk.toString().trim()}`);
-        });
-    }
-    return cp;
-}
-
-// Cache for each token: { format, pcmBuffer }
-interface EarconData { format: any; pcm: Buffer }
-const earconCache: Record<string, EarconData> = {};
-
-// Cache for arbitrary WAV files for immediate playback
-const wavCache: Record<string, { format: any; pcm: Buffer }> = {};
 
 function playCachedWav(filePath: string): Promise<void> {
     // Load and cache PCM+format if needed
@@ -116,228 +83,6 @@ function playCachedWav(filePath: string): Promise<void> {
     });
 }
 
-// Cache for special-word TTS audio (format + PCM)
-export const specialWordCache: Record<string, EarconData> = {};
-/** Decode each special-word TTS once and stash in memory */
-
-/** Play a preloaded special-word from memory */
-export function playSpecial(word: string): Promise<void> {
-    log(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
-    const entry = specialWordCache[word];
-    if (!entry) {
-        // fallback to file-based playback
-        log(`[playSpecial] fallback to file-based playback for "${word}"`);
-        const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
-        const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const file = path.join(cacheDir, `text_${sanitized}.wav`);
-        log(`[playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
-        return playWave(file, { isEarcon: true });
-    }
-    return new Promise((resolve, reject) => {
-        const speaker = new Speaker(entry.format);
-        speaker.on('error', reject);
-        speaker.on('close', resolve);
-        speaker.write(entry.pcm);
-        speaker.end();
-    });
-}
-
-
-// ── Generate (but don’t play) audio for a token ───────────────────────────────
-export async function genTokenAudio(
-    token: string,
-    category?: string,
-    opts?: { speaker?: string }
-): Promise<string> {
-    log(`[genTokenAudio] START token="${token}" category="${category}"`);
-
-    // 0) Pre-generated keyword audio?
-    if (category && category.startsWith('keyword_')) {
-        const lang = category.split('_')[1];      // “python” or “typescript”
-        const filename = token.toLowerCase();     // match your saved filenames
-        const filePath = path.join(config.earconPath(), lang, `${filename}.wav`);
-        log(`[genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
-        if (fs.existsSync(filePath)) {
-            log(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
-            return filePath;  // skip TTS entirely
-        }
-    }
-
-    // 0.5) Cache multi-character tokens to avoid re-generating TTS repeatedly
-    const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
-    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-    if (token.length > 1) {
-        // sanitize the token to a filesystem-safe name
-        const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
-        log(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
-        if (fs.existsSync(cachedFile)) {
-            log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
-            return cachedFile;
-        }
-        // generate and save to the cache
-        log(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
-        const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
-        const baseCategory = category?.split('_')[0];
-        const speakerName =
-            opts?.speaker
-            ?? (baseCategory && categoryVoiceMap[baseCategory])
-            ?? sileroConfig.defaultSpeaker!;
-        // Send text to long-running Silero server instead of spawning
-        const res = await fetch('http://localhost:5002/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: token,
-                speaker: speakerName,
-                sample_rate: sampleRate,
-            }),
-            dispatcher: keepAliveAgent
-        });
-        if (!res.ok) {
-            // Capture and log the error body for debugging
-            let errorBody: string;
-            try {
-                errorBody = await res.text();
-            } catch {
-                errorBody = '<unable to read response body>';
-            }
-            log(
-                `[genTokenAudio] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
-            );
-            throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
-        }
-        const wavBuffer = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(cachedFile, wavBuffer);
-        return cachedFile;
-    }
-
-    // 1) Earcon?
-    const wav = findTokenSound(token);
-    log(`[getTokenSound] token="${token}", earconDir="${config.earconPath()}"`);
-    if (wav) return wav;
-
-    // 2) Skip blanks
-    if (!token.trim()) throw new Error('No text to TTS for token');
-
-    // 3) Determine which Silero speaker to use
-    const baseCategory = category?.split('_')[0];
-    const speakerName =
-        opts?.speaker
-        ?? (baseCategory && categoryVoiceMap[baseCategory])
-        ?? sileroConfig.defaultSpeaker!;
-
-    // 4) Validate & build outFile as before…
-    const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
-    if (!fs.existsSync(pythonExe)) throw new Error(`Python not found: ${pythonExe}`);
-    if (!fs.existsSync(scriptPath)) throw new Error(`Silero script not found: ${scriptPath}`);
-
-    const tmpDir = path.join(os.tmpdir(), 'lipcoder_silero_tts');
-    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-    const outFile = path.join(tmpDir, `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
-
-    const args = [
-        scriptPath,
-        '--language', language,
-        '--model_id', modelId,
-        '--speaker', speakerName,
-        '--text', token,
-        '--sample_rate', String(sampleRate),
-        '--output', outFile,
-    ];
-
-    const proc = spawn(pythonExe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    proc.stderr?.on('data', c => stderr += c.toString());
-
-    await new Promise<void>((resolve, reject) => {
-        proc.on('error', reject);
-        proc.on('close', code => {
-            if (code !== 0) return reject(new Error(
-                `Silero exited ${code}\nCmd: ${pythonExe} ${args.join(' ')}\n${stderr}`
-            ));
-            resolve();
-        });
-    });
-
-    log(`[genTokenAudio] generated new TTS to ${outFile}`);
-    return outFile;
-}
-
-
-export const earconRaw: Record<string, Buffer> = {};
-
-export function playEarcon(token: string): Promise<void> {
-    const file = findTokenSound(token);
-    if (!file) {
-        // no earcon mapped
-        return Promise.resolve();
-    }
-
-    // Lazy-load the raw file once
-    if (!earconRaw[token]) {
-        earconRaw[token] = fs.readFileSync(file);
-    }
-    const buf = earconRaw[token];
-    // Parse header fields: channels @22, sampleRate @24, bitDepth @34
-    const channels = buf.readUInt16LE(22);
-    const sampleRate = buf.readUInt32LE(24);
-    const bitDepth = buf.readUInt16LE(34);
-    // Locate the "data" subchunk (skipping any extra chunks) and slice out PCM
-    const dataIdx = buf.indexOf(Buffer.from('data'));
-    if (dataIdx < 0) throw new Error(`No data chunk in earcon ${file}`);
-    const pcm = buf.slice(dataIdx + 8);
-    // Include signed/float flags for Speaker
-    const fmt = { channels, sampleRate, bitDepth, signed: true, float: false };
-
-
-    return new Promise((resolve) => {
-        try {
-            // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...fmt, samplesPerFrame: 128 } as any);
-            // Track this earcon speaker for stopPlayback()
-            currentSpeaker = speaker;
-            speaker.on('error', (err) => {
-                log(`[playEarcon] Speaker error: ${err.stack || err}`);
-                // Fallback to external player
-                let cmd: string, args: string[];
-                if (process.platform === 'darwin') {
-                    cmd = 'afplay'; args = [file];
-                } else if (process.platform === 'win32') {
-                    cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
-                } else if (process.platform === 'linux') {
-                    cmd = 'aplay'; args = [file];
-                } else {
-                    cmd = 'aplay'; args = [file];
-                }
-                const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-                currentFallback = cp;
-                cp.on('close', () => resolve());
-            });
-            speaker.on('close', () => resolve());
-            speaker.write(pcm);
-            speaker.end();
-        } catch (err: any) {
-            log(`[playEarcon] Exception: ${err.stack || err}`);
-            // Fallback external
-            let cmd: string, args: string[];
-            if (process.platform === 'darwin') {
-                cmd = 'afplay'; args = [file];
-            } else if (process.platform === 'win32') {
-                cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
-            } else if (process.platform === 'linux') {
-                cmd = 'aplay'; args = [file];
-            } else {
-                cmd = 'aplay'; args = [file];
-            }
-            const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-            currentFallback = cp;
-            cp.on('close', () => resolve());
-        }
-    });
-}
-
-
 // ── Speak a token (generate + play) ───────────────────────────────────────────
 export async function speakToken(
     token: string,
@@ -347,13 +92,14 @@ export async function speakToken(
     try {
         log(`[speakToken] token="${token}" category="${category}"`);
         let playPromise: Promise<void>;
+        
         if (isAlphabet(token)) {
             const lower = token.toLowerCase();
             const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
             if (fs.existsSync(alphaPath)) {
                 playPromise = playCachedWav(alphaPath);
             } else {
-                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? sileroConfig.defaultSpeaker! });
+                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
                 playPromise = playWave(filePath);
             }
         } else if (isNumber(token)) {
@@ -361,20 +107,20 @@ export async function speakToken(
             if (fs.existsSync(numPath)) {
                 playPromise = playCachedWav(numPath);
             } else {
-                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? sileroConfig.defaultSpeaker! });
+                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
                 playPromise = playWave(filePath);
             }
-        } else if (isEarcon(token)) {
+        } else if (isEarconToken(token)) {
             playPromise = playEarcon(token);
-        } else {
-            const baseCategory = category?.split('_')[0];
-            const speakerName =
-                opts?.speaker
-                ?? (baseCategory && categoryVoiceMap[baseCategory])
-                ?? sileroConfig.defaultSpeaker!;
+        } else if (isTTSRequired(token)) {
+            const speakerName = opts?.speaker ?? getSpeakerForCategory(category);
             const filePath = await genTokenAudio(token, category, { speaker: speakerName });
             playPromise = playWave(filePath);
+        } else {
+            // Skip blanks or unknown tokens
+            return Promise.resolve();
         }
+        
         // Race against abort signal
         if (opts?.signal) {
             return await Promise.race([
@@ -418,7 +164,6 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         }
     }
 }
-
 
 // ── Play a WAV file by streaming its PCM to the speaker, avoiding any external process spawns. ──────────
 let playQueue = Promise.resolve();
@@ -503,17 +248,12 @@ export function playWave(
         if (junkBuf.toString('ascii') === 'JUNK') {
             log(`[playWave] Detected JUNK chunk in ${filePath}, playing via raw earcon playback`);
             // Find the token corresponding to this earcon file
-            const fname = path.basename(filePath);
-            let tokenFound: string | undefined;
-            for (const t of earconTokens) {
-                const p = getTokenSound(t);
-                if (p && path.basename(p) === fname) {
-                    tokenFound = t;
-                    break;
-                }
-            }
-            if (tokenFound) {
-                return playEarcon(tokenFound);
+            const fname = path.basename(filePath, '.wav');
+            // Try to find a token that maps to this filename
+            // This is a simplified approach - in practice you might want a reverse mapping
+            const token = fname;
+            if (findTokenSound(token)) {
+                return playEarcon(token);
             }
             // Fallback to wav.Reader if not a known earcon
         }
@@ -524,17 +264,11 @@ export function playWave(
     if (opts?.isEarcon) {
         log(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
         // Determine token and use playEarcon
-        const fname = path.basename(filePath);
-        let tokenFound: string | undefined;
-        for (const t of earconTokens) {
-            const p = getTokenSound(t);
-            if (p && path.basename(p) === fname) {
-                tokenFound = t;
-                break;
-            }
-        }
-        if (tokenFound) {
-            return playEarcon(tokenFound);
+        const fname = path.basename(filePath, '.wav');
+        // Try to find a token that maps to this filename
+        const token = fname;
+        if (findTokenSound(token)) {
+            return playEarcon(token);
         }
         // Fallback to wav.Reader if not found
     }
@@ -577,6 +311,9 @@ export function generateTone(
  * Immediately aborts any in‐flight audio (earcon or fallback).
  */
 export function stopPlayback(): void {
+    // Stop earcon playback
+    stopEarconPlayback();
+    
     if (currentSpeaker) {
         try {
             // force-kill the speaker stream immediately
@@ -638,7 +375,7 @@ export async function playSequence(
         const sampleRate = buf.readUInt32LE(24);
         const bitDepth = buf.readUInt16LE(34);
 
-        // Find the “data” tag, then skip the next 4 bytes (size) to get to PCM data
+        // Find the "data" tag, then skip the next 4 bytes (size) to get to PCM data
         const dataIdx = buf.indexOf(Buffer.from('data'));
         if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
         const pcm = buf.slice(dataIdx + 8);
