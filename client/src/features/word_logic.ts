@@ -83,6 +83,6 @@ export function splitWordChunks(text: string): string[] {
         }
     }
 
-    log(`[splitWordChunks] input="${text}" → tokens=${JSON.stringify(result)}`);
+    // log(`[splitWordChunks] input="${text}" → tokens=${JSON.stringify(result)}`);
     return result;
 }

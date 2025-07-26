@@ -1,15 +1,21 @@
-import { stopReadLineTokens as internalStopReadLineTokens } from './read_line_tokens';
+// Global controller for line-read cancellation
+export let lineAbortController = new AbortController();
+
+import { stopPlayback } from '../audio';
 import * as vscode from 'vscode';
 
-export const stopReadLineTokens = internalStopReadLineTokens;
+export function stopReading(): void {
+	stopPlayback();
+	// abort and reset the line reader controller
+	lineAbortController.abort();
+	// @ts-ignore
+	lineAbortController = new AbortController();
+}
 
-/**
- * Registers the stopReadLineTokens command with VS Code.
- */
-export function registerStopReadLineTokens(context: vscode.ExtensionContext) {
+export function registerStopReading(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.stopReadLineTokens', () => {
-			internalStopReadLineTokens();
+			stopReading();
 		})
 	);
 }

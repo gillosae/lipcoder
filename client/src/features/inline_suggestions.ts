@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
-
 import { stopPlayback, playWave, speakToken, playEarcon } from '../audio';
-import * as path from 'path';
+import { stopReading } from './stop_reading';
 import { log } from '../utils';
-
 import { config } from '../config';
 
 // Idle-based inline suggestion trigger state
@@ -84,6 +84,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             console.log('audioPath →', config.audioPath());
             // Play visual alert earcon using config.audioPath()
             const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.wav');
+            stopReading();
             playWave(alertWav, { immediate: true }).catch(console.error);
 
             // Store for two-step accept
@@ -101,9 +102,8 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.handleSuggestionKey', async () => {
             if (!lastSuggestion) return;
-            stopPlayback();
+            stopReading();
             if (!lastSuggestion.read) {
-                5
                 await speakToken(lastSuggestion.suggestion);
                 lastSuggestion.read = true;
             } else {
@@ -136,9 +136,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 editor.selection.active.line === lastSuggestion.line &&
                 !lastSuggestion.read
             ) {
-                // First Shift+Enter: play alert beep then read suggestion
+                // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
+                stopReading();
                 playEarcon('client/audio/alert/suggestion.wav');
-                stopPlayback();
                 await speakToken(lastSuggestion.suggestion);
                 markSuggestionRead();
             } else {

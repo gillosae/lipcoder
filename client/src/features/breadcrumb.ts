@@ -1,3 +1,4 @@
+import { stopReading } from './stop_reading';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
@@ -46,6 +47,7 @@ export function registerBreadcrumb(
             const message = pathItems.length
                 ? `You are in ${relativePath} ${pathItems[0].label}`
                 : `You are in ${relativePath}`;
+            stopReading();
             await speakToken(message);
             if (pathItems.length === 0) {
                 vscode.window.showInformationMessage(message);
@@ -61,7 +63,7 @@ export function registerBreadcrumb(
             }));
             quickPick.placeholder = 'Navigate breadcrumb…';
             quickPick.onDidChangeActive(active => {
-                stopPlayback();
+                stopReading();
                 const sel = active[0];
                 if (sel) {
                     const { line, label } = sel;
@@ -75,6 +77,7 @@ export function registerBreadcrumb(
                 accepted = true;
                 const sel = quickPick.activeItems[0];
                 if (sel) {
+                    stopReading();
                     speakToken(`moved to ${sel.label} line ${sel.line + 1}`);
                 }
                 quickPick.hide();
@@ -86,6 +89,7 @@ export function registerBreadcrumb(
                         const pos0 = originalSelection.active;
                         editor.selection = originalSelection;
                         editor.revealRange(new vscode.Range(pos0, pos0));
+                        stopReading();
                         speakToken(`back to line ${pos0.line + 1}`);
                     }
                     quickPick.dispose();

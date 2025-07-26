@@ -1,85 +1,62 @@
-import { suggestCodeContinuation } from '../llm';
-import { speakToken } from '../audio';
-import * as fs from 'fs';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { specialCharMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { playEarcon, stopPlayback } from '../audio';
 import { splitWordChunks } from './word_logic';
 import { speakTokenList } from '../audio';
-
-// Controller to cancel ongoing line-read audio
-export let lineAbortController = new AbortController();
-
-export function stopReadLineTokens(): void {
-    // Abort any ongoing speech
-    lineAbortController.abort();
-    // Reset for next invocation
-    lineAbortController = new AbortController();
-}
+import { stopReading, lineAbortController } from './stop_reading';
+import { isEditorActive } from '../ide/active';
 
 
-export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient, currentAbortController: AbortController | null, audioMap: Record<string, string>) {
+export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readLineTokens', async (editorArg?: vscode.TextEditor) => {
+            const editor = isEditorActive(editorArg);
+            if (!editor) return;
+
+            const docLang = editor.document.languageId === 'python' ? 'python' : 'typescript';
+
+            // Global stop: abort any ongoing audio and controller
+            stopReading();
+
+            const uri = editor.document.uri.toString();
+            const line = editor.selection.active.line;
+
+            // Fetch tokens and categories from LSP
+            let tokenData: { text: string; category: string }[];
+
             try {
-                const editor = editorArg ?? vscode.window.activeTextEditor;
-                if (!editor || editor.document.uri.scheme !== 'file') {
-                    vscode.window.showWarningMessage('No active file editor!');
-                    return;
-                }
+                tokenData = await client.sendRequest('lipcoder/readLineTokens', { uri, line });
+            } catch (err) {
+                console.error('LSP request failed:', err);
+                return;
+            }
+            log(`[readLineTokens] received ${tokenData.length} tokens: ${JSON.stringify(tokenData)}`);
 
-                // Cancel any prior line-read in progress
-                lineAbortController.abort();
-                lineAbortController = new AbortController();
+            // Drop first chunk if it's only whitespace
+            if (tokenData.length > 0 && tokenData[0].text.trim() === '') {
+                tokenData = tokenData.slice(1);
+            }
 
-                stopPlayback(); // Stop any ongoing audio
+            // Prepare token chunks and speak them
+            const validChunks = tokenData.map(({ text, category }) => ({
+                tokens: splitWordChunks(text),
+                category
+            }));
+            // log(`[readLineTokens] split chunks: ${JSON.stringify(validChunks)}`);
 
-                const uri = editor.document.uri.toString();
-                const line = editor.selection.active.line;
-                log(`[readLineTokens] invoked for ${uri} at line ${line}`);
+            // Log the upcoming audio tokens in human‐readable form
+            const flatTokens = validChunks.flatMap(({ tokens }) => tokens);
+            const spokenSeq = flatTokens
+                .map(tok => specialCharMap[tok] ? `(${specialCharMap[tok]})` : tok)
+                .join(' ');
+            log(`[readLineTokens] speak sequence: ${spokenSeq}`);
 
-                // Fetch tokens and categories from LSP
-                let tokData: { text: string; category: string }[];
-                try {
-                    tokData = await client.sendRequest('lipcoder/readLineTokens', { uri, line });
-                } catch (err) {
-                    console.error('LSP request failed:', err);
-                    return;
-                }
-                log(`[readLineTokens] received ${tokData.length} tokens: ${JSON.stringify(tokData)}`);
-
-                // Determine language for keyword mapping
-                const docLang = editor.document.languageId === 'python' ? 'python' : 'typescript';
-                log(`[readLineTokens] document language: ${docLang}`);
-
-                // Prepare token chunks and speak them
-                const validChunks = tokData
-                    .filter(({ text }) => text.trim() !== '')
-                    .map(({ text, category }) => ({
-                        tokens: splitWordChunks(text),
-                        category
-                    }));
-                console.log(`[readLineTokens] split chunks: ${JSON.stringify(validChunks)}`);
-                // Log the upcoming audio tokens in human‐readable form
-                const flatTokens = validChunks.flatMap(({ tokens }) => tokens);
-                const spokenSeq = flatTokens
-                    .map(tok => specialCharMap[tok] ? `(${specialCharMap[tok]})` : tok)
-                    .join(' ');
-                console.log(`[readLineTokens] speak sequence: ${spokenSeq}`);
+            try {
                 await speakTokenList(validChunks, lineAbortController.signal);
-                // After reading tokens, suggest code continuation
-                const currentLineText = editor.document.lineAt(line).text;
-                const codeSuggestion = await suggestCodeContinuation(currentLineText);
-                if (codeSuggestion) {
-                    // Stop any ongoing playback before speaking the suggestion
-                    stopPlayback();
-                    speakToken(codeSuggestion);
-                }
             } catch (err: any) {
-                console.error('readLineTokens error:', err);
+                console.error('[readLineTokens] error:', err);
             }
         })
     );

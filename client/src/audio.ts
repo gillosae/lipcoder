@@ -1,15 +1,14 @@
 import * as fs from 'fs';
-import * as path from 'path';
-import Speaker from 'speaker';
-import * as wav from 'wav';
-import { spawn, ChildProcess } from 'child_process';
 import * as os from 'os';
+import * as path from 'path';
+import * as wav from 'wav';
+import Speaker from 'speaker';
+import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
 import { earconTokens, getTokenSound } from './tokens';
-// import { stopPlayback } from './audio';
 import { log } from './utils';
 
-import { config } from './config';
+import { config, categoryVoiceMap, sileroConfig } from './config';
 import { numberMap, isAlphabet, isEarcon, isNumber, isSpecial, specialCharMap } from './mapping';
 import { fetch, Agent } from 'undici';
 
@@ -22,43 +21,7 @@ let currentFallback: ChildProcess | null = null;
 let currentReader: wav.Reader | null = null;
 let currentFileStream: fs.ReadStream | null = null;
 
-// ── TTS Backends & Config ─────────────────────────────────────────────────────
-export enum TTSBackend {
-    Silero = 'silero',
-    Espeak = 'espeak',
-}
 
-export interface SileroConfig {
-    pythonPath: string;
-    scriptPath: string;
-    language: string;
-    modelId: string;
-    defaultSpeaker?: string;
-    sampleRate: number;
-}
-
-let currentBackend = TTSBackend.Silero;
-let sileroConfig: SileroConfig = {
-    pythonPath: '',
-    scriptPath: '',
-    language: 'en',
-    modelId: 'v3_en',
-    defaultSpeaker: 'en_3',
-    sampleRate: 8000,
-};
-
-
-const categoryVoiceMap: Record<string, string> = {
-    variable: 'en_3',
-    operator: 'en_15',
-    keyword: 'en_35',
-    literal: 'en_5',
-    comment: 'en_41',
-    type: 'en_80',
-};
-
-
-// ──  ──────────────────────────────────────────────────
 function findTokenSound(token: string): string | null {
     const primary = getTokenSound(token);
     if (primary) return primary;
@@ -179,16 +142,6 @@ export function playSpecial(word: string): Promise<void> {
     });
 }
 
-// ── Configure TTS backend (Silero or Espeak) ─────────────────────────────────
-export function setBackend(
-    backend: TTSBackend,
-    config?: Partial<SileroConfig>
-) {
-    currentBackend = backend;
-    if (backend === TTSBackend.Silero && config) {
-        sileroConfig = { ...sileroConfig, ...(config as SileroConfig) };
-    }
-}
 
 // ── Generate (but don’t play) audio for a token ───────────────────────────────
 export async function genTokenAudio(
@@ -389,34 +342,50 @@ export function playEarcon(token: string): Promise<void> {
 export async function speakToken(
     token: string,
     category?: string,
-    opts?: { speaker?: string }
+    opts?: { speaker?: string; signal?: AbortSignal }
 ): Promise<void> {
     try {
-        log(`[speakTokenList] token="${token}" category="${category}"`);
+        log(`[speakToken] token="${token}" category="${category}"`);
+        let playPromise: Promise<void>;
         if (isAlphabet(token)) {
             const lower = token.toLowerCase();
             const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
             if (fs.existsSync(alphaPath)) {
-                return await playCachedWav(alphaPath);
+                playPromise = playCachedWav(alphaPath);
+            } else {
+                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? sileroConfig.defaultSpeaker! });
+                playPromise = playWave(filePath);
             }
         } else if (isNumber(token)) {
             const numPath = path.join(config.numberPath(), `${token}.wav`);
             if (fs.existsSync(numPath)) {
-                return await playCachedWav(numPath);
+                playPromise = playCachedWav(numPath);
+            } else {
+                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? sileroConfig.defaultSpeaker! });
+                playPromise = playWave(filePath);
             }
         } else if (isEarcon(token)) {
-            return await playEarcon(token);
+            playPromise = playEarcon(token);
+        } else {
+            const baseCategory = category?.split('_')[0];
+            const speakerName =
+                opts?.speaker
+                ?? (baseCategory && categoryVoiceMap[baseCategory])
+                ?? sileroConfig.defaultSpeaker!;
+            const filePath = await genTokenAudio(token, category, { speaker: speakerName });
+            playPromise = playWave(filePath);
         }
-
-        console.log('[speakToken] token=', JSON.stringify(token), 'category=', category);
-        // existing fallback TTS logic...
-        const baseCategory = category?.split('_')[0];
-        const speakerName =
-            opts?.speaker
-            ?? (baseCategory && categoryVoiceMap[baseCategory])
-            ?? sileroConfig.defaultSpeaker!;
-        const filePath = await genTokenAudio(token, category, { speaker: speakerName });
-        return await playWave(filePath);
+        // Race against abort signal
+        if (opts?.signal) {
+            return await Promise.race([
+                playPromise,
+                new Promise<void>((_, reject) => {
+                    opts.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+                })
+            ]);
+        } else {
+            return await playPromise;
+        }
     } catch (err: any) {
         log(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
     }
@@ -431,7 +400,21 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
     for (const { tokens, category } of chunks) {
         for (const token of tokens) {
             if (signal?.aborted) return;
-            await speakToken(token, category);
+            const playPromise = speakToken(token, category);
+            if (signal) {
+                try {
+                    await Promise.race([
+                        playPromise,
+                        new Promise<void>((_, reject) => {
+                            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+                        })
+                    ]);
+                } catch {
+                    return; // Stop immediately on abort
+                }
+            } else {
+                await playPromise;
+            }
         }
     }
 }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import { speakToken, speakTokenList } from '../audio';
-import { stopReadLineTokens } from './stop_reading';
+import { stopReading } from './stop_reading';
 import { stopPlayback } from '../audio';
 
 let terminalLines: string[] = [];
@@ -68,7 +68,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                 },
                 handleInput: (input: string) => {
                     // (Re)stop any other speech
-                    stopReadLineTokens();
+                    stopReading();
                     stopPlayback();
                     // Write into the PTY (handles erase/backspace)
                     ptyProcess.write(input);
@@ -87,7 +87,7 @@ export function registerTerminalReader(context: ExtensionContext) {
         // Navigate to next buffered terminal line and speak it
         vscode.commands.registerCommand('lipcoder.terminalNextLine', async () => {
             if (terminalLines.length === 0) return;
-            stopReadLineTokens();
+            stopReading();
             currentLineIndex = Math.min(currentLineIndex + 1, terminalLines.length - 1);
             currentCharIndex = -1;
             const line = terminalLines[currentLineIndex];
@@ -97,7 +97,7 @@ export function registerTerminalReader(context: ExtensionContext) {
         // Navigate to previous buffered terminal line and speak it
         vscode.commands.registerCommand('lipcoder.terminalPrevLine', async () => {
             if (terminalLines.length === 0) return;
-            stopReadLineTokens();
+            stopReading();
             currentLineIndex = Math.max(currentLineIndex - 1, 0);
             currentCharIndex = -1;
             const line = terminalLines[currentLineIndex];
@@ -107,7 +107,7 @@ export function registerTerminalReader(context: ExtensionContext) {
         // Move cursor left within current line buffer and speak character
         vscode.commands.registerCommand('lipcoder.terminalCharLeft', async () => {
             if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReadLineTokens();
+            stopReading();
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.max(currentCharIndex - 1, 0);
             const ch = line.charAt(currentCharIndex);
@@ -117,7 +117,7 @@ export function registerTerminalReader(context: ExtensionContext) {
         // Move cursor right within current line buffer and speak character
         vscode.commands.registerCommand('lipcoder.terminalCharRight', async () => {
             if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReadLineTokens();
+            stopReading();
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
             const ch = line.charAt(currentCharIndex);

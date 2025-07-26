@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { stopReadLineTokens } from './stop_reading';
+import { stopReading } from './stop_reading';
 import { stopPlayback, speakToken } from '../audio';
 
 export function registerNavExplorer(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.explorerUp', async () => {
-            stopReadLineTokens();
+            stopReading();
             await vscode.commands.executeCommand('list.focusUp');
             await vscode.commands.executeCommand('copyFilePath');
             const filePath = await vscode.env.clipboard.readText();
@@ -24,7 +24,7 @@ export function registerNavExplorer(context: vscode.ExtensionContext) {
             }
         }),
         vscode.commands.registerCommand('lipcoder.explorerDown', async () => {
-            stopReadLineTokens();
+            stopReading();
             await vscode.commands.executeCommand('list.focusDown');
             await vscode.commands.executeCommand('copyFilePath');
             const filePath = await vscode.env.clipboard.readText();

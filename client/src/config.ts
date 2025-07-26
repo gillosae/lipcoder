@@ -3,13 +3,54 @@ import type { ExtensionContext } from 'vscode';
 
 let extRoot: string;
 
-/**
- * Initialize config with the extension's root path.
- */
+// Initialize config with the extension's root path.
 export function initConfig(context: ExtensionContext) {
     extRoot = context.extensionPath;
 }
 
+// TTS Backends & Config ─────────────────────────────────────────────────────
+export enum TTSBackend {
+    Silero = 'silero',
+    Espeak = 'espeak',
+}
+
+export interface SileroConfig {
+    pythonPath: string;
+    scriptPath: string;
+    language: string;
+    modelId: string;
+    defaultSpeaker?: string;
+    sampleRate: number;
+}
+
+export let currentBackend = TTSBackend.Silero;
+export let sileroConfig: SileroConfig = {
+    pythonPath: '',
+    scriptPath: '',
+    language: 'en',
+    modelId: 'v3_en',
+    defaultSpeaker: 'en_3',
+    sampleRate: 8000,
+};
+
+export const categoryVoiceMap: Record<string, string> = {
+    variable: 'en_3',
+    operator: 'en_15',
+    keyword: 'en_35',
+    literal: 'en_5',
+    comment: 'en_41',
+    type: 'en_80',
+};
+
+// Allow runtime switching of TTS backend & config
+export function setBackend(backend: TTSBackend, partial?: Partial<SileroConfig>) {
+    currentBackend = backend;
+    if (backend === TTSBackend.Silero && partial) {
+        sileroConfig = { ...sileroConfig, ...(partial as SileroConfig) };
+    }
+}
+
+// Path and Etc Config ─────────────────────────────────────────────────────
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
     playSpeed: 1.4,              // playback speed multiplier
@@ -34,3 +75,5 @@ export const config = {
     scriptPath: () => string;
     specialPath: () => string;
 };
+
+

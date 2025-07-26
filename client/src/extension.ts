@@ -1,6 +1,5 @@
-import { suppressLine, lastSuggestion, clearLastSuggestion, markSuggestionRead } from './llm';
 import * as vscode from 'vscode';
-import { setBackend, TTSBackend, stopPlayback, speakToken, playEarcon } from './audio';
+import { setBackend, TTSBackend } from './config';
 import { createAudioMap } from './mapping';
 import { preloadEverything } from './preload';
 import { config, initConfig } from './config';
@@ -11,7 +10,7 @@ import { registerEchoTest } from './features/echo_test';
 import { registerWhereAmI } from './features/where_am_i';
 import { registerReadLineTokens } from './features/read_line_tokens';
 import { loadDictionaryWord } from './features/word_logic';
-import { registerStopReadLineTokens } from './features/stop_reading';
+import { registerStopReading } from './features/stop_reading';
 import { registerToggleTypingSpeech } from './features/toggle_typing_speech';
 import { startLanguageClient } from './language_client';
 import { registerReadCurrentLine } from './features/current_line';
@@ -32,21 +31,15 @@ import { registerSetAPIKey } from './features/set_api_key';
 
 export async function activate(context: vscode.ExtensionContext) {
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
+	log('Extension Host running on Electron v' + process.versions.electron);
 	installDependencies().catch(err => console.error('installDependencies failed:', err));
-	log('🔍 Extension Host running on Electron v' + process.versions.electron);
-
-	log('🔍 Extension Host running on Electron v' + process.versions.electron);
 
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
-	log('[extension] activate() called');
-	vscode.window.showInformationMessage('LipCoder: activate() called');
 
 	// 2) TTS setup ───────────────────────────────────────────────────────────────────────
 	await loadDictionaryWord();
-	setBackend(TTSBackend.Silero); // Use Silero for TTS
-
-	let currentAbortController: AbortController | null = null; // Module-scope cancellation controller
+	setBackend(TTSBackend.Silero);
 
 	// 3) Pre-generate earcons into cache ────────────────────────────
 	preloadEverything(context);
@@ -61,10 +54,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerEchoTest(context, client);
 	registerWhereAmI(context, client);
 	registerBreadcrumb(context, client);
-	registerReadLineTokens(context, client, currentAbortController, audioMap);
+	registerReadLineTokens(context, client);
 	registerPlaySpeed(context);
-	registerReadFunctionTokens(context, client, currentAbortController, audioMap);
-	registerStopReadLineTokens(context);
+	registerReadFunctionTokens(context, client);
+	registerStopReading(context);
 	registerToggleTypingSpeech(context, client);
 	registerReadCurrentLine(context);
 	registerSymbolTree(context);
@@ -81,5 +74,5 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-	log('[extension] activate() completed');
+
 }

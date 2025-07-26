@@ -1,5 +1,3 @@
-
-
 import { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
@@ -9,8 +7,6 @@ import { stopPlayback, speakTokenList } from '../audio';
 export function registerReadFunctionTokens(
     context: ExtensionContext,
     client: LanguageClient,
-    currentAbortController: AbortController | null,
-    audioMap: Record<string, string>
 ) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readFunctionTokens', async (editorArg?: vscode.TextEditor) => {

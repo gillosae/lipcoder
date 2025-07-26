@@ -1,8 +1,8 @@
-// in symbol_tree.ts
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { playWave, speakToken, stopPlayback } from '../audio';
+import { stopReading, lineAbortController } from './stop_reading';
 import * as path from 'path';
 import { config } from '../config';
 
@@ -12,6 +12,7 @@ export function registerSymbolTree(context: ExtensionContext) {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
+                speakToken('Open a File First!');
                 return;
             }
             const originalSelection = editor.selection;
@@ -58,6 +59,7 @@ export function registerSymbolTree(context: ExtensionContext) {
 
             // Handle movement
             quickPick.onDidChangeActive(async active => {
+                stopReading();
                 if (autoTimer) {
                     clearInterval(autoTimer);
                     autoTimer = null;
@@ -68,7 +70,6 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const pos = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos));
-                    stopPlayback();
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
@@ -79,6 +80,7 @@ export function registerSymbolTree(context: ExtensionContext) {
 
             // Accept
             quickPick.onDidAccept(() => {
+                stopReading();
                 accepted = true;
                 const sel = quickPick.activeItems[0];
                 if (sel) {
@@ -87,7 +89,11 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakToken(`moved to symbol ${label} line ${line + 1}`);
+                    speakToken(
+                        `moved to symbol ${label} line ${line + 1}`,
+                        undefined,
+                        { signal: lineAbortController.signal }
+                    );
                 }
                 quickPick.hide();
             });
@@ -99,11 +105,13 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const pos = originalSelection.active;
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
+                    stopReading();
                     speakToken(`back to line ${pos.line + 1}`);
                 }
                 quickPick.dispose();
             });
 
+            stopReading();
             quickPick.show();
             speakToken('symbols');
 
