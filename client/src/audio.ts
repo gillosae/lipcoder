@@ -137,24 +137,31 @@ export type TokenChunk = {
 };
 
 export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal): Promise<void> {
-    for (const { tokens, category } of chunks) {
-        for (const token of tokens) {
-            if (signal?.aborted) return;
-            const playPromise = speakToken(token, category);
-            if (signal) {
-                try {
-                    await Promise.race([
-                        playPromise,
-                        new Promise<void>((_, reject) => {
-                            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-                        })
-                    ]);
-                } catch {
-                    return; // Stop immediately on abort
+    // Set up a single abort handler for the entire sequence
+    let aborted = false;
+    let abortListener: (() => void) | null = null;
+    
+    if (signal) {
+        abortListener = () => { aborted = true; };
+        signal.addEventListener('abort', abortListener, { once: true });
+    }
+    
+    try {
+        for (const { tokens, category } of chunks) {
+            for (const token of tokens) {
+                // Check for abort before each token
+                if (signal?.aborted || aborted) {
+                    return;
                 }
-            } else {
-                await playPromise;
+                
+                // Just await the token directly - no additional signal handling needed
+                await speakToken(token, category);
             }
+        }
+    } finally {
+        // Clean up the listener
+        if (signal && abortListener) {
+            signal.removeEventListener('abort', abortListener);
         }
     }
 }
