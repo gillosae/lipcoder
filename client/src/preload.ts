@@ -27,23 +27,22 @@ export async function preloadKeywordWavs(extRoot: string): Promise<void> {
         async function worker() {
             while (index < files.length) {
                 const file = files[index++];
-                if (!file.endsWith('.wav')) continue;
-                const token = file.replace(/\.wav$/, '');
-                const wavPath = path.join(dir, file);
+                if (!file.endsWith('.pcm')) continue;
+                const token = file.replace(/\.pcm$/, '');
+                const pcmPath = path.join(dir, file);
                 try {
-                    const reader = new wav.Reader();
-                    const bufs: Buffer[] = [];
-                    let fmt: any;
-                    reader.on('format', f => fmt = f);
-                    reader.on('data', d => bufs.push(d));
-                    await new Promise<void>((resolve, reject) => {
-                        reader.on('end', resolve);
-                        reader.on('error', reject);
-                        fs.createReadStream(wavPath).pipe(reader);
-                    });
-                    specialWordCache[token] = { format: fmt, pcm: Buffer.concat(bufs) };
+                    // PCM files are raw data, no parsing needed
+                    const pcm = fs.readFileSync(pcmPath);
+                    const fmt = {
+                        channels: 2,      // stereo (from conversion script)
+                        sampleRate: 48000, // 48kHz (matches actual audio files)
+                        bitDepth: 16,     // 16-bit
+                        signed: true,
+                        float: false
+                    };
+                    specialWordCache[token] = { format: fmt, pcm };
                 } catch (e) {
-                    log(`[keyword preload] Failed loading ${wavPath}: ${e}`);
+                    log(`[keyword preload] Failed loading ${pcmPath}: ${e}`);
                 }
             }
         }
@@ -86,7 +85,7 @@ export async function preloadSpecialWords() {
             if (!word) break;
             const t0 = Date.now();
             const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-            const file = path.join(cacheDir, `text_${sanitized}.wav`);
+            const file = path.join(cacheDir, `text_${sanitized}.pcm`);
             await new Promise<void>((resolve, reject) => {
                 const reader = new wav.Reader();
                 const bufs: Buffer[] = [];

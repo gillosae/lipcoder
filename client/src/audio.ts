@@ -22,8 +22,17 @@ let currentFallback: ChildProcess | null = null;
 let currentReader: wav.Reader | null = null;
 let currentFileStream: fs.ReadStream | null = null;
 
-// Cache for arbitrary WAV files for immediate playback
-const wavCache: Record<string, { format: any; pcm: Buffer }> = {};
+// Cache for arbitrary PCM files for immediate playback
+const pcmCache: Record<string, { format: any; pcm: Buffer }> = {};
+
+// Standard PCM format for all audio files (matches conversion script output)
+const STANDARD_PCM_FORMAT = {
+    channels: 2,        // stereo
+    sampleRate: 48000,   // 48kHz (matches actual audio files)
+    bitDepth: 16,       // 16-bit
+    signed: true,
+    float: false
+};
 
 function hookChildErrors(cp: ChildProcess) {
     cp.on('error', err => {
@@ -56,19 +65,13 @@ function playImmediate(filePath: string): Promise<void> {
     return new Promise<void>(resolve => cp.on('close', () => resolve()));
 }
 
-function playCachedWav(filePath: string): Promise<void> {
-    // Load and cache PCM+format if needed
-    let entry = wavCache[filePath];
+function playCachedPcm(filePath: string): Promise<void> {
+    // Load and cache PCM data if needed
+    let entry = pcmCache[filePath];
     if (!entry) {
-        const buf = fs.readFileSync(filePath);
-        const channels = buf.readUInt16LE(22);
-        const sampleRate = buf.readUInt32LE(24);
-        const bitDepth = buf.readUInt16LE(34);
-        const dataIdx = buf.indexOf(Buffer.from('data'));
-        if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
-        const pcm = buf.slice(dataIdx + 8);
-        entry = { format: { channels, sampleRate, bitDepth, signed: true, float: false }, pcm };
-        wavCache[filePath] = entry;
+        const pcm = fs.readFileSync(filePath);
+        entry = { format: STANDARD_PCM_FORMAT, pcm };
+        pcmCache[filePath] = entry;
     }
     return new Promise<void>((resolve, reject) => {
         // Halt any prior playback
@@ -95,17 +98,17 @@ export async function speakToken(
         
         if (isAlphabet(token)) {
             const lower = token.toLowerCase();
-            const alphaPath = path.join(config.alphabetPath(), `${lower}.wav`);
+            const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
             if (fs.existsSync(alphaPath)) {
-                playPromise = playCachedWav(alphaPath);
+                playPromise = playCachedPcm(alphaPath);
             } else {
                 const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
                 playPromise = playWave(filePath);
             }
         } else if (isNumber(token)) {
-            const numPath = path.join(config.numberPath(), `${token}.wav`);
+            const numPath = path.join(config.numberPath(), `${token}.pcm`);
             if (fs.existsSync(numPath)) {
-                playPromise = playCachedWav(numPath);
+                playPromise = playCachedPcm(numPath);
             } else {
                 const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
                 playPromise = playWave(filePath);
@@ -121,17 +124,8 @@ export async function speakToken(
             return Promise.resolve();
         }
         
-        // Race against abort signal
-        if (opts?.signal) {
-            return await Promise.race([
-                playPromise,
-                new Promise<void>((_, reject) => {
-                    opts.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-                })
-            ]);
-        } else {
-            return await playPromise;
-        }
+        // Just return the play promise - abort handling is done at speakTokenList level
+        return await playPromise;
     } catch (err: any) {
         log(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
     }
@@ -233,33 +227,22 @@ export function playWave(
         log(`🔕 playWave skipping missing file: ${filePath}`);
         return Promise.resolve();
     }
+
+    // Determine if this is a PCM file or WAV file
+    const isPcmFile = filePath.toLowerCase().endsWith('.pcm');
+    
+    if (isPcmFile) {
+        // Handle PCM files directly
+        return playPcm(filePath, opts);
+    }
+    
+    // Handle WAV files (for backward compatibility with TTS-generated files)
     if (opts?.immediate) {
         const p = playImmediate(filePath);
         playQueue = p.catch(() => { });
         return p;
     }
-    // Quick fallback for WAVs with a JUNK chunk to avoid wav.Reader errors/delay
-    try {
-        const fd = fs.openSync(filePath, 'r');
-        const junkBuf = Buffer.alloc(4);
-        // Read bytes at offset 12 (chunk ID of first subchunk)
-        fs.readSync(fd, junkBuf, 0, 4, 12);
-        fs.closeSync(fd);
-        if (junkBuf.toString('ascii') === 'JUNK') {
-            log(`[playWave] Detected JUNK chunk in ${filePath}, playing via raw earcon playback`);
-            // Find the token corresponding to this earcon file
-            const fname = path.basename(filePath, '.wav');
-            // Try to find a token that maps to this filename
-            // This is a simplified approach - in practice you might want a reverse mapping
-            const token = fname;
-            if (findTokenSound(token)) {
-                return playEarcon(token);
-            }
-            // Fallback to wav.Reader if not a known earcon
-        }
-    } catch {
-        // ignore, proceed as normal
-    }
+    
     // 1) If this is an earcon, bypass wav.Reader completely
     if (opts?.isEarcon) {
         log(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
@@ -276,6 +259,42 @@ export function playWave(
     // 2) Otherwise, your existing wav.Reader → Speaker logic…
     playQueue = playQueue.then(() => doPlay(filePath, opts));
     return playQueue;
+}
+
+// New function to handle PCM files directly
+function playPcm(filePath: string, opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean }): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        try {
+            const pcmData = fs.readFileSync(filePath);
+            let format = { ...STANDARD_PCM_FORMAT };
+            
+            // Apply rate adjustment if specified
+            if (opts?.rate !== undefined) {
+                format.sampleRate = Math.floor(format.sampleRate * opts.rate);
+            } else if (opts?.isEarcon) {
+                format.sampleRate = Math.floor(format.sampleRate * 2.4);
+            }
+            
+            // Halt any prior playback
+            stopPlayback();
+            
+            // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+            const speaker = new Speaker({ ...format, samplesPerFrame: 128 } as any);
+            currentSpeaker = speaker;
+            
+            speaker.on('close', resolve);
+            speaker.on('error', (err) => {
+                log(`🛑 PCM Speaker error: ${err.stack || err}`);
+                reject(err);
+            });
+            
+            speaker.write(pcmData);
+            speaker.end();
+        } catch (err) {
+            log(`🛑 PCM playback error: ${err}`);
+            reject(err);
+        }
+    });
 }
 
 // ── (Unused) Tone generator ───────────────────────────────────────────────────
@@ -368,28 +387,39 @@ export async function playSequence(
     }
     // Raw PCM concatenation for rate === 1
     const entries = filePaths.map(filePath => {
-        const buf = fs.readFileSync(filePath);
+        const isPcmFile = filePath.toLowerCase().endsWith('.pcm');
+        
+        if (isPcmFile) {
+            // PCM files are raw data, no header parsing needed
+            const pcm = fs.readFileSync(filePath);
+            return {
+                format: STANDARD_PCM_FORMAT,
+                pcm
+            };
+        } else {
+            // WAV files (for backward compatibility)
+            const buf = fs.readFileSync(filePath);
+            // Header offsets: channels @22 (UInt16LE), sampleRate @24 (UInt32LE), bitsPerSample @34 (UInt16LE)
+            const channels = buf.readUInt16LE(22);
+            const sampleRate = buf.readUInt32LE(24);
+            const bitDepth = buf.readUInt16LE(34);
 
-        // Header offsets: channels @22 (UInt16LE), sampleRate @24 (UInt32LE), bitsPerSample @34 (UInt16LE)
-        const channels = buf.readUInt16LE(22);
-        const sampleRate = buf.readUInt32LE(24);
-        const bitDepth = buf.readUInt16LE(34);
+            // Find the "data" tag, then skip the next 4 bytes (size) to get to PCM data
+            const dataIdx = buf.indexOf(Buffer.from('data'));
+            if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
+            const pcm = buf.slice(dataIdx + 8);
 
-        // Find the "data" tag, then skip the next 4 bytes (size) to get to PCM data
-        const dataIdx = buf.indexOf(Buffer.from('data'));
-        if (dataIdx < 0) throw new Error(`No data chunk in ${filePath}`);
-        const pcm = buf.slice(dataIdx + 8);
-
-        return {
-            format: {
-                channels,
-                sampleRate,
-                bitDepth,
-                signed: true,
-                float: false
-            },
-            pcm
-        };
+            return {
+                format: {
+                    channels,
+                    sampleRate,
+                    bitDepth,
+                    signed: true,
+                    float: false
+                },
+                pcm
+            };
+        }
     });
 
     // Concatenate all PCM into one buffer

@@ -2,27 +2,27 @@ import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 
 const PUNCTUATION_FILES: Record<string, string> = {
-    '{': 'brace.wav', '}': 'brace2.wav',
-    '<': 'anglebracket.wav', '>': 'anglebracket2.wav',
-    '[': 'squarebracket.wav', ']': 'squarebracket2.wav',
-    '(': 'parenthesis.wav', ')': 'parenthesis2.wav',
-    ',': 'comma.wav',
-    ';': 'semicolon.wav', '/': 'slash.wav',
-    '-': 'bar.wav', ':': 'colon.wav',
-    "'": 'quote.wav', '"': 'bigquote.wav',
+    '{': 'brace.pcm', '}': 'brace2.pcm',
+    '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
+    '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
+    '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
+    ',': 'comma.pcm',
+    ';': 'semicolon.pcm', '/': 'slash.pcm',
+    '-': 'bar.pcm', ':': 'colon.pcm',
+    "'": 'quote.pcm', '"': 'bigquote.pcm',
 };
 
 const SPECIAL_TOKENS: Record<string, string> = {
-    ampersand: 'ampersand.wav', asterisk: 'asterisk.wav',
-    at: 'at.wav', backslash: 'backslash.wav',
-    backtick: 'backtick.wav', bar: 'bar.wav',
-    caret: 'caret.wav', comma: 'comma.wav',
-    dollar: 'dollar.wav', //dot: 'dot.wav', 
-    equals: 'equals.wav', excitation: 'excitation.wav',
-    percent: 'percent.wav', plus: 'plus.wav',
-    question: 'question.wav', sharp: 'sharp.wav',
-    tilde: 'tilde.wav', underbar: 'underbar.wav',
-    won: 'won.wav',
+    ampersand: 'ampersand.pcm', asterisk: 'asterisk.pcm',
+    at: 'at.pcm', backslash: 'backslash.pcm',
+    backtick: 'backtick.pcm', bar: 'bar.pcm',
+    caret: 'caret.pcm', comma: 'comma.pcm',
+    dollar: 'dollar.pcm', //dot: 'dot.pcm', 
+    equals: 'equals.pcm', excitation: 'excitation.pcm',
+    percent: 'percent.pcm', plus: 'plus.pcm',
+    question: 'question.pcm', sharp: 'sharp.pcm',
+    tilde: 'tilde.pcm', underbar: 'underbar.pcm',
+    won: 'won.pcm',
 };
 
 // “fallback” spoken names for any single‐char not on disk
@@ -98,7 +98,7 @@ function rangeMap(start: number, end: number, dir: string) {
     return Object.fromEntries(
         Array.from({ length: end - start + 1 }, (_, i) => {
             const k = String(start + i);
-            return [k, path.join(dir, `${k}.wav`)];
+            return [k, path.join(dir, `${k}.pcm`)];
         })
     );
 }
@@ -107,7 +107,7 @@ function alphabetMap(dir: string) {
     return Object.fromEntries(
         Array.from({ length: 26 }, (_, i) => {
             const ch = String.fromCharCode(97 + i);
-            return [ch, path.join(dir, `${ch}.wav`)];
+            return [ch, path.join(dir, `${ch}.pcm`)];
         })
     );
 }
@@ -124,8 +124,8 @@ export function createAudioMap(ctx: ExtensionContext): Record<string, string> {
         ...mapFiles(PUNCTUATION_FILES, EARCON_DIR),
         ...rangeMap(0, 9, NUMBER_DIR),
         ...alphabetMap(ALPHABET_DIR),
-        ' ': path.join(EARCON_DIR, 'space.wav'),
-        '_': path.join(SPECIAL_DIR, 'underbar.wav'),
+        ' ': path.join(EARCON_DIR, 'space.pcm'),
+        '_': path.join(SPECIAL_DIR, 'underbar.pcm'),
         ...mapFiles(SPECIAL_TOKENS, SPECIAL_DIR)
     };
 }

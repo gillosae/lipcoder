@@ -13,22 +13,22 @@ export const earconTokens = [
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
 export function getTokenSound(token: string): string | null {
     if (token === ' ') {
-        return path.join(config.audioPath(), 'earcon', 'space.wav');
+        return path.join(config.audioPath(), 'earcon', 'space.pcm');
     }
     if (token === '\\') {
-        return path.join(config.audioPath(), 'special', 'backslash.wav');
+        return path.join(config.audioPath(), 'special', 'backslash.pcm');
     }
     if (getTokenSound.singleQuote === undefined) {
         getTokenSound.singleQuote = true;
         getTokenSound.doubleQuote = true;
     }
     if (token === "'") {
-        const file = getTokenSound.singleQuote ? 'quote.wav' : 'quote2.wav';
+        const file = getTokenSound.singleQuote ? 'quote.pcm' : 'quote2.pcm';
         getTokenSound.singleQuote = !getTokenSound.singleQuote;
         return path.join(config.audioPath(), 'earcon', file);
     }
     if (token === '"') {
-        const file = getTokenSound.doubleQuote ? 'bigquote.wav' : 'bigquote2.wav';
+        const file = getTokenSound.doubleQuote ? 'bigquote.pcm' : 'bigquote2.pcm';
         getTokenSound.doubleQuote = !getTokenSound.doubleQuote;
         return path.join(config.audioPath(), 'earcon', file);
     }

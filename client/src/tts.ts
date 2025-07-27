@@ -41,7 +41,7 @@ export async function genTokenAudio(
     if (token.length > 1) {
         // sanitize the token to a filesystem-safe name
         const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
+        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.pcm`);
         log(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
             log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
@@ -101,7 +101,7 @@ export async function genTokenAudio(
 
     const tmpDir = path.join(os.tmpdir(), 'lipcoder_silero_tts');
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-    const outFile = path.join(tmpDir, `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+            const outFile = path.join(tmpDir, `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.pcm`);
 
     const args = [
         scriptPath,

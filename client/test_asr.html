@@ -62,6 +62,15 @@
             background-color: #007bff;
             color: white;
         }
+        .push-to-talk-btn {
+            background-color: #ffc107;
+            color: #212529;
+            font-weight: bold;
+        }
+        .push-to-talk-btn:active {
+            background-color: #e0a800;
+            transform: scale(0.98);
+        }
         .output {
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
@@ -116,6 +125,8 @@
             <button id="toggleBtn" class="toggle-btn">Toggle ASR Streaming</button>
             <button id="clearBtn">Clear Output</button>
             <button id="testServerBtn">Test Server Connection</button>
+            <button id="statusBtn">Check Status</button>
+            <button id="pushToTalkBtn" class="push-to-talk-btn">Push-to-Talk (Hold)</button>
         </div>
         
         <h3>Transcription Output:</h3>
@@ -242,7 +253,14 @@
                             text: transcription,
                             timestamp: Date.now()
                         };
+                        console.log(`[ASR] Browser Transcription received: "${transcription}"`);
+                        console.log(`[ASR] Browser Transcription timestamp: ${new Date(asrChunk.timestamp).toLocaleTimeString()}`);
                         this.options.onTranscription(asrChunk);
+                        console.log(`[ASR] Browser Transcription callback completed`);
+                    } else if (transcription) {
+                        console.log(`[ASR] Browser Transcription received but no callback: "${transcription}"`);
+                    } else {
+                        console.log('[ASR] Browser No transcription received from server');
                     }
 
                     this.chunkBuffer = [];
@@ -346,6 +364,8 @@
         const toggleBtn = document.getElementById('toggleBtn');
         const clearBtn = document.getElementById('clearBtn');
         const testServerBtn = document.getElementById('testServerBtn');
+        const statusBtn = document.getElementById('statusBtn');
+        const pushToTalkBtn = document.getElementById('pushToTalkBtn');
 
         function updateStatus(isRecording, error = false) {
             if (error) {
@@ -443,6 +463,93 @@
                 addTranscription('Server connection test: SUCCESS', Date.now());
             } else {
                 addError('Server connection test: FAILED - Check if server is running on port 5005');
+            }
+        });
+
+        statusBtn.addEventListener('click', () => {
+            const isRecording = asrClient && asrClient.getRecordingStatus();
+            const status = isRecording ? 'Recording' : 'Stopped';
+            addTranscription(`ASR Status: ${status}`, Date.now());
+        });
+
+        // Push-to-Talk functionality
+        let pushToTalkClient = null;
+        let isPushToTalkRecording = false;
+
+        pushToTalkBtn.addEventListener('mousedown', async () => {
+            if (!isPushToTalkRecording) {
+                try {
+                    pushToTalkClient = new BrowserASRClient({
+                        chunkDuration: 1000, // 1 second chunks for push-to-talk
+                        sampleRate: 16000,
+                        serverUrl: 'http://localhost:5005/asr',
+                        onTranscription: (chunk) => {
+                            addTranscription(`[PTT] ${chunk.text}`, chunk.timestamp);
+                        },
+                        onError: (error) => {
+                            addError(`Push-to-Talk Error: ${error.message}`);
+                        }
+                    });
+
+                    await pushToTalkClient.startStreaming();
+                    isPushToTalkRecording = true;
+                    pushToTalkBtn.textContent = 'Push-to-Talk (Recording...)';
+                    pushToTalkBtn.style.backgroundColor = '#dc3545';
+                    addTranscription('Push-to-Talk started', Date.now());
+                } catch (error) {
+                    addError(`Failed to start push-to-talk: ${error.message}`);
+                }
+            }
+        });
+
+        pushToTalkBtn.addEventListener('mouseup', () => {
+            if (isPushToTalkRecording && pushToTalkClient) {
+                pushToTalkClient.stopStreaming();
+                pushToTalkClient = null;
+                isPushToTalkRecording = false;
+                pushToTalkBtn.textContent = 'Push-to-Talk (Hold)';
+                pushToTalkBtn.style.backgroundColor = '#ffc107';
+                addTranscription('Push-to-Talk stopped', Date.now());
+            }
+        });
+
+        // Also support keyboard events for push-to-talk
+        document.addEventListener('keydown', async (event) => {
+            if (event.code === 'Space' && !isPushToTalkRecording) {
+                event.preventDefault();
+                try {
+                    pushToTalkClient = new BrowserASRClient({
+                        chunkDuration: 1000,
+                        sampleRate: 16000,
+                        serverUrl: 'http://localhost:5005/asr',
+                        onTranscription: (chunk) => {
+                            addTranscription(`[PTT] ${chunk.text}`, chunk.timestamp);
+                        },
+                        onError: (error) => {
+                            addError(`Push-to-Talk Error: ${error.message}`);
+                        }
+                    });
+
+                    await pushToTalkClient.startStreaming();
+                    isPushToTalkRecording = true;
+                    pushToTalkBtn.textContent = 'Push-to-Talk (Recording...)';
+                    pushToTalkBtn.style.backgroundColor = '#dc3545';
+                    addTranscription('Push-to-Talk started (Space)', Date.now());
+                } catch (error) {
+                    addError(`Failed to start push-to-talk: ${error.message}`);
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (event.code === 'Space' && isPushToTalkRecording && pushToTalkClient) {
+                event.preventDefault();
+                pushToTalkClient.stopStreaming();
+                pushToTalkClient = null;
+                isPushToTalkRecording = false;
+                pushToTalkBtn.textContent = 'Push-to-Talk (Hold)';
+                pushToTalkBtn.style.backgroundColor = '#ffc107';
+                addTranscription('Push-to-Talk stopped (Space)', Date.now());
             }
         });
 

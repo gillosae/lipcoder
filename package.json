@@ -46,6 +46,10 @@
         "title": "LipCoder: Toggle Typing Speech"
       },
       {
+        "command": "lipcoder.togglePanning",
+        "title": "LipCoder: Toggle Audio Panning"
+      },
+      {
         "command": "lipcoder.readCurrentLine",
         "title": "LipCoder: Read Current Line Number"
       },
@@ -100,6 +104,52 @@
       {
         "command": "lipcoder.vibeCoding",
         "title": "LipCoder: Vibe Coding - Modify Code with Natural Language"
+      },
+
+      {
+        "command": "lipcoder.startASRStreaming",
+        "title": "Start ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRStreaming",
+        "title": "Stop ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleASRStreaming",
+        "title": "Toggle ASR Streaming",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleASR",
+        "title": "Toggle ASR",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showASROutput",
+        "title": "Show ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearASROutput",
+        "title": "Clear ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.getASRStatus",
+        "title": "Get ASR Status",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.openASRTestPage",
+        "title": "Open ASR Test Page",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testASRServer",
+        "title": "Test ASR Server",
+        "category": "LipCoder"
       }
     ],
     "keybindings": [

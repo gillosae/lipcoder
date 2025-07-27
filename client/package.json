@@ -52,6 +52,21 @@
         "key": "shift+enter",
         "command": "editor.action.inlineSuggest.hide",
         "when": "inlineSuggestionVisible"
+      },
+      {
+        "key": "ctrl+shift+a",
+        "command": "lipcoder.toggleASR",
+        "when": "editorTextFocus"
+      },
+      {
+        "key": "ctrl+shift+r",
+        "command": "lipcoder.startRecording",
+        "when": "editorTextFocus"
+      },
+      {
+        "key": "ctrl+shift+r",
+        "command": "lipcoder.stopRecording",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -81,6 +96,11 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.toggleASR",
+        "title": "Toggle ASR",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.showASROutput",
         "title": "Show ASR Output",
         "category": "LipCoder"
@@ -88,6 +108,66 @@
       {
         "command": "lipcoder.clearASROutput",
         "title": "Clear ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.getASRStatus",
+        "title": "Get ASR Status",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.openASRTestPage",
+        "title": "Open ASR Test Page",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testASRServer",
+        "title": "Test ASR Server",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testTranscription",
+        "title": "Test Transcription",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.simulateAudioProcessing",
+        "title": "Simulate Audio Processing",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.pushToTalkASR",
+        "title": "Push-to-Talk ASR",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.startRecording",
+        "title": "Start Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopRecording",
+        "title": "Stop Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showPushToTalkOutput",
+        "title": "Show Push-to-Talk Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearPushToTalkOutput",
+        "title": "Clear Push-to-Talk Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.getPushToTalkStatus",
+        "title": "Get Push-to-Talk Status",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.openPushToTalkTestPage",
+        "title": "Open Push-to-Talk Test Page",
         "category": "LipCoder"
       }
     ]
@@ -107,6 +187,9 @@
   "description": "",
   "dependencies": {
     "diff": "^8.0.2",
+    "form-data": "^4.0.4",
+    "node-fetch": "^2.7.0",
+    "node-microphone": "^0.1.6",
     "node-pty": "^1.0.0",
     "openai": "^4.3.0",
     "vscode-languageclient": "^9.0.1"

@@ -7,6 +7,7 @@ import { splitWordChunks } from './word_logic';
 import { speakTokenList } from '../audio';
 import { stopReading, lineAbortController } from './stop_reading';
 import { isEditorActive } from '../ide/active';
+import { config } from '../config';
 
 
 export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient) {

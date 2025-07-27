@@ -54,6 +54,8 @@ export function setBackend(backend: TTSBackend, partial?: Partial<SileroConfig>)
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
     playSpeed: 1.4,              // playback speed multiplier
+    panningEnabled: true,        // enable positional panning for tokens (legacy)
+    globalPanningEnabled: true,  // enable global panning system for ALL audio
 
     audioPath: () => path.join(extRoot, 'client', 'audio'),
     alphabetPath: () => path.join(extRoot, 'client', 'audio', 'alphabet'),
@@ -66,6 +68,8 @@ export const config = {
 } as {
     typingSpeechEnabled: boolean;
     playSpeed: number;
+    panningEnabled: boolean;
+    globalPanningEnabled: boolean;
 
     audioPath: () => string;
     alphabetPath: () => string;

@@ -24,15 +24,41 @@ asgi_app = WsgiToAsgi(app)
 
 @app.route('/asr', methods=['POST'])
 def asr():
-    # Expecting a form-data file field named 'audio'
-    if 'audio' not in request.files:
-        return jsonify({'error': 'No audio file provided.'}), 400
-    audio_file = request.files['audio']
-    temp_path = os.path.join('/tmp', f"asr_{uuid.uuid4().hex}.wav")
-    audio_file.save(temp_path)
-
+    print(f"[ASR] Received request with content-type: {request.content_type}")
+    print(f"[ASR] Request files: {list(request.files.keys())}")
+    print(f"[ASR] Request form: {list(request.form.keys())}")
+    print(f"[ASR] Request data length: {len(request.data) if request.data else 0}")
+    
+    temp_path = None
+    
     try:
-        # Use the Silero workflow: split_into_batches expects file paths
+        # Handle form data (original method)
+        if 'audio' in request.files:
+            print(f"[ASR] Processing form data audio file")
+            audio_file = request.files['audio']
+            print(f"[ASR] Audio file received: {audio_file.filename}, size: {len(audio_file.read())}")
+            audio_file.seek(0)  # Reset file pointer
+            
+            temp_path = os.path.join('/tmp', f"asr_{uuid.uuid4().hex}.wav")
+            audio_file.save(temp_path)
+            print(f"[ASR] Saved form audio to: {temp_path}")
+            
+        # Handle raw WAV data (new method)
+        elif request.content_type == 'audio/wav':
+            print(f"[ASR] Processing raw WAV data")
+            audio_data = request.data
+            print(f"[ASR] Raw audio data received: {len(audio_data)} bytes")
+            
+            temp_path = os.path.join('/tmp', f"asr_{uuid.uuid4().hex}.wav")
+            with open(temp_path, 'wb') as f:
+                f.write(audio_data)
+            print(f"[ASR] Saved raw audio to: {temp_path}")
+            
+        else:
+            print(f"[ASR] Error: No audio file provided. Content-Type: {request.content_type}")
+            return jsonify({'error': 'No audio file provided.'}), 400
+
+        # Process the audio file
         batches = split_into_batches([temp_path], batch_size=1)
         input_data = prepare_model_input(read_batch(batches[0]), device=device)
 
@@ -40,11 +66,17 @@ def asr():
         output = model(input_data)
         result = decoder(output[0].cpu())
         
+        print(f"[ASR] Transcription result: {result}")
         return jsonify({'text': result})
+        
+    except Exception as e:
+        print(f"[ASR] Error during processing: {e}")
+        return jsonify({'error': str(e)}), 500
     finally:
         # Clean up the temporary file
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+            print(f"[ASR] Cleaned up: {temp_path}")
 
 if __name__ == '__main__':
     # Run a WSGI server on port 5003
