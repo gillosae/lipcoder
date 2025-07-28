@@ -1,10 +1,24 @@
 import * as vscode from 'vscode';
-import type { ExtensionContext } from 'vscode';
+import * as path from 'path';
+import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { playWave, speakToken, stopPlayback } from '../audio';
-import { stopReading, lineAbortController } from './stop_reading';
-import * as path from 'path';
 import { config } from '../config';
+import { stopReading, lineAbortController } from './stop_reading';
+import { log } from '../utils';
+
+let autoTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Clean up symbol tree resources
+ */
+function cleanupSymbolTree(): void {
+    if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+    }
+    log('[SymbolTree] Cleaned up resources');
+}
 
 export function registerSymbolTree(context: ExtensionContext) {
     context.subscriptions.push(
@@ -46,7 +60,6 @@ export function registerSymbolTree(context: ExtensionContext) {
 
             // Setup QuickPick
             let accepted = false;
-            let autoTimer: NodeJS.Timeout | null = null;
             let hideHandled = false;
 
             const quickPick = vscode.window.createQuickPick<{ label: string; depth: number; line: number }>();
@@ -126,6 +139,19 @@ export function registerSymbolTree(context: ExtensionContext) {
                 quickPick.activeItems = [quickPick.items[idx]];
                 idx++;
             }, 1000);
+            
+            // Clean up timer when quickPick is hidden
+            quickPick.onDidHide(() => {
+                if (autoTimer) {
+                    clearInterval(autoTimer);
+                    autoTimer = null;
+                }
+            });
         })
     );
+    
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupSymbolTree
+    });
 }

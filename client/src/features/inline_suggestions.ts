@@ -13,13 +13,25 @@ let idleTimer: NodeJS.Timeout | null = null;
 let suggestionInvoked = false;
 
 /**
+ * Clean up inline suggestions resources
+ */
+function cleanupInlineSuggestions(): void {
+    if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
+    suggestionInvoked = false;
+    log('[InlineSuggestions] Cleaned up resources');
+}
+
+/**
  * Register inline suggestion provider and related commands.
  */
 export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     const client = getOpenAIClient();
 
     // Trigger inline suggest after 5s of cursor idle
-    vscode.window.onDidChangeTextEditorSelection(event => {
+    const selectionListener = vscode.window.onDidChangeTextEditorSelection(event => {
         suggestionInvoked = false;
         if (idleTimer) {
             clearTimeout(idleTimer);
@@ -30,7 +42,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 suggestionInvoked = true;
             }
         }, 5000);
-    }, null, context.subscriptions);
+    });
+    
+    context.subscriptions.push(selectionListener);
 
     const provider: InlineCompletionItemProvider = {
         async provideInlineCompletionItems(document, position, context: InlineCompletionContext) {
@@ -165,4 +179,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupInlineSuggestions
+    });
 }

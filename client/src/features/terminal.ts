@@ -3,10 +3,37 @@ import type { ExtensionContext } from 'vscode';
 import { speakToken, speakTokenList } from '../audio';
 import { stopReading } from './stop_reading';
 import { stopPlayback } from '../audio';
+import { logWarning, logError, logSuccess } from '../utils';
 
 let terminalLines: string[] = [];
 let currentLineIndex = -1;
 let currentCharIndex = -1;
+let activePtyProcesses = new Set<any>();
+
+/**
+ * Clean up all terminal resources
+ */
+function cleanupTerminalResources(): void {
+    logWarning('[Terminal] Cleaning up terminal resources...');
+    
+    // Kill all active PTY processes
+    for (const ptyProcess of activePtyProcesses) {
+        try {
+            if (ptyProcess && typeof ptyProcess.kill === 'function') {
+                ptyProcess.kill('SIGKILL');
+            }
+        } catch (error) {
+            logError(`[Terminal] Error killing PTY process: ${error}`);
+        }
+    }
+    
+    activePtyProcesses.clear();
+    terminalLines = [];
+    currentLineIndex = -1;
+    currentCharIndex = -1;
+    
+    logSuccess('[Terminal] Terminal resources cleaned up');
+}
 
 /**
  * Registers terminal reader commands and a custom pseudoterminal
@@ -35,6 +62,14 @@ export function registerTerminalReader(context: ExtensionContext) {
                 name: 'xterm-color',
                 cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath,
                 env: process.env
+            });
+            
+            // Track this process for cleanup
+            activePtyProcesses.add(ptyProcess);
+            
+            // Remove from tracking when it exits
+            ptyProcess.onExit(() => {
+                activePtyProcesses.delete(ptyProcess);
             });
 
             // Emitters for the terminal UI
@@ -124,4 +159,9 @@ export function registerTerminalReader(context: ExtensionContext) {
             if (ch) await speakToken(ch);
         })
     );
+    
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupTerminalResources
+    });
 }

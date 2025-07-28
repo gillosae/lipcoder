@@ -1,4 +1,4 @@
-import { log } from './utils';
+import { log, logError, logWarning, logSuccess, logInfo } from './utils';
 
 export interface ASRChunk {
     text: string;
@@ -25,6 +25,10 @@ export class ASRClient {
     private audioBuffer: Buffer[] = [];
     private chunkTimer: NodeJS.Timeout | null = null;
     private disposed = false;
+    
+    // Buffer size limits to prevent memory bloat
+    private readonly MAX_BUFFER_SIZE_MB = 10; // 10MB max
+    private readonly MAX_BUFFER_CHUNKS = 100; // Max 100 chunks
 
     constructor(options: ASROptions = {}) {
         this.options = {
@@ -42,47 +46,68 @@ export class ASRClient {
     dispose(): void {
         if (this.disposed) return;
         
-        log('[ASR] Disposing ASRClient resources...');
+        logWarning('[ASR] Disposing ASRClient resources...');
         
-        // Stop recording first
-        this.stopStreaming();
-        
-        // Clear timers
-        if (this.chunkTimer) {
-            clearInterval(this.chunkTimer);
-            this.chunkTimer = null;
-        }
-        
-        // Remove event listeners and cleanup audio stream
-        if (this.audioStream) {
-            try {
-                this.audioStream.removeAllListeners();
-                this.audioStream.destroy();
-            } catch (err) {
-                log(`[ASR] Error cleaning up audio stream: ${err}`);
+        try {
+            // Stop recording first
+            this.stopStreaming();
+            
+            // Clear timers aggressively
+            if (this.chunkTimer) {
+                clearInterval(this.chunkTimer);
+                this.chunkTimer = null;
             }
-            this.audioStream = null;
-        }
-        
-        // Cleanup microphone
-        if (this.microphone) {
-            try {
-                this.microphone.stopRecording();
-            } catch (err) {
-                log(`[ASR] Error stopping microphone: ${err}`);
+            
+            // Remove event listeners and cleanup audio stream
+            if (this.audioStream) {
+                try {
+                    this.audioStream.removeAllListeners();
+                    this.audioStream.destroy();
+                    this.audioStream = null;
+                } catch (err) {
+                    logError(`[ASR] Error cleaning up audio stream: ${err}`);
+                }
             }
-            this.microphone = null;
+            
+            // Cleanup microphone more aggressively
+            if (this.microphone) {
+                try {
+                    // Try multiple cleanup methods
+                    if (typeof this.microphone.stopRecording === 'function') {
+                        this.microphone.stopRecording();
+                    }
+                    if (typeof this.microphone.destroy === 'function') {
+                        this.microphone.destroy();
+                    }
+                    if (typeof this.microphone.kill === 'function') {
+                        this.microphone.kill();
+                    }
+                } catch (err) {
+                    logError(`[ASR] Error stopping microphone: ${err}`);
+                } finally {
+                    this.microphone = null;
+                }
+            }
+            
+            // Clear audio buffer to free memory
+            this.audioBuffer = [];
+            
+            // Clear callbacks to prevent memory leaks
+            this.options.onTranscription = undefined;
+            this.options.onError = undefined;
+            
+            // Reset all counters
+            this.chunkCount = 0;
+            this.totalAudioProcessed = 0;
+            this.startTime = 0;
+            
+            this.disposed = true;
+            logSuccess('[ASR] ASRClient disposed successfully');
+            
+        } catch (error) {
+            logError(`[ASR] Error during disposal: ${error}`);
+            this.disposed = true; // Mark as disposed even if cleanup failed
         }
-        
-        // Clear audio buffer to free memory
-        this.audioBuffer = [];
-        
-        // Clear callbacks to prevent memory leaks
-        this.options.onTranscription = undefined;
-        this.options.onError = undefined;
-        
-        this.disposed = true;
-        log('[ASR] ASRClient disposed successfully');
     }
 
     /**
@@ -101,7 +126,7 @@ export class ASRClient {
         }
         
         try {
-            log('[ASR] Starting real microphone stream...');
+            logInfo('[ASR] Starting real microphone stream...');
             log(`[ASR] Stream configuration: chunkDuration=${this.options.chunkDuration}, sampleRate=${this.options.sampleRate}, serverUrl=${this.options.serverUrl}`);
             
             // Import microphone module
@@ -123,14 +148,14 @@ export class ASRClient {
             this.totalAudioProcessed = 0;
             this.audioBuffer = [];
             
-            log('[ASR] Real microphone stream started successfully');
+            logSuccess('[ASR] Real microphone stream started successfully');
             log(`[ASR] Recording session started at: ${new Date(this.startTime).toISOString()}`);
             
             // Set up audio chunk processing
             this.setupAudioChunkProcessing();
             
         } catch (error) {
-            log(`[ASR] Error starting microphone stream: ${error}`);
+            logError(`[ASR] Error starting microphone stream: ${error}`);
             throw error;
         }
     }
@@ -150,14 +175,26 @@ export class ASRClient {
         
         // Handle incoming audio data from microphone
         this.audioStream.on('data', (chunk: Buffer) => {
-            if (this.isRecording && !this.disposed) {
+            if (this.isRecording) {
                 log(`[ASR] Received real audio chunk: ${chunk.length} bytes`);
+                
+                // Prevent buffer from growing too large
+                const currentBufferSize = this.audioBuffer.reduce((total, buf) => total + buf.length, 0);
+                const currentBufferSizeMB = currentBufferSize / (1024 * 1024);
+                
+                if (this.audioBuffer.length >= this.MAX_BUFFER_CHUNKS || currentBufferSizeMB >= this.MAX_BUFFER_SIZE_MB) {
+                    logWarning(`[ASR] Buffer limit reached (${this.audioBuffer.length} chunks, ${currentBufferSizeMB.toFixed(2)}MB), clearing oldest chunks`);
+                    // Remove oldest half of chunks to prevent memory bloat
+                    const chunksToRemove = Math.floor(this.audioBuffer.length / 2);
+                    this.audioBuffer.splice(0, chunksToRemove);
+                }
+                
                 this.audioBuffer.push(chunk);
             }
         });
         
         this.chunkTimer = setInterval(async () => {
-            if (this.isRecording && this.audioBuffer.length > 0 && !this.disposed) {
+            if (this.isRecording && this.audioBuffer.length > 0) {
                 // Combine all audio chunks
                 const combinedAudio = Buffer.concat(this.audioBuffer);
                 this.audioBuffer = []; // Clear buffer
@@ -174,7 +211,7 @@ export class ASRClient {
      * Stop streaming audio
      */
     stopStreaming(): void {
-        log('[ASR] Stopping real microphone stream...');
+        logWarning('[ASR] Stopping real microphone stream...');
         
         if (this.chunkTimer) {
             clearInterval(this.chunkTimer);
@@ -186,7 +223,7 @@ export class ASRClient {
             try {
                 this.audioStream.removeAllListeners();
             } catch (err) {
-                log(`[ASR] Error removing audio stream listeners: ${err}`);
+                logError(`[ASR] Error removing audio stream listeners: ${err}`);
             }
         }
         
@@ -204,7 +241,7 @@ export class ASRClient {
         this.audioBuffer = [];
         this.isRecording = false;
         
-        log('[ASR] Real microphone stream stopped');
+        logSuccess('[ASR] Real microphone stream stopped');
     }
 
     /**
@@ -253,7 +290,7 @@ export class ASRClient {
             }
             
         } catch (error) {
-            log(`[ASR] Error processing real audio chunk: ${error}`);
+            logError(`[ASR] Error processing real audio chunk: ${error}`);
             if (this.options.onError) {
                 this.options.onError(error as Error);
             }
@@ -349,7 +386,7 @@ export class ASRClient {
             return result.text || null;
 
         } catch (error) {
-            log(`[ASR] Error sending to server: ${error}`);
+            logError(`[ASR] Error sending to server: ${error}`);
             throw error;
         }
     }
@@ -383,7 +420,7 @@ export class ASRClient {
             log(`[ASR] Server connection test result: ${isConnected ? 'SUCCESS' : 'FAILED'}`);
             return isConnected;
         } catch (error) {
-            log(`[ASR] Server connection test failed: ${error}`);
+            logError(`[ASR] Server connection test failed: ${error}`);
             return false;
         }
     }
@@ -456,7 +493,7 @@ export class ASRClient {
             this.simulateTranscription(text);
             
         } catch (error) {
-            log(`[ASR] Error simulating audio processing: ${error}`);
+            logError(`[ASR] Error simulating audio processing: ${error}`);
             if (this.options.onError) {
                 this.options.onError(error as Error);
             }

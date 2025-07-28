@@ -1,8 +1,22 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { log } from '../utils';
 import { playWave, speakToken, stopPlayback } from '../audio';
 import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
+
+let autoTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Clean up function list resources
+ */
+function cleanupFunctionList(): void {
+    if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+    }
+    log('[FunctionList] Cleaned up resources');
+}
 
 export function registerFunctionList(context: vscode.ExtensionContext) {
     context.subscriptions.push(
@@ -41,7 +55,6 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
             }
             // Auto-iterate handle for reading functions
             let accepted = false;
-            let autoTimer: NodeJS.Timeout | null = null;
             let hideHandled = false;
             // Show QuickPick of functions
             const quickPick = vscode.window.createQuickPick<{ label: string; description: string; line: number; depth: number }>();
@@ -123,6 +136,19 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                 quickPick.activeItems = [quickPick.items[idx]];
                 idx++;
             }, 1000);
+            
+            // Clean up timer when quickPick is hidden
+            quickPick.onDidHide(() => {
+                if (autoTimer) {
+                    clearInterval(autoTimer);
+                    autoTimer = null;
+                }
+            });
         })
     );
+    
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupFunctionList
+    });
 }

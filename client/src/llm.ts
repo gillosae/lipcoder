@@ -1,6 +1,6 @@
 import { stopPlayback, playEarcon, speakToken, playWave } from './audio';
 import * as path from 'path';
-import { log } from './utils';
+import { log, logWarning, logSuccess } from './utils';
 import * as vscode from 'vscode';
 import { registerInlineSuggestions } from './features/inline_suggestions';
 import OpenAI from 'openai';
@@ -13,11 +13,24 @@ export interface SuggestionState {
 
 export let lastSuggestion: SuggestionState | null = null;
 
+// Cache OpenAI client to prevent memory leaks from multiple instances
+let cachedOpenAIClient: OpenAI | null = null;
+
 /**
  * Clears the stored suggestion.
  */
 export function clearLastSuggestion(): void {
     lastSuggestion = null;
+}
+
+/**
+ * Clean up LLM resources
+ */
+export function cleanupLLMResources(): void {
+    lastSuggestion = null;
+    cachedOpenAIClient = null;
+    suppressedLines.clear();
+    logSuccess('[LLM] Cleaned up resources');
 }
 
 /**
@@ -59,13 +72,20 @@ export function suppressLine(line: number) {
 
 // Initialize OpenAI client using the user's API key from settings or env
 export function getOpenAIClient(): OpenAI {
+    // Return cached client if available and config hasn't changed
+    if (cachedOpenAIClient) {
+        return cachedOpenAIClient;
+    }
+    
     const config = vscode.workspace.getConfiguration('lipcoder');
     let apiKey = config.get<string>('openaiApiKey') || process.env.OPENAI_API_KEY;
     if (!apiKey) {
         vscode.window.showErrorMessage('OpenAI API key not set. Please set lipcoder.openaiApiKey in settings or OPENAI_API_KEY env var.');
         throw new Error('Missing OpenAI API key');
     }
-    return new OpenAI({ apiKey });
+    
+    cachedOpenAIClient = new OpenAI({ apiKey });
+    return cachedOpenAIClient;
 }
 
 

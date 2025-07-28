@@ -5,7 +5,7 @@ import * as wav from 'wav';
 import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
-import { log } from './utils';
+import { log, logWarning, logInfo, logError, logSuccess } from './utils';
 import { config } from './config';
 import { isAlphabet, isNumber } from './mapping';
 
@@ -21,6 +21,9 @@ let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
 let currentReader: wav.Reader | null = null;
 let currentFileStream: fs.ReadStream | null = null;
+
+// Track all child processes for cleanup
+const activeChildProcesses = new Set<ChildProcess>();
 
 // Cache for arbitrary PCM files for immediate playback
 const pcmCache: Record<string, { format: any; pcm: Buffer }> = {};
@@ -39,8 +42,17 @@ const STANDARD_PCM_FORMAT = {
 };
 
 function hookChildErrors(cp: ChildProcess) {
+    // Track this process for cleanup
+    activeChildProcesses.add(cp);
+    
+    // Remove from tracking when it exits
+    cp.on('exit', () => {
+        activeChildProcesses.delete(cp);
+    });
+    
     cp.on('error', err => {
         log(`🔊 player "error" event: ${err.stack || err}`);
+        activeChildProcesses.delete(cp);
     });
     if (cp.stderr) {
         cp.stderr.on('data', chunk => {
@@ -77,14 +89,14 @@ function addToPcmCache(filePath: string, format: any, pcm: Buffer): void {
     
     // Clear cache if adding this would exceed limit
     if (currentCacheSize + sizeInMB > MAX_CACHE_SIZE_MB) {
-        log(`🧹 PCM cache size limit reached (${currentCacheSize.toFixed(2)}MB), clearing cache`);
+        logWarning(`🧹 PCM cache size limit reached (${currentCacheSize.toFixed(2)}MB), clearing cache`);
         Object.keys(pcmCache).forEach(key => delete pcmCache[key]);
         currentCacheSize = 0;
     }
     
     pcmCache[filePath] = { format, pcm };
     currentCacheSize += sizeInMB;
-    log(`📦 Added to PCM cache: ${filePath} (${sizeInMB.toFixed(2)}MB, total: ${currentCacheSize.toFixed(2)}MB)`);
+    logInfo(`📦 Added to PCM cache: ${filePath} (${sizeInMB.toFixed(2)}MB, total: ${currentCacheSize.toFixed(2)}MB)`);
 }
 
 function playCachedPcm(filePath: string): Promise<void> {
@@ -420,7 +432,29 @@ export function generateTone(
 }
 
 /**
- * Immediately aborts any in‐flight audio (earcon or fallback).
+ * Force kill all active child processes
+ */
+function killAllChildProcesses(): void {
+    if (activeChildProcesses.size === 0) return;
+    
+    logWarning(`🛑 Force killing ${activeChildProcesses.size} active child processes...`);
+    
+    for (const cp of activeChildProcesses) {
+        try {
+            if (!cp.killed) {
+                cp.kill('SIGKILL');
+            }
+        } catch (error) {
+            logError(`Failed to kill child process: ${error}`);
+        }
+    }
+    
+    activeChildProcesses.clear();
+    logSuccess('🛑 All child processes killed');
+}
+
+/**
+ * Stop all audio playback more aggressively
  */
 export function stopPlayback(): void {
     // Stop earcon playback
@@ -434,12 +468,24 @@ export function stopPlayback(): void {
         currentSpeaker = null;
     }
     if (currentFallback) {
-        try { currentFallback.kill('SIGKILL'); } catch { }
+        try { 
+            currentFallback.kill('SIGKILL'); 
+        } catch { }
         currentFallback = null;
     }
     // Abort any active WAV streams
-    if (currentReader) { try { currentReader.destroy(); } catch { } currentReader = null; }
-    if (currentFileStream) { try { currentFileStream.close(); } catch { } currentFileStream = null; }
+    if (currentReader) { 
+        try { 
+            currentReader.destroy(); 
+        } catch { } 
+        currentReader = null; 
+    }
+    if (currentFileStream) { 
+        try { 
+            currentFileStream.destroy(); 
+        } catch { } 
+        currentFileStream = null; 
+    }
     // Clear any queued playback tasks
     playQueue = Promise.resolve();
 }
@@ -448,16 +494,29 @@ export function stopPlayback(): void {
  * Clean up all audio resources and caches
  */
 export function cleanupAudioResources(): void {
-    log('🧹 Cleaning up audio resources...');
+    logWarning('🧹 Cleaning up audio resources...');
     
     // Stop any current playback
     stopPlayback();
+    
+    // Kill all child processes
+    killAllChildProcesses();
     
     // Clear PCM cache and reset size tracking
     Object.keys(pcmCache).forEach(key => delete pcmCache[key]);
     currentCacheSize = 0;
     
-    log('🧹 Audio resources cleaned up');
+    // Force garbage collection if available
+    if (global.gc) {
+        try {
+            global.gc();
+            logInfo('🗑️ Forced garbage collection');
+        } catch (err) {
+            logError(`Failed to force GC: ${err}`);
+        }
+    }
+    
+    logWarning('🧹 Audio resources cleaned up');
 }
 
 /**

@@ -7,7 +7,9 @@ import {
     LanguageClientOptions
 } from 'vscode-languageclient/node';
 import * as vscode from 'vscode';
+import { logWarning, logSuccess, logError } from './utils';
 
+let languageClient: LanguageClient | null = null;
 
 export function startLanguageClient(context: ExtensionContext) {
     const serverModule = context.asAbsolutePath(
@@ -33,18 +35,46 @@ export function startLanguageClient(context: ExtensionContext) {
         },
     };
 
-    const client = new LanguageClient(
+    languageClient = new LanguageClient(
         'lipcoder',
         'LipCoder LSP',
         serverOpts,
         clientOpts
     );
+    
     context.subscriptions.push({
-        dispose: () => {
-            client.stop();
+        dispose: async () => {
+            await stopLanguageClient();
         },
     });
-    client.start();
+    
+    languageClient.start();
+    return languageClient;
+}
 
-    return client;
+/**
+ * Stop the language client with proper cleanup
+ */
+export async function stopLanguageClient(): Promise<void> {
+    if (!languageClient) return;
+    
+    try {
+        logWarning('[LanguageClient] Stopping language client...');
+        
+        // Stop the client and wait for it to fully shut down
+        await languageClient.stop(5000); // 5 second timeout
+        
+        logSuccess('[LanguageClient] Language client stopped successfully');
+    } catch (error) {
+        logError(`[LanguageClient] Error stopping language client: ${error}`);
+        
+        // Force dispose if stop() fails
+        try {
+            languageClient.dispose();
+        } catch (disposeError) {
+            logError(`[LanguageClient] Error disposing language client: ${disposeError}`);
+        }
+    } finally {
+        languageClient = null;
+    }
 }

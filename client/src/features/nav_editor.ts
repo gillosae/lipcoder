@@ -8,13 +8,32 @@ import { readTextTokens } from './read_text_tokens';
 import { config } from '../config';
 import { updateLineSeverity } from './line_severity';
 
-export function registerNavEditor(context: vscode.ExtensionContext, audioMap: any) {
-    const diagCache = updateLineSeverity();
+let readyForCursor = false;
+let cursorTimeout: NodeJS.Timeout | null = null;
 
+/**
+ * Clean up nav editor resources
+ */
+function cleanupNavEditor(): void {
+    if (cursorTimeout) {
+        clearTimeout(cursorTimeout);
+        cursorTimeout = null;
+    }
+    readyForCursor = false;
+    log('[NavEditor] Cleaned up resources');
+}
+
+export function registerNavEditor(context: vscode.ExtensionContext, audioMap: any) {
+    log('[NavEditor] Registering nav editor commands');
+    
+    const diagCache = updateLineSeverity();
+    
     let currentLineNum = vscode.window.activeTextEditor?.selection.active.line ?? 0;
     let currentCursor = vscode.window.activeTextEditor?.selection.active ?? new vscode.Position(0, 0);
-    let readyForCursor = false;
-    setTimeout(() => { readyForCursor = true; }, 2000);
+    
+    cursorTimeout = setTimeout(() => { 
+        readyForCursor = true; 
+    }, 2000);
 
     // Indentation tracking (moved from extension)
     const indentLevels: Map<string, number> = new Map();
@@ -130,6 +149,11 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
 
     );
+
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupNavEditor
+    });
 
 
 }

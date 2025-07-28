@@ -7,12 +7,29 @@ let outputChannel: vscode.OutputChannel | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
 let isRecording = false;
 let recordingTimeout: NodeJS.Timeout | null = null;
+let simulationTimeouts: NodeJS.Timeout[] = [];
 
 /**
  * Get the current ASRClient instance for cleanup
  */
 export function getASRClient(): ASRClient | null {
     return asrClient;
+}
+
+/**
+ * Clean up all push-to-talk resources
+ */
+function cleanupPushToTalk(): void {
+    if (recordingTimeout) {
+        clearTimeout(recordingTimeout);
+        recordingTimeout = null;
+    }
+    
+    // Clear all simulation timeouts
+    simulationTimeouts.forEach(timeout => clearTimeout(timeout));
+    simulationTimeouts = [];
+    
+    log('[PushToTalk] Cleaned up all timers and resources');
 }
 
 export function registerPushToTalkASR(context: vscode.ExtensionContext) {
@@ -125,13 +142,8 @@ export function registerPushToTalkASR(context: vscode.ExtensionContext) {
     // Clean up on deactivation
     context.subscriptions.push({
         dispose: () => {
-            log('[ASR] Cleaning up push-to-talk ASR feature');
-            if (isRecording) {
-                log('[ASR] Stopping push-to-talk recording during cleanup');
-                stopRecording();
-            }
-            outputChannel?.dispose();
-            statusBarItem?.dispose();
+            cleanupPushToTalk();
+            
             if (asrClient) {
                 if (asrClient.getRecordingStatus()) {
                     asrClient.stopStreaming();
@@ -139,7 +151,6 @@ export function registerPushToTalkASR(context: vscode.ExtensionContext) {
                 asrClient.dispose();
                 asrClient = null;
             }
-            log('[ASR] Push-to-talk ASR feature cleanup complete');
         }
     });
     
@@ -194,30 +205,30 @@ async function startRecording() {
         log('[ASR] Push-to-Talk recording started');
 
         // Simulate some audio processing for testing
-        setTimeout(async () => {
+        const timeout1 = setTimeout(async () => {
             if (isRecording && asrClient && asrClient.getRecordingStatus()) {
                 log('[ASR] Simulating push-to-talk audio processing after 1 second...');
                 await asrClient.simulateAudioProcessing("Push to talk is working correctly");
             }
         }, 1000);
+        simulationTimeouts.push(timeout1);
 
         // Simulate another transcription after 3 seconds
-        setTimeout(async () => {
+        const timeout2 = setTimeout(async () => {
             if (isRecording && asrClient && asrClient.getRecordingStatus()) {
                 log('[ASR] Simulating second push-to-talk audio processing after 3 seconds...');
                 await asrClient.simulateAudioProcessing("This is a second test transcription");
             }
         }, 3000);
+        simulationTimeouts.push(timeout2);
 
-        // Set a timeout to auto-stop after 30 seconds (safety)
+        // Auto-stop after 10 seconds for safety
         recordingTimeout = setTimeout(() => {
             if (isRecording) {
-                log('[ASR] Auto-stopping push-to-talk recording after 30 seconds');
-                vscode.window.showWarningMessage('Push-to-Talk ASR auto-stopped after 30 seconds');
                 stopRecording();
+                log('[ASR] Push-to-Talk recording auto-stopped after 10 seconds');
             }
-        }, 30000);
-        log('[ASR] Set 30-second auto-stop timeout for push-to-talk');
+        }, 10000);
 
     } catch (error) {
         log(`[ASR] Failed to start push-to-talk recording: ${error}`);
