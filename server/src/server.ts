@@ -188,6 +188,54 @@ function tokenizeComment(commentText: string): Array<{ text: string; category: s
     return tokens;
 }
 
+// Helper function to find comment position while respecting string boundaries
+function findCommentPosition(text: string): number {
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inBacktick = false;
+    let i = 0;
+    
+    while (i < text.length) {
+        const char = text[i];
+        const nextChar = text[i + 1];
+        
+        // Handle escape sequences
+        if (char === '\\' && (inSingleQuote || inDoubleQuote || inBacktick)) {
+            i += 2; // Skip escaped character
+            continue;
+        }
+        
+        // Toggle string states
+        if (char === "'" && !inDoubleQuote && !inBacktick) {
+            inSingleQuote = !inSingleQuote;
+        } else if (char === '"' && !inSingleQuote && !inBacktick) {
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
+            inBacktick = !inBacktick;
+        }
+        
+        // Check for comments only when not inside strings
+        if (!inSingleQuote && !inDoubleQuote && !inBacktick) {
+            // Check for // comment
+            if (char === '/' && nextChar === '/') {
+                return i;
+            }
+            // Check for # comment
+            if (char === '#') {
+                return i;
+            }
+            // Check for /* comment (basic check for start)
+            if (char === '/' && nextChar === '*') {
+                return i;
+            }
+        }
+        
+        i++;
+    }
+    
+    return -1; // No comment found
+}
+
 // 3. Handle readLineTokens requests for tokenizing a specific line
 connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: number }) => {
     const doc = documents.get(params.uri);
@@ -196,20 +244,54 @@ connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: nu
     const lines = text.split(/\r?\n/);
     const lineText = lines[params.line] || '';
     
-    // Check if this is a comment line first
+    // Check if this is a full comment line first
     const trimmedLine = lineText.trim();
-    if (trimmedLine.startsWith('#') || trimmedLine.startsWith('//')) {
+    if (trimmedLine.startsWith('#') || trimmedLine.startsWith('//') || 
+        trimmedLine.startsWith('/*') || trimmedLine.startsWith('/**') ||
+        trimmedLine.startsWith(' *') || trimmedLine.startsWith('*')) {
         return tokenizeComment(lineText);
     }
     
-    // For non-comment lines, use the regular TypeScript scanner
-    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, lineText);
-
+    // For mixed lines (code + inline comments), we need to handle them carefully
     const tokens: Array<{ text: string; category: string }> = [];
+    
+    // Find inline comment positions using string-aware parsing
+    const commentPosition = findCommentPosition(lineText);
+    
+    if (commentPosition !== -1) {
+        // Split line at comment position
+        const beforeComment = lineText.substring(0, commentPosition);
+        const commentPart = lineText.substring(commentPosition);
+        
+        // Process the code part before the comment
+        if (beforeComment.trim()) {
+            const codeTokens = scanCodeTokens(beforeComment);
+            tokens.push(...codeTokens);
+        }
+        
+        // Process the comment part
+        const commentTokens = tokenizeComment(commentPart);
+        tokens.push(...commentTokens);
+        
+    } else {
+        // No inline comments, process the entire line as code
+        const codeTokens = scanCodeTokens(lineText);
+        tokens.push(...codeTokens);
+    }
+    
+    return tokens;
+});
+
+// Helper function to scan code tokens using TypeScript scanner
+function scanCodeTokens(codeText: string): Array<{ text: string; category: string }> {
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, codeText);
+    const tokens: Array<{ text: string; category: string }> = [];
+    
     let kind = scanner.scan();
     while (kind !== ts.SyntaxKind.EndOfFileToken) {
         const tokenText = scanner.getTokenText();
         let category = 'other';
+        
         if (kind === ts.SyntaxKind.Identifier) {
             category = 'variable';
         } else if (kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.NumericLiteral) {
@@ -219,10 +301,12 @@ connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: nu
         } else if (kind === ts.SyntaxKind.TypeReference) {
             category = 'type';
         }
+        
         tokens.push({ text: tokenText, category });
         kind = scanner.scan();
     }
+    
     return tokens;
-});
+}
 
 connection.listen();

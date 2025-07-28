@@ -136,7 +136,8 @@ export async function readTextTokens(
                         if (isEarcon(ch)) {
                             await playEarcon(ch, charPanning);
                         } else {
-                            await speakTokenList([{ tokens: [specialCharMap[ch]], category: 'special', panning: charPanning }]);
+                            const category = specialCharCategoryMap[ch] || 'special';
+                            await speakTokenList([{ tokens: [specialCharMap[ch]], category, panning: charPanning }]);
                         }
                     } else if (/^[a-zA-Z]$/.test(ch)) {
                         const tokenPath = audioMap[ch.toLowerCase()];
@@ -165,8 +166,9 @@ export async function readTextTokens(
                     console.log(`[read_text_tokens] Playing earcon for "${char}"`);
                     await playEarcon(char, panning);
                 } else {
-                    console.log(`[read_text_tokens] Playing special TTS for "${char}": ${specialCharMap[char]}`);
-                    await speakTokenList([{ tokens: [specialCharMap[char]], category: 'special', panning }]);
+                    const category = specialCharCategoryMap[char] || 'special';
+                    console.log(`[read_text_tokens] Playing special TTS for "${char}": ${specialCharMap[char]} with category: ${category}`);
+                    await speakTokenList([{ tokens: [specialCharMap[char]], category, panning }]);
                 }
             } else if (/^[a-zA-Z]$/.test(char)) {
                 const tokenPath = audioMap[char.toLowerCase()];

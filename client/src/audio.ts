@@ -6,7 +6,7 @@ import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
 import { log, logWarning, logInfo, logError, logSuccess } from './utils';
-import { config } from './config';
+import { config, sileroConfig } from './config';
 import { isAlphabet, isNumber } from './mapping';
 
 // Import from the new modules
@@ -1206,11 +1206,19 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         
         for (const { tokens, category } of chunks) {
             for (const token of tokens) {
-                // Skip TTS pre-generation for comment symbols (they should use earcons)
-                if (category === 'comment_symbol' || isEarconToken(token)) {
-                    continue; // These will be handled as earcons
-                }
-                if (isTTSRequired(token) && !ttsPregenPromises.has(token)) {
+                // Priority 1: Special characters don't need pre-generation (handled by playSpecial)
+                if (category === 'special') {
+                    continue; // Special characters use direct TTS generation
+                } else if (isEarconToken(token)) {
+                    continue; // Earcons don't need TTS pre-generation
+                } else if (isAlphabet(token) || isNumber(token)) {
+                    continue; // Alphabet and numbers use PCM files, not TTS
+                } else if (category && category !== 'other' && getSpeakerForCategory(category) !== sileroConfig.defaultSpeaker) {
+                    if (!ttsPregenPromises.has(token)) {
+                        log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}"`);
+                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                    }
+                } else if (isTTSRequired(token) && !ttsPregenPromises.has(token)) {
                     log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
                     ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
                 }
@@ -1236,14 +1244,13 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 
                 try {
                     // Route tokens to appropriate playback method
-                    // First check if this is a comment symbol that should be treated as earcon
-                    if (category === 'comment_symbol' || isEarconToken(token)) {
+                    // Priority 1: Special characters (use special TTS handling)
+                    if (category === 'special') {
+                        log(`[speakTokenList] Using SPECIAL TTS for: "${token}"`);
+                        await playSpecial(token);
+                    } else if (isEarconToken(token)) {
                         log(`[speakTokenList] Playing EARCON for: "${token}" (category: ${category})`);
                         await playEarcon(token, panning);
-                    } else if (isTTSRequired(token) && ttsPregenPromises.has(token)) {
-                        log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}"`);
-                        const ttsFilePath = await ttsPregenPromises.get(token)!;
-                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                     } else if (isAlphabet(token)) {
                         log(`[speakTokenList] Playing ALPHABET PCM for: "${token}"`);
                         const lower = token.toLowerCase();
@@ -1263,6 +1270,14 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                             // Fallback to TTS for missing number
                             await speakTokenImmediate(token, category, { panning });
                         }
+                    } else if (category && category !== 'other' && getSpeakerForCategory(category) !== sileroConfig.defaultSpeaker) {
+                        log(`[speakTokenList] Using TTS with ${category} voice for: "${token}"`);
+                        const ttsFilePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
+                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                    } else if (isTTSRequired(token) && ttsPregenPromises.has(token)) {
+                        log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}"`);
+                        const ttsFilePath = await ttsPregenPromises.get(token)!;
+                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                     } else if (isTTSRequired(token)) {
                         log(`[speakTokenList] Generating NEW TTS for: "${token}" (not pre-generated)`);
                         // This shouldn't happen often since we pre-generate, but fallback

@@ -7,9 +7,12 @@ import { readWordTokens } from './read_word_tokens';
 import { readTextTokens } from './read_text_tokens';
 import { config } from '../config';
 import { updateLineSeverity } from './line_severity';
+import { shouldUseAudioMinimap, updateContinuousTone, resetSpeedTracking, cleanupAudioMinimap, isContinuousTonePlaying } from './audio_minimap';
 
 let readyForCursor = false;
 let cursorTimeout: NodeJS.Timeout | null = null;
+let lastCursorMoveTime = 0;
+let cursorIdleTimeout: NodeJS.Timeout | null = null;
 
 /**
  * Clean up nav editor resources
@@ -19,7 +22,13 @@ function cleanupNavEditor(): void {
         clearTimeout(cursorTimeout);
         cursorTimeout = null;
     }
+    if (cursorIdleTimeout) {
+        clearTimeout(cursorIdleTimeout);
+        cursorIdleTimeout = null;
+    }
     readyForCursor = false;
+    resetSpeedTracking(); // Reset audio minimap tracking
+    cleanupAudioMinimap(); // Cleanup continuous tone generator
     log('[NavEditor] Cleaned up resources');
 }
 
@@ -49,6 +58,42 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             vscode.window.showInformationMessage(
                 `LipCoder: ${useWordMode ? 'Word' : 'Token'} reading mode`
             );
+        })
+    );
+
+    // Audio minimap configuration commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.toggleAudioMinimap', () => {
+            config.audioMinimapEnabled = !config.audioMinimapEnabled;
+            resetSpeedTracking(); // Reset tracking when toggling
+            vscode.window.showInformationMessage(
+                `LipCoder Audio Minimap: ${config.audioMinimapEnabled ? 'Enabled' : 'Disabled'}`
+            );
+        }),
+        vscode.commands.registerCommand('lipcoder.setAudioMinimapSpeed', async () => {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Set audio minimap speed threshold (lines per second)',
+                placeHolder: 'e.g., 3.0 = trigger minimap when moving faster than 3 lines/sec',
+                value: config.audioMinimapSpeedThreshold.toString(),
+                validateInput: (value) => {
+                    const val = parseFloat(value);
+                    if (isNaN(val) || val <= 0) {
+                        return 'Please enter a positive number';
+                    }
+                    if (val > 20) {
+                        return 'Value too high, please use a reasonable threshold (1-20)';
+                    }
+                    return null;
+                }
+            });
+            
+            if (input) {
+                config.audioMinimapSpeedThreshold = parseFloat(input);
+                resetSpeedTracking(); // Reset tracking when changing threshold
+                vscode.window.showInformationMessage(
+                    `LipCoder Audio Minimap speed threshold set to ${config.audioMinimapSpeedThreshold} lines/sec`
+                );
+            }
         })
     );
 
@@ -82,7 +127,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     );
 
     context.subscriptions.push(
-        vscode.window.onDidChangeTextEditorSelection((e) => {
+        vscode.window.onDidChangeTextEditorSelection(async (e) => {
             try {
                 if (!readyForCursor) return;
                 if (e.kind !== vscode.TextEditorSelectionChangeKind.Keyboard) return;
@@ -96,12 +141,41 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 if (currentLineNum === lineNum) return;
 
                 currentLineNum = lineNum;
+                lastCursorMoveTime = Date.now();
                 log(`[cursor-log] line=${lineNum}`);
-                vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
-                    .then(undefined, err => console.error('readLineTokens failed:', err));
+                
+                // Clear any existing idle timeout
+                if (cursorIdleTimeout) {
+                    clearTimeout(cursorIdleTimeout);
+                    cursorIdleTimeout = null;
+                }
+                
+                // Check if we should use audio minimap based on movement speed
+                if (shouldUseAudioMinimap(lineNum, e.textEditor)) {
+                    // Use audio minimap for fast navigation - update continuous tone
+                    updateContinuousTone(e.textEditor);
+                    
+                    // Set an immediate idle detection timeout (75ms - very responsive)
+                    cursorIdleTimeout = setTimeout(() => {
+                        log('[NavEditor] Cursor idle detected - stopping continuous tone');
+                        resetSpeedTracking(lineNum, e.textEditor); // Pass current line and editor
+                    }, 75);
+                } else {
+                    // Only use regular line token reading if continuous tone is NOT playing
+                    if (!isContinuousTonePlaying()) {
+                        vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
+                            .then(undefined, err => console.error('readLineTokens failed:', err));
+                    } else {
+                        log('[NavEditor] Skipping readLineTokens - continuous tone is playing');
+                    }
+                }
             } catch (err: any) {
                 console.error('onDidChangeTextEditorSelection handler error:', err);
             }
+        }),
+        // Reset speed tracking when changing editors
+        vscode.window.onDidChangeActiveTextEditor(() => {
+            resetSpeedTracking();
         }),
         vscode.window.onDidChangeTextEditorSelection((e) => {
             if (

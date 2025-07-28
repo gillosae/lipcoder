@@ -58,6 +58,11 @@ export const config = {
     panningEnabled: true,        // enable positional panning for tokens (legacy)
     globalPanningEnabled: true,  // enable global panning system for ALL audio
 
+    // Audio Minimap Configuration
+    audioMinimapEnabled: true,   // enable audio minimap when cursor moves quickly
+    audioMinimapSpeedThreshold: 2.5, // lines per second threshold to trigger minimap (increased for stricter detection)
+    audioMinimapTimeout: 200,    // minimum milliseconds between line changes to calculate speed
+
     audioPath: () => path.join(extRoot, 'client', 'audio'),
     alphabetPath: () => path.join(extRoot, 'client', 'audio', 'alphabet'),
     earconPath: () => path.join(extRoot, 'client', 'audio', 'earcon'),
@@ -65,6 +70,7 @@ export const config = {
     pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
     specialPath: () => path.join(config.audioPath(), 'special'),
+    musicalPath: () => path.join(config.audioPath(), 'musical'),
 
 } as {
     typingSpeechEnabled: boolean;
@@ -72,6 +78,9 @@ export const config = {
     preservePitch: boolean;
     panningEnabled: boolean;
     globalPanningEnabled: boolean;
+    audioMinimapEnabled: boolean;
+    audioMinimapSpeedThreshold: number;
+    audioMinimapTimeout: number;
 
     audioPath: () => string;
     alphabetPath: () => string;
@@ -80,6 +89,7 @@ export const config = {
     pythonPath: () => string;
     scriptPath: () => string;
     specialPath: () => string;
+    musicalPath: () => string;
 };
 
 const specialMap: Record<string, string> =  {
