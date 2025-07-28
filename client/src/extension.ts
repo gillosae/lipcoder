@@ -100,6 +100,40 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
 
+	// 1.5) Clean old corrupted cache files on startup ───────────────────────────────────
+	try {
+		const fs = require('fs');
+		const path = require('path');
+		const os = require('os');
+		
+		const timeStretchCacheDir = path.join(os.tmpdir(), 'lipcoder_timestretch');
+		if (fs.existsSync(timeStretchCacheDir)) {
+			const files = fs.readdirSync(timeStretchCacheDir);
+			const now = Date.now();
+			let cleanedCount = 0;
+			
+			// Remove cache files older than 24 hours
+			for (const file of files) {
+				const filePath = path.join(timeStretchCacheDir, file);
+				if (fs.statSync(filePath).isFile()) {
+					const ageMs = now - fs.statSync(filePath).mtime.getTime();
+					const ageHours = ageMs / (1000 * 60 * 60);
+					
+					if (ageHours > 24) {
+						fs.unlinkSync(filePath);
+						cleanedCount++;
+					}
+				}
+			}
+			
+			if (cleanedCount > 0) {
+				log(`[Startup] Cleaned ${cleanedCount} old cache files (>24h)`);
+			}
+		}
+	} catch (error) {
+		logWarning(`[Startup] Cache cleanup failed: ${error}`);
+	}
+
 	// 2) Start TTS and ASR servers ──────────────────────────────────────────────────────
 	try {
 		await serverManager.startServers();

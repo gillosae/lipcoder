@@ -21,8 +21,7 @@ export function stopAllAudio(): void {
 	// COMPREHENSIVE AUDIO STOPPING - Stop all types of audio immediately
 	
 	// 1. Stop main audio player (TTS, PCM, WAV files)
-	stopPlayback();
-	stopPlayback(); // Call twice for reliability
+	stopPlayback(); // Single call is sufficient - reduces audio crackling
 	
 	// 2. Stop earcon playback (punctuation sounds, etc.)
 	stopEarconPlayback();

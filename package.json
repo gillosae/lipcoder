@@ -171,10 +171,14 @@
         "command": "lipcoder.setPlaySpeedFast",
         "title": "LipCoder: Set Playback Speed - Fast (1.5×)"
       },
-      {
-        "command": "lipcoder.setPlaySpeedVeryFast",
-        "title": "LipCoder: Set Playback Speed - Very Fast (2.0×)"
-      },
+                  {
+                "command": "lipcoder.setPlaySpeedVeryFast",
+                "title": "LipCoder: Set Playback Speed - Very Fast (2.0×)"
+            },
+            {
+                "command": "lipcoder.clearAudioCache",
+                "title": "LipCoder: Clear Audio Cache (Fix Crackling)"
+            },
       {
         "command": "lipcoder.togglePitchPreservation",
         "title": "LipCoder: Toggle Pitch Preservation"

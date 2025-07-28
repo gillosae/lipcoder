@@ -39,6 +39,10 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     
     let currentLineNum = vscode.window.activeTextEditor?.selection.active.line ?? 0;
     let currentCursor = vscode.window.activeTextEditor?.selection.active ?? new vscode.Position(0, 0);
+
+    // Track recent typing to prevent double audio on cursor movement
+    let lastTypingTime = 0;
+    const TYPING_DETECTION_WINDOW_MS = 100; // Consider cursor movements within 100ms of typing as typing-related
     
     cursorTimeout = setTimeout(() => { 
         readyForCursor = true; 
@@ -100,20 +104,22 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     // Track text change for narration
     let skipNextIndent = false; // Flag to skip indent sound once after Enter
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument(async (event) => {
+        vscode.workspace.onDidChangeTextDocument((e) => {
+            // Track typing time to prevent double audio
+            lastTypingTime = Date.now();
+            
             if (!config.typingSpeechEnabled) return;
-
             const editor = vscode.window.activeTextEditor;
-            if (!editor || event.document !== editor.document) return;
+            if (!editor || e.document !== editor.document) return;
 
-            const changes = event.contentChanges;
+            const changes = e.contentChanges;
             if (changes.length === 0) return;
 
             if (useWordMode) {
-                readWordTokens(event, changes);
+                readWordTokens(e, changes);
             } else {
                 readTextTokens(
-                    event,
+                    e,
                     diagCache,
                     changes,
                     indentLevels,
@@ -140,12 +146,18 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 const lineNum = e.selections[0].start.line;
                 if (currentLineNum === lineNum) return;
 
-                // IMMEDIATELY stop all audio when cursor moves to new line
-                stopForCursorMovement();
+                // Skip audio minimap processing if this cursor movement was caused by recent typing
+                const timeSinceTyping = Date.now() - lastTypingTime;
+                const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
+                
+                if (!isTypingRelated) {
+                    // IMMEDIATELY stop all audio when cursor moves to new line (only for navigation)
+                    stopForCursorMovement();
+                }
 
                 currentLineNum = lineNum;
                 lastCursorMoveTime = Date.now();
-                log(`[cursor-log] line=${lineNum}`);
+                log(`[cursor-log] line=${lineNum}, typing-related=${isTypingRelated}`);
                 
                 // Clear any existing idle timeout
                 if (cursorIdleTimeout) {
@@ -153,8 +165,8 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                     cursorIdleTimeout = null;
                 }
                 
-                // Check if we should use audio minimap based on movement speed
-                if (shouldUseAudioMinimap(lineNum, e.textEditor)) {
+                // Only check audio minimap for actual navigation, not typing
+                if (!isTypingRelated && shouldUseAudioMinimap(lineNum, e.textEditor)) {
                     // Use audio minimap for fast navigation - update continuous tone
                     updateContinuousTone(e.textEditor);
                     
@@ -163,8 +175,8 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                         log('[NavEditor] Cursor idle detected - stopping continuous tone');
                         resetSpeedTracking(lineNum, e.textEditor); // Pass current line and editor
                     }, 75);
-                } else {
-                    // Only use regular line token reading if continuous tone is NOT playing
+                } else if (!isTypingRelated) {
+                    // Only use regular line token reading if continuous tone is NOT playing and not typing
                     if (!isContinuousTonePlaying()) {
                         vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
                             .then(undefined, err => console.error('readLineTokens failed:', err));
@@ -203,6 +215,13 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             const old = currentCursor;
             const sel = e.selections[0].active;
             if (old && sel.line === old.line && Math.abs(sel.character - old.character) === 1) {
+                // Skip if this cursor movement was caused by recent typing (prevents double audio)
+                const timeSinceTyping = Date.now() - lastTypingTime;
+                if (timeSinceTyping < TYPING_DETECTION_WINDOW_MS) {
+                    currentCursor = sel;
+                    return;
+                }
+                
                 // Only stop reading if line token reading is not currently active
                 if (!getLineTokenReadingActive()) {
                     stopAllAudio(); // Use centralized stopping system

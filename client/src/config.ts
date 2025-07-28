@@ -57,11 +57,12 @@ export const config = {
     preservePitch: true,         // use pitch-preserving time stretching (requires FFmpeg)
     panningEnabled: true,        // enable positional panning for tokens (legacy)
     globalPanningEnabled: true,  // enable global panning system for ALL audio
+    gentleAudioStopping: true,   // reduce aggressive audio stopping to minimize crackling
 
     // Audio Minimap Configuration
     audioMinimapEnabled: true,   // enable audio minimap when cursor moves quickly
-    audioMinimapSpeedThreshold: 2.5, // lines per second threshold to trigger minimap (increased for stricter detection)
-    audioMinimapTimeout: 200,    // minimum milliseconds between line changes to calculate speed
+    audioMinimapSpeedThreshold: 3.5, // lines per second threshold to trigger minimap (increased to reduce false triggers)
+    audioMinimapTimeout: 150,    // minimum milliseconds between line changes to calculate speed (reduced for more responsive detection)
 
     audioPath: () => path.join(extRoot, 'client', 'audio'),
     alphabetPath: () => path.join(extRoot, 'client', 'audio', 'alphabet'),
@@ -78,6 +79,7 @@ export const config = {
     preservePitch: boolean;
     panningEnabled: boolean;
     globalPanningEnabled: boolean;
+    gentleAudioStopping: boolean;
     audioMinimapEnabled: boolean;
     audioMinimapSpeedThreshold: number;
     audioMinimapTimeout: number;

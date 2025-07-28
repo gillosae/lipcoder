@@ -25,6 +25,44 @@ export { playEarcon, earconRaw } from './earcon';
 // ===============================
 
 /**
+ * Validate if a cached audio file is not corrupted
+ */
+async function validateCachedAudioFile(filePath: string): Promise<boolean> {
+    try {
+        const stats = fs.statSync(filePath);
+        
+        // Check if file has reasonable size (at least 1KB, less than 10MB)
+        if (stats.size < 1024 || stats.size > 10 * 1024 * 1024) {
+            log(`[validateCache] File size invalid: ${stats.size} bytes for ${path.basename(filePath)}`);
+            return false;
+        }
+        
+        // For WAV files, do a basic header validation
+        if (filePath.toLowerCase().endsWith('.wav')) {
+            const buffer = fs.readFileSync(filePath);
+            
+            // Check for RIFF header (first 4 bytes)
+            if (buffer.length >= 4 && buffer.toString('ascii', 0, 4) !== 'RIFF') {
+                log(`[validateCache] Invalid WAV header for ${path.basename(filePath)}`);
+                return false;
+            }
+            
+            // Check for WAVE format (bytes 8-12)
+            if (buffer.length >= 12 && buffer.toString('ascii', 8, 12) !== 'WAVE') {
+                log(`[validateCache] Invalid WAVE format for ${path.basename(filePath)}`);
+                return false;
+            }
+        }
+        
+        log(`[validateCache] File validation passed for ${path.basename(filePath)}`);
+        return true;
+    } catch (error) {
+        log(`[validateCache] Validation failed for ${path.basename(filePath)}: ${error}`);
+        return false;
+    }
+}
+
+/**
  * Apply pitch-preserving time stretching to an audio file using FFmpeg
  * Returns path to the processed file (cached for efficiency)
  */
@@ -46,13 +84,24 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         fs.mkdirSync(cacheDir, { recursive: true });
     }
     
-    // Return cached file if it exists and is newer than input
+    // Return cached file if it exists, is newer than input, and is valid
     if (fs.existsSync(outputFilePath)) {
         const inputStat = fs.statSync(inputFilePath);
         const outputStat = fs.statSync(outputFilePath);
         if (outputStat.mtime > inputStat.mtime) {
-            log(`[timeStretch] Using cached time-stretched file: ${outputFileName}`);
-            return outputFilePath;
+            // Validate the cached file before using it
+            if (await validateCachedAudioFile(outputFilePath)) {
+                log(`[timeStretch] Using cached time-stretched file: ${outputFileName}`);
+                return outputFilePath;
+            } else {
+                log(`[timeStretch] Cached file is corrupted, regenerating: ${outputFileName}`);
+                // Delete the corrupted file and continue to regenerate
+                try {
+                    fs.unlinkSync(outputFilePath);
+                } catch (e) {
+                    // Ignore deletion errors
+                }
+            }
         }
     }
     
@@ -439,7 +488,7 @@ class AudioPlayer {
                     this.stopCurrentPlayback();
                     
                     // Use original format since time stretching is already applied
-                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 512 } as any);
                     this.currentSpeaker = speaker;
                     
                     speaker.on('close', () => {
@@ -503,7 +552,7 @@ class AudioPlayer {
             log(`[playPcmCached] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
             
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 128 } as any);
+            const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 512 } as any);
             this.currentSpeaker = speaker;
             
             speaker.on('close', resolve);
@@ -543,7 +592,7 @@ class AudioPlayer {
             this.stopCurrentPlayback();
             
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...format, samplesPerFrame: 128 } as any);
+            const speaker = new Speaker({ ...format, samplesPerFrame: 512 } as any);
             this.currentSpeaker = speaker;
             
             speaker.on('close', resolve);
@@ -592,7 +641,7 @@ class AudioPlayer {
                     this.stopCurrentPlayback();
                     
                     // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-                    const speaker = new Speaker({ ...adjusted, samplesPerFrame: 128 } as any);
+                    const speaker = new Speaker({ ...adjusted, samplesPerFrame: 512 } as any);
                     this.currentSpeaker = speaker;
                     
                     speaker.on('close', resolve);
@@ -649,7 +698,7 @@ class AudioPlayer {
                 
                 // Create speaker and play directly
                 // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-                const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 512 } as any);
                 this.currentSpeaker = speaker;
                 
                 speaker.on('close', () => {
@@ -834,7 +883,7 @@ class AudioPlayer {
                     
                     // log(`[playWavFileInternal] Creating Speaker with format: ${JSON.stringify(adjusted)}`);
                     // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-                    const speaker = new Speaker({ ...adjusted, samplesPerFrame: 128 } as any);
+                    const speaker = new Speaker({ ...adjusted, samplesPerFrame: 512 } as any);
                     this.currentSpeaker = speaker;
                     
                     speaker.on('close', () => {
@@ -881,7 +930,7 @@ class AudioPlayer {
                             // Create new speaker with stereo format
                             const stereoFormat = { ...format, channels: 2 };
                             // @ts-ignore
-                            const stereoSpeaker = new Speaker({ ...stereoFormat, samplesPerFrame: 128 } as any);
+                            const stereoSpeaker = new Speaker({ ...stereoFormat, samplesPerFrame: 512 } as any);
                             this.currentSpeaker = stereoSpeaker;
                             
                             stereoSpeaker.on('close', () => {
@@ -925,7 +974,13 @@ class AudioPlayer {
         
         if (this.currentSpeaker) {
             try {
-                this.currentSpeaker.destroy();
+                if (config.gentleAudioStopping) {
+                    // Gentler stopping: end the stream instead of destroying it abruptly
+                    this.currentSpeaker.end();
+                } else {
+                    // Original aggressive stopping
+                    this.currentSpeaker.destroy();
+                }
             } catch {}
             this.currentSpeaker = null;
         }
@@ -1030,7 +1085,7 @@ class AudioPlayer {
                     this.stopCurrentPlayback();
                     
                     // @ts-ignore: samplesPerFrame used for low-latency
-                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 512 } as any);
                     this.currentSpeaker = speaker;
                     
                     speaker.on('close', () => {
@@ -1090,7 +1145,7 @@ class AudioPlayer {
                 this.stopCurrentPlayback();
                 
                 // @ts-ignore: samplesPerFrame used for low-latency
-                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 128 } as any);
+                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 512 } as any);
                 this.currentSpeaker = speaker;
                 
                 speaker.on('close', () => {

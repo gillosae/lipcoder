@@ -63,6 +63,59 @@ export function registerPlaySpeed(context: vscode.ExtensionContext) {
         })
     );
 
+    // New cache clearing command to fix crackling audio
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.clearAudioCache', async () => {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const os = require('os');
+                
+                // Clear time-stretch cache
+                const timeStretchCacheDir = path.join(os.tmpdir(), 'lipcoder_timestretch');
+                if (fs.existsSync(timeStretchCacheDir)) {
+                    const files = fs.readdirSync(timeStretchCacheDir);
+                    let deletedCount = 0;
+                    
+                    for (const file of files) {
+                        const filePath = path.join(timeStretchCacheDir, file);
+                        if (fs.statSync(filePath).isFile()) {
+                            fs.unlinkSync(filePath);
+                            deletedCount++;
+                        }
+                    }
+                    
+                    vscode.window.showInformationMessage(
+                        `LipCoder: Cleared ${deletedCount} cached audio files. Audio should sound cleaner now.`
+                    );
+                    console.log(`[ClearCache] Deleted ${deletedCount} time-stretched cache files`);
+                } else {
+                    vscode.window.showInformationMessage('LipCoder: Audio cache was already empty.');
+                }
+                
+                // Clear TTS cache as well
+                const ttsCacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+                if (fs.existsSync(ttsCacheDir)) {
+                    const files = fs.readdirSync(ttsCacheDir);
+                    let deletedCount = 0;
+                    
+                    for (const file of files) {
+                        const filePath = path.join(ttsCacheDir, file);
+                        if (fs.statSync(filePath).isFile()) {
+                            fs.unlinkSync(filePath);
+                            deletedCount++;
+                        }
+                    }
+                    console.log(`[ClearCache] Deleted ${deletedCount} TTS cache files`);
+                }
+                
+            } catch (error) {
+                vscode.window.showErrorMessage(`LipCoder: Failed to clear audio cache: ${error}`);
+                console.error('[ClearCache] Error:', error);
+            }
+        })
+    );
+
     // Quick playspeed presets for convenience
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.setPlaySpeedSlow', () => {

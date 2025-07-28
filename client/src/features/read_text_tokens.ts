@@ -13,11 +13,15 @@ function calculatePanning(column: number): number {
         return 0; // No panning if disabled
     }
     
-    // Map column 0-120 to panning -1.0 to +1.0
-    // Columns beyond 120 will be clamped to +1.0
+    // Gentle panning: Map column 0-120 to panning -1.0 to +1.0
+    // This prevents audio artifacts from extreme panning
     const maxColumn = 120;
-    const normalizedColumn = Math.min(column, maxColumn) / maxColumn;
-    return (normalizedColumn * 2) - 1; // Convert 0-1 to -1 to +1
+    const clamped = Math.min(Math.max(column, 0), maxColumn);
+    const normalized = clamped / maxColumn;
+
+    const pan = (normalized * 2) - 1;
+
+    return Math.max(-1, Math.min(1, pan));
 }
 
 export async function readTextTokens(
@@ -123,17 +127,20 @@ export async function readTextTokens(
         const text = change.text;
         if (text.length > 1) {
             // Break grouped input into individual tokens
+            // Stop audio once at the beginning of the sequence, not per character
+            stopAllAudio();
+            
             for (let i = 0; i < text.length; i++) {
                 const ch = text[i];
                 // Calculate panning for each character based on its position
                 const charPanning = calculatePanning(change.range.start.character + i);
                 
-                stopAllAudio();
+                // Remove redundant stopAllAudio() call here
                 try {
                     if (audioMap[ch]) {
                         playWave(audioMap[ch], { isEarcon: true, immediate: true, panning: charPanning });
                     } else if (specialCharMap[ch]) {
-                        stopAllAudio();
+                        // Remove redundant stopAllAudio() call here
                         if (isEarcon(ch)) {
                             await playEarcon(ch, charPanning);
                         } else {
@@ -159,9 +166,10 @@ export async function readTextTokens(
             if (audioMap[char]) {
                 console.log(`[read_text_tokens] Using audioMap path for "${char}": ${audioMap[char]}`);
                 playWave(audioMap[char], { isEarcon: true, immediate: true, panning });
+                return; // Prevent further processing to avoid double audio
             } else if (specialCharMap[char]) {
                 console.log(`[read_text_tokens] Using specialCharMap path for "${char}"`);
-                stopAllAudio();
+                // Remove redundant stopAllAudio() call here
                 if (isEarcon(char)) {
                     console.log(`[read_text_tokens] Playing earcon for "${char}"`);
                     await playEarcon(char, panning);
@@ -169,9 +177,13 @@ export async function readTextTokens(
                     console.log(`[read_text_tokens] Playing special TTS for "${char}": ${specialCharMap[char]}`);
                     await speakTokenList([{ tokens: [specialCharMap[char]], category: 'special', panning }]);
                 }
+                return; // Prevent further processing to avoid double audio
             } else if (/^[a-zA-Z]$/.test(char)) {
                 const tokenPath = audioMap[char.toLowerCase()];
-                if (tokenPath) playWave(tokenPath, { immediate: true, panning });
+                if (tokenPath) {
+                    playWave(tokenPath, { immediate: true, panning });
+                    return; // Prevent further processing to avoid double audio
+                }
             } else {
                 console.log('🚫 No audio found for char:', char);
             }
