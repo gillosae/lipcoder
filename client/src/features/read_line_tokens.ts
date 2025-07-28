@@ -60,18 +60,19 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
             return;
         }
         
-        log(`[readLineTokens] received ${tokenData.length} tokens: ${JSON.stringify(tokenData)}`);
+        log(`[readLineTokens] 👺👺👺👺👺  received ${tokenData.length} tokens: ${JSON.stringify(tokenData)}`);
 
         // Drop first chunk if it's only whitespace - be more careful about this
         if (tokenData.length > 0 && tokenData[0].text.trim() === '' && tokenData[0].category === 'other') {
             log(`[readLineTokens] Dropping initial whitespace token: "${tokenData[0].text}"`);
             tokenData = tokenData.slice(1);
         }
-        
-        // Debug logging for first token after processing
-        if (tokenData.length > 0) {
-            log(`[readLineTokens] FIRST TOKEN will be: "${tokenData[0].text}" (category: ${tokenData[0].category})`);
-        }
+
+        // Remove every token whose text is only whitespace
+        tokenData = tokenData.filter(token =>
+            token.text.trim().length > 0
+        );
+    
 
         // Calculate panning for each token based on its column position
         const validChunks: { tokens: string[]; category: string; panning: number }[] = [];
@@ -101,7 +102,7 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         const spokenSeq = flatTokens
             .map(tok => specialCharMap[tok] ? `(${specialCharMap[tok]})` : tok)
             .join(' ');
-        log(`[readLineTokens] 👺👺👺👺👺 speak sequence: ${spokenSeq}`);
+        log(`[readLineTokens]speak sequence: ${spokenSeq}`);
 
         try {
             // Set flag to prevent interruption by other features (but allow cursor movement)

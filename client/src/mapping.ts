@@ -3,7 +3,7 @@ import type { ExtensionContext } from 'vscode';
 
 // Two and three word exception mappings
 export const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in', 'to', 'by', 'of', 'as', 'at', 'or', 'up']);
-export const threeLenExceptions = new Set(['fmt', 'rgb', 'str', 'png', 'jpg', 'wav', 'mp3', 'mp4', 'ogg', 'url', 'api', 'css', 'vfx']);
+export const threeLenExceptions = new Set(['fmt', 'rgb', 'str', 'png', 'jpg', 'wav', 'mp3', 'mp4', 'ogg', 'url', 'api', 'css', 'vfx', 'xml', 'jsx', 'tsx', 'ogg', 'pcm']);
 
 const PUNCTUATION_FILES: Record<string, string> = {
     '{': 'brace.pcm', '}': 'brace2.pcm',
@@ -15,6 +15,7 @@ const PUNCTUATION_FILES: Record<string, string> = {
     '-': 'bar.pcm', ':': 'colon.pcm',
     "'": 'quote.pcm', '"': 'bigquote.pcm',
     '_': 'underbar.pcm',
+    '.': 'dot.pcm', // Added missing dot earcon
 };
 
 export const SPECIAL_CHAR_FILES: Record<string, string> = {
@@ -36,8 +37,7 @@ export const specialCharMap: Record<string, string> = {
     m: 'em', n: 'en', o: 'oh', p: 'pee', q: 'cue', r: 'ar',
     s: 'ess', t: 'tee', u: 'you', v: 'vee', w: 'double you',
     x: 'ex', y: 'why', z: 'zee',
-    // characters without direct PCM files
-    '.': 'dot', ',': 'comma',
+    // characters without direct PCM files (fallback TTS names)
 };
 
 // Converts numbers 0–3000 to English words
