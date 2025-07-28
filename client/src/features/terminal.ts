@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import { speakTokenList, TokenChunk } from '../audio';
 import { stopReading } from './stop_reading';
-import { stopPlayback } from '../audio';
+import { stopAllAudio } from './stop_reading';
 import { logWarning, logError, logSuccess } from '../utils';
 
 let terminalLines: string[] = [];
@@ -102,9 +102,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                     ptyProcess.kill();
                 },
                 handleInput: (input: string) => {
-                    // (Re)stop any other speech
-                    stopReading();
-                    stopPlayback();
+                    // (Re)stop any other speech using centralized system
+                    stopAllAudio();
                     // Write into the PTY (handles erase/backspace)
                     ptyProcess.write(input);
                     // Echo each character spoken using speakTokenList

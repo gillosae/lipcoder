@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { config } from '../config';
-import { playWave, stopPlayback } from '../audio';
+import { playWave } from '../audio';
+import { stopAllAudio } from './stop_reading';
 import * as path from 'path';
 const Speaker = require('speaker');
 
@@ -60,7 +61,7 @@ class ContinuousToneGenerator {
         
         try {
             // Stop any existing playback first
-            stopPlayback();
+            stopAllAudio();
             
             this.currentFrequency = frequency;
             this.isPlaying = true;

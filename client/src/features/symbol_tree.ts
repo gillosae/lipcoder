@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
-import { playWave, speakTokenList, TokenChunk, stopPlayback } from '../audio';
+import { playWave, speakTokenList, TokenChunk } from '../audio';
 import { config } from '../config';
 import { stopReading, lineAbortController } from './stop_reading';
 import { log } from '../utils';

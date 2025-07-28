@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { stopReading } from './stop_reading';
-import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 
 export function registerNavExplorer(context: vscode.ExtensionContext) {
     context.subscriptions.push(

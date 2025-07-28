@@ -3,8 +3,8 @@ import * as path from 'path';
 
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
-import { stopPlayback, playWave, speakTokenList, TokenChunk, playEarcon } from '../audio';
-import { stopReading, getLineTokenReadingActive } from './stop_reading';
+import { playWave, speakTokenList, TokenChunk, playEarcon } from '../audio';
+import { stopAllAudio, getLineTokenReadingActive } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
 
@@ -115,7 +115,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.pcm');
             
             // This should not run during line token reading anymore
-            stopReading();
+            stopAllAudio(); // Use centralized stopping that includes clearing audio state
             playWave(alertWav, { immediate: true }).catch(console.error);
 
             // Store for two-step accept
@@ -136,7 +136,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             
             // Only stop reading if line token reading is not currently active
             if (!getLineTokenReadingActive()) {
-                stopReading();
+                stopAllAudio(); // Use centralized stopping that includes clearing audio state
             }
             
             if (!lastSuggestion.read) {
@@ -175,7 +175,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
                 // Only stop reading if line token reading is not currently active
                 if (!getLineTokenReadingActive()) {
-                    stopReading();
+                    stopAllAudio(); // Use centralized stopping system
                 }
                 
                 playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert

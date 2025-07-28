@@ -62,7 +62,7 @@ export function splitWordChunks(text: string): string[] {
                     }
                     // 3. Letter runs of length 3
                     else if (run.length === 3) {
-                        if (isDictionaryWord(run) && !threeLenExceptions.has(lower)) {
+                        if (isDictionaryWord(lower) && !threeLenExceptions.has(lower)) {
                             result.push(run);
                         } else {
                             for (const ch of run) result.push(ch);

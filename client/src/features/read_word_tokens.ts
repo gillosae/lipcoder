@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { stopPlayback, speakTokenList } from '../audio';
+import { speakTokenList } from '../audio';
+import { stopAllAudio } from './stop_reading';
 import { log } from '../utils';
-import { splitWordChunks, splitCommentChunks } from './word_logic';
 import { config } from '../config';
 
 const bufferMap = new Map<string, string>();
@@ -34,15 +34,14 @@ export async function readWordTokens(
         // if user types a space (or newline), speak accumulated buffer + the space
         if (text === ' ' || text === '\n' || text === '\t') {
             // halt any ongoing audio
-            stopPlayback();
+            stopAllAudio();
 
             const word = buf.trim();
             if (word) {
                 log(`[readWordTokens] speaking word="${word}"`);
-                const tokens = /^\d+$/.test(word)
-                    ? [word]
-                    : splitWordChunks(word);
-                await speakTokenList([{ tokens, category: 'literal', panning }]);
+                // Send as variable category so universal word logic in speakTokenList applies
+                const category = /^\d+$/.test(word) ? 'literal' : 'variable';
+                await speakTokenList([{ tokens: [word], category, panning }]);
             }
             // optionally speak the space itself as an earcon or omit
             bufferMap.set(uri, '');

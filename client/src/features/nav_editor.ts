@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { isFileTreeReading } from './file_tree';
-import { stopReading, getLineTokenReadingActive } from './stop_reading';
-import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
+import { stopReading, getLineTokenReadingActive, stopForCursorMovement, stopAllAudio } from './stop_reading';
+import { speakTokenList, TokenChunk } from '../audio';
 import { readWordTokens } from './read_word_tokens';
 import { readTextTokens } from './read_text_tokens';
 import { config } from '../config';
@@ -140,6 +140,9 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 const lineNum = e.selections[0].start.line;
                 if (currentLineNum === lineNum) return;
 
+                // IMMEDIATELY stop all audio when cursor moves to new line
+                stopForCursorMovement();
+
                 currentLineNum = lineNum;
                 lastCursorMoveTime = Date.now();
                 log(`[cursor-log] line=${lineNum}`);
@@ -202,8 +205,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             if (old && sel.line === old.line && Math.abs(sel.character - old.character) === 1) {
                 // Only stop reading if line token reading is not currently active
                 if (!getLineTokenReadingActive()) {
-                    stopReading();
-                    stopPlayback();
+                    stopAllAudio(); // Use centralized stopping system
                 }
 
                 const doc = e.textEditor.document;

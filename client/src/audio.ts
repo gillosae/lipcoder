@@ -7,11 +7,14 @@ import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
 import { log, logWarning, logInfo, logError, logSuccess } from './utils';
 import { config, sileroConfig } from './config';
-import { isAlphabet, isNumber } from './mapping';
+import { isAlphabet, isNumber, specialCharMap } from './mapping';
 
 // Import from the new modules
 import { playEarcon, stopEarconPlayback, isEarconToken, findTokenSound, earconRaw } from './earcon';
 import { genTokenAudio, playSpecial, isTTSRequired, getSpeakerForCategory } from './tts';
+
+// Import word logic for universal application
+import { splitWordChunks, splitCommentChunks } from './features/word_logic';
 
 // Re-export functions that other modules expect from audio.ts
 export { genTokenAudio, playSpecial } from './tts';
@@ -55,6 +58,13 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
     
     log(`[timeStretch] Applying ${playSpeed}x time stretch with pitch preservation to: ${path.basename(inputFilePath)}`);
     
+    // Check if input file exists
+    if (!fs.existsSync(inputFilePath)) {
+        const error = new Error(`Input file does not exist: ${inputFilePath}`);
+        logError(`[timeStretch] ${error.message}`);
+        return Promise.reject(error);
+    }
+    
     return new Promise((resolve, reject) => {
         // FFmpeg command: -af "atempo=speed" preserves pitch while changing tempo
         // atempo filter has limits (0.5-100.0), so we may need to chain multiple filters for extreme speeds
@@ -78,12 +88,31 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         
         const filterChain = atempoFilters.join(',');
         
-        const ffmpegArgs = [
-            '-i', inputFilePath,
-            '-af', filterChain,
-            '-y', // Overwrite output file
-            outputFilePath
-        ];
+        // Check if input is a PCM file and add format specifications
+        const isPcmFile = inputFilePath.toLowerCase().endsWith('.pcm');
+        let ffmpegArgs: string[];
+        
+        if (isPcmFile) {
+            // For PCM files, specify the format explicitly using standard PCM format
+            log(`[timeStretch] PCM file detected, using format: ${STANDARD_PCM_FORMAT.channels}ch, ${STANDARD_PCM_FORMAT.sampleRate}Hz, 16-bit`);
+            ffmpegArgs = [
+                '-f', 's16le',                                    // 16-bit signed little-endian
+                '-ar', STANDARD_PCM_FORMAT.sampleRate.toString(), // Sample rate from constant
+                '-ac', STANDARD_PCM_FORMAT.channels.toString(),   // Channels from constant
+                '-i', inputFilePath,
+                '-af', filterChain,
+                '-y', // Overwrite output file
+                outputFilePath
+            ];
+        } else {
+            // For other audio files (WAV, MP3, etc.), use standard approach
+            ffmpegArgs = [
+                '-i', inputFilePath,
+                '-af', filterChain,
+                '-y', // Overwrite output file
+                outputFilePath
+            ];
+        }
         
         log(`[timeStretch] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
         
@@ -346,11 +375,19 @@ class AudioPlayer {
     private currentFileStream: fs.ReadStream | null = null;
     private currentFallback: ChildProcess | null = null;
     private playQueue = Promise.resolve();
+    private isStopping = false; // Flag to prevent new audio during stop
+    private stoppingTimeout: NodeJS.Timeout | null = null;
 
     private cache = new AudioCache();
     private fallbackManager = new FallbackPlayerManager();
 
     async playPcmCached(filePath: string, panning?: number): Promise<void> {
+        // Check if we're in the middle of stopping - abort immediately  
+        if (this.isStopping) {
+            log(`[playPcmCached] Aborted - stopping in progress for: ${path.basename(filePath)}`);
+            return;
+        }
+        
         // For pitch-preserving PCM playback, convert to WAV and use time stretching
         if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
             log(`[playPcmCached] Using pitch-preserving time stretching for: ${path.basename(filePath)}`);
@@ -697,6 +734,12 @@ class AudioPlayer {
     }
 
     async playWavFile(filePath: string, opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean; panning?: number }): Promise<void> {
+        // Check if we're in the middle of stopping - abort immediately  
+        if (this.isStopping) {
+            log(`[playWavFile] Aborted - stopping in progress for: ${path.basename(filePath)}`);
+            return;
+        }
+        
         log(`[playWavFile] Starting playback for: ${path.basename(filePath)}, opts: ${JSON.stringify(opts)}`);
         
         if (!fs.existsSync(filePath)) {
@@ -878,6 +921,8 @@ class AudioPlayer {
     }
 
     stopCurrentPlayback(): void {
+        this.isStopping = true; // Prevent new audio from starting
+        
         if (this.currentSpeaker) {
             try {
                 this.currentSpeaker.destroy();
@@ -907,15 +952,44 @@ class AudioPlayer {
         }
         
         this.playQueue = Promise.resolve();
+        
+        // Reset the stopping flag immediately for faster recovery
+        this.stoppingTimeout = setTimeout(() => {
+            this.isStopping = false;
+            this.stoppingTimeout = null;
+        }, 1); // Reduced to 1ms for immediate recovery
     }
 
     stopAll(): void {
         stopEarconPlayback();
         this.stopCurrentPlayback();
         this.fallbackManager.killAll();
+        
+        // Clear any pending timeout and immediately reset stopping flag
+        if (this.stoppingTimeout) {
+            clearTimeout(this.stoppingTimeout);
+            this.stoppingTimeout = null;
+        }
+        this.isStopping = false;
+    }
+
+    clearStoppingState(): void {
+        // Cancel any pending timeout that might reset the flag
+        if (this.stoppingTimeout) {
+            clearTimeout(this.stoppingTimeout);
+            this.stoppingTimeout = null;
+        }
+        this.isStopping = false;
+        log('[AudioPlayer] Stopping state cleared - ready for new audio');
     }
 
     async playTtsAsPcm(wavFilePath: string, panning?: number): Promise<void> {
+        // Check if we're in the middle of stopping - abort immediately  
+        if (this.isStopping) {
+            log(`[playTtsAsPcm] Aborted - stopping in progress for: ${path.basename(wavFilePath)}`);
+            return;
+        }
+        
         log(`[playTtsAsPcm] SIMPLE FAST TTS playback: ${path.basename(wavFilePath)}, panning: ${panning}`);
         
         // Use pitch-preserving time stretching if enabled and playspeed != 1.0
@@ -1042,6 +1116,9 @@ class AudioPlayer {
         this.stopAll();
         this.cache.clear();
         
+        // Reset stopping flag after cleanup to allow new audio
+        this.isStopping = false;
+        
         if (global.gc) {
             try {
                 global.gc();
@@ -1051,7 +1128,7 @@ class AudioPlayer {
             }
         }
         
-        logWarning('🧹 Audio resources cleaned up');
+        logWarning('🧹 Audio resources cleaned up - ready for new audio');
     }
 
     async playSequence(filePaths: string[], opts?: { rate?: number }): Promise<void> {
@@ -1180,6 +1257,9 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
     let aborted = false;
     let abortListener: (() => void) | null = null;
     
+    // Clear stopping state at the start of legitimate audio sequence
+    audioPlayer.clearStoppingState();
+    
     log(`[speakTokenList] Starting with ${chunks.length} chunks, signal aborted: ${signal?.aborted}`);
     
     if (signal) {
@@ -1200,20 +1280,62 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         audioPlayer.stopCurrentPlayback();
         log(`[speakTokenList] Cleared audio queue, starting token processing`);
         
+        // UNIVERSAL WORD LOGIC APPLICATION: Apply word chunking to all appropriate tokens
+        log(`[speakTokenList] Applying universal word logic to all chunks...`);
+        const processedChunks: TokenChunk[] = [];
+        
+        for (const chunk of chunks) {
+            const { tokens, category, panning } = chunk;
+            const expandedTokens: string[] = [];
+            
+            for (const token of tokens) {
+                if (category === 'variable') {
+                    // Apply word chunking to variables (handles CamelCase, underscores, 2/3-letter rules)
+                    const wordChunks = splitWordChunks(token);
+                    expandedTokens.push(...wordChunks);
+                    log(`[speakTokenList] Variable "${token}" → [${wordChunks.join(', ')}]`);
+                } else if (category === 'comment_text' || category === 'comment_symbol') {
+                    // Apply comment chunking for comment-related tokens
+                    const commentChunks = splitCommentChunks(token, category);
+                    expandedTokens.push(...commentChunks);
+                    log(`[speakTokenList] Comment "${token}" → [${commentChunks.join(', ')}]`);
+                } else {
+                    // Keep other tokens as-is
+                    expandedTokens.push(token);
+                }
+            }
+            
+            // Create new chunk with expanded tokens
+            processedChunks.push({
+                tokens: expandedTokens,
+                category,
+                panning
+            });
+        }
+        
+        const originalTokenCount = chunks.reduce((total, chunk) => total + chunk.tokens.length, 0);
+        const processedTokenCount = processedChunks.reduce((total, chunk) => total + chunk.tokens.length, 0);
+        log(`[speakTokenList] Word logic applied: ${chunks.length} chunks (${originalTokenCount} tokens) → ${processedChunks.length} chunks (${processedTokenCount} tokens)`);
+        
+        // Use processed chunks for the rest of the function
+        chunks = processedChunks;
+        
         // PARALLEL TTS PRE-GENERATION: Use both workers simultaneously
         log(`[speakTokenList] Pre-generating TTS for all tokens in parallel...`);
         const ttsPregenPromises = new Map<string, Promise<string>>();
         
         for (const { tokens, category } of chunks) {
             for (const token of tokens) {
-                // Priority 1: Special characters don't need pre-generation (handled by playSpecial)
-                if (category === 'special') {
+                // Priority 1: Check if this is a special character token (regardless of category)
+                const isSpecialChar = specialCharMap[token] !== undefined;
+                if (isSpecialChar) {
                     continue; // Special characters use direct TTS generation
                 } else if (isEarconToken(token)) {
                     continue; // Earcons don't need TTS pre-generation
                 } else if (isAlphabet(token) || isNumber(token)) {
                     continue; // Alphabet and numbers use PCM files, not TTS
-                } else if (category && category !== 'other' && getSpeakerForCategory(category) !== sileroConfig.defaultSpeaker) {
+                } else if (category && category !== 'other' && isTTSRequired(token)) {
+                    // Pre-generate TTS for all tokens with meaningful categories
                     if (!ttsPregenPromises.has(token)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}"`);
                         ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
@@ -1228,6 +1350,12 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         log(`[speakTokenList] Started ${ttsPregenPromises.size} parallel TTS requests across 2 workers`);
         
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+            // Check for abort before each chunk
+            if (signal?.aborted || aborted) {
+                log(`[speakTokenList] ABORTED before chunk ${chunkIndex + 1}/${chunks.length}`);
+                return;
+            }
+            
             const { tokens, category, panning } = chunks[chunkIndex];
             log(`[speakTokenList] Processing chunk ${chunkIndex + 1}/${chunks.length}: ${tokens.length} tokens [${tokens.join(', ')}]`);
             
@@ -1243,9 +1371,20 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 log(`[speakTokenList] About to process token ${tokenIndex + 1}/${tokens.length}: "${token}"`);
                 
                 try {
+                    // Double-check abort signal right before audio playback
+                    if (signal?.aborted || aborted) {
+                        log(`[speakTokenList] ABORTED right before playing token: "${token}"`);
+                        return;
+                    }
+                    
+                    // Clear stopping state immediately before each token to prevent false aborts
+                    audioPlayer.clearStoppingState();
+                    
                     // Route tokens to appropriate playback method
-                    // Priority 1: Special characters (use special TTS handling)
-                    if (category === 'special') {
+                    // Priority 1: Check if this is a special character token
+                    const isSpecialChar = specialCharMap[token] !== undefined;
+                    if (isSpecialChar && category === 'special') {
+                        // Only use the old playSpecial for 'special' category
                         log(`[speakTokenList] Using SPECIAL TTS for: "${token}"`);
                         await playSpecial(token);
                     } else if (isEarconToken(token)) {
@@ -1270,10 +1409,20 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                             // Fallback to TTS for missing number
                             await speakTokenImmediate(token, category, { panning });
                         }
-                    } else if (category && category !== 'other' && getSpeakerForCategory(category) !== sileroConfig.defaultSpeaker) {
-                        log(`[speakTokenList] Using TTS with ${category} voice for: "${token}"`);
-                        const ttsFilePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
-                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                    } else if (category && category !== 'other' && isTTSRequired(token)) {
+                        // Handle all tokens with meaningful categories using TTS
+                        if (getSpeakerForCategory(category) !== sileroConfig.defaultSpeaker) {
+                            log(`[speakTokenList] Using TTS with ${category} voice for: "${token}"`);
+                            const ttsFilePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
+                            await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                        } else if (ttsPregenPromises.has(token)) {
+                            log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (${category})`);
+                            const ttsFilePath = await ttsPregenPromises.get(token)!;
+                            await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                        } else {
+                            log(`[speakTokenList] Generating NEW TTS for: "${token}" (${category})`);
+                            await speakTokenImmediate(token, category, { panning });
+                        }
                     } else if (isTTSRequired(token) && ttsPregenPromises.has(token)) {
                         log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}"`);
                         const ttsFilePath = await ttsPregenPromises.get(token)!;
@@ -1383,6 +1532,12 @@ export function playWave(
     filePath: string,
     opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean; panning?: number }
 ): Promise<void> {
+    // Clear stopping state if it might be lingering inappropriately
+    // This is a safety net for legitimate audio that should play
+    if (opts?.immediate) {
+        audioPlayer.clearStoppingState();
+    }
+    
     // Apply global playspeed if no specific rate is provided
     const effectiveRate = opts?.rate ?? config.playSpeed;
     
@@ -1439,6 +1594,10 @@ export function generateTone(duration = 200, freq = 440): Promise<void> {
 
 export function stopPlayback(): void {
     audioPlayer.stopAll();
+}
+
+export function clearAudioStoppingState(): void {
+    audioPlayer.clearStoppingState();
 }
 
 export function cleanupAudioResources(): void {

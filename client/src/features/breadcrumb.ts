@@ -4,7 +4,7 @@ import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 
 export function registerBreadcrumb(
     context: ExtensionContext,

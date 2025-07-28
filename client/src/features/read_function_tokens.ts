@@ -2,7 +2,8 @@ import { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { log } from '../utils';
-import { stopPlayback, speakTokenList } from '../audio';
+import { speakTokenList } from '../audio';
+import { stopAllAudio } from './stop_reading';
 import { config } from '../config';
 
 // Helper function to calculate panning based on column position
@@ -31,7 +32,7 @@ export function registerReadFunctionTokens(
                     return;
                 }
                 // Stop any ongoing audio
-                stopPlayback();
+                stopAllAudio();
 
                 const uri = editor.document.uri.toString();
                 const position = editor.selection.active;

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { log } from '../utils';
-import { playWave, speakTokenList, TokenChunk, stopPlayback } from '../audio';
+import { playWave, speakTokenList, TokenChunk } from '../audio';
+import { stopAllAudio } from './stop_reading';
 import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
@@ -81,7 +82,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const pos = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos));
-                    stopPlayback();
+                    stopAllAudio();
                     // Play indent earcon for nesting depth
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
