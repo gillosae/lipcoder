@@ -33,13 +33,13 @@ export function getTokenSound(token: string): string | null {
         return path.join(config.audioPath(), 'earcon', file);
     }
     const map: Record<string, string> = {
-        '{': 'brace.wav', '}': 'brace2.wav',
-        '<': 'anglebracket.wav', '>': 'anglebracket2.wav',
-        '[': 'squarebracket.wav', ']': 'squarebracket2.wav',
-        '(': 'parenthesis.wav', ')': 'parenthesis2.wav',
-        ',': 'comma.wav', ';': 'semicolon.wav',
-        '/': 'slash.wav', // '_': 'underbar.wav',
-        '.': 'dot.wav', ':': 'colon.wav', '-': 'bar.wav',
+        '{': 'brace.pcm', '}': 'brace2.pcm',
+        '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
+        '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
+        '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
+        ',': 'comma.pcm', ';': 'semicolon.pcm',
+        '/': 'slash.pcm', // '_': 'underbar.pcm',
+        '.': 'dot.pcm', ':': 'colon.pcm', '-': 'bar.pcm',
     };
     if (map[token]) {
         return path.join(config.audioPath(), 'earcon', map[token]);

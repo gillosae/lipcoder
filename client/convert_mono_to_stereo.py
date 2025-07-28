@@ -47,24 +47,25 @@ def convert_to_stereo(audio_file, backup=True):
             # Change file extension from .wav to .pcm
             pcm_file = audio_file.rsplit('.wav', 1)[0] + '.pcm'
             
-            # Export as raw PCM (16-bit signed, little-endian) at 48kHz
-            stereo_audio = stereo_audio.set_frame_rate(48000)  # Ensure 48kHz sample rate
+            # Export as raw PCM (16-bit signed, little-endian) at original sample rate
+            # Keep original sample rate (typically 24kHz)
             stereo_audio.export(pcm_file, format="s16le")
             
             # Remove the original WAV file
             os.remove(audio_file)
             
-            print(f"  ✓ Converted to stereo PCM: {stereo_audio.channels} channels, 48000Hz, 16-bit")
+            print(f"  ✓ Converted to stereo PCM: {stereo_audio.channels} channels, {stereo_audio.frame_rate}Hz, 16-bit")
             print(f"  📁 Saved as: {os.path.basename(pcm_file)}")
             return True
         else:
             print(f"  Already stereo ({mono_audio.channels} channels)")
-            # If already stereo, still convert to PCM format at 48kHz
+            # If already stereo, still convert to PCM format at original sample rate
             pcm_file = audio_file.rsplit('.wav', 1)[0] + '.pcm'
-            stereo_audio = mono_audio.set_frame_rate(48000)  # Ensure 48kHz sample rate
+            # Keep original sample rate
+            stereo_audio = mono_audio
             stereo_audio.export(pcm_file, format="s16le")
             os.remove(audio_file)
-            print(f"  📁 Converted WAV to PCM (48kHz): {os.path.basename(pcm_file)}")
+            print(f"  📁 Converted WAV to PCM ({stereo_audio.frame_rate}Hz): {os.path.basename(pcm_file)}")
             return True
             
     except Exception as e:
@@ -91,7 +92,7 @@ def main():
     print(f"📁 Audio directory: {audio_dir}")
     print(f"💾 Backup files: {'No' if args.no_backup else 'Yes'}")
     print(f"🔍 Dry run: {'Yes' if args.dry_run else 'No'}")
-    print(f"📄 Output format: 16-bit stereo PCM at 48kHz")
+    print(f"📄 Output format: 16-bit stereo PCM at original sample rate")
     print()
 
     # Find all .wav files
@@ -147,7 +148,7 @@ def main():
     print(f"\n🎉 Conversion complete!")
     print(f"  ✓ Converted: {converted_count} files")
     print(f"  ✗ Failed: {len(wav_files_to_convert) - converted_count} files")
-    print(f"  📄 All files converted to 16-bit stereo PCM format at 48kHz")
+    print(f"  📄 All files converted to 16-bit stereo PCM format at original sample rate")
     
     if not args.no_backup:
         print(f"\n💾 Backup files created with .mono_backup extension")

@@ -30,7 +30,7 @@ export let sileroConfig: SileroConfig = {
     language: 'en',
     modelId: 'v3_en',
     defaultSpeaker: 'en_3',
-    sampleRate: 8000,
+    sampleRate: 24000,
 };
 
 export const categoryVoiceMap: Record<string, string> = {

@@ -72,7 +72,7 @@ export function registerSymbolTree(context: ExtensionContext) {
                     editor.revealRange(new vscode.Range(pos, pos));
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     speakToken(label);
                 }
@@ -87,7 +87,7 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const { label, line, depth } = sel;
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     speakToken(
                         `moved to symbol ${label} line ${line + 1}`,

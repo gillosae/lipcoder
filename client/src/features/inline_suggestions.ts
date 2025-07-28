@@ -83,7 +83,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
             console.log('audioPath →', config.audioPath());
             // Play visual alert earcon using config.audioPath()
-            const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.wav');
+            const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.pcm');
             stopReading();
             playWave(alertWav, { immediate: true }).catch(console.error);
 
@@ -138,7 +138,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             ) {
                 // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
                 stopReading();
-                playEarcon('client/audio/alert/suggestion.wav');
+                playEarcon('client/audio/alert/suggestion.pcm');
                 await speakToken(lastSuggestion.suggestion);
                 markSuggestionRead();
             } else {

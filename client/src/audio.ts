@@ -25,10 +25,10 @@ let currentFileStream: fs.ReadStream | null = null;
 // Cache for arbitrary PCM files for immediate playback
 const pcmCache: Record<string, { format: any; pcm: Buffer }> = {};
 
-// Standard PCM format for all audio files (matches conversion script output)
+// Standard PCM format for all audio files (matches actual audio files)
 const STANDARD_PCM_FORMAT = {
-    channels: 2,        // stereo
-    sampleRate: 48000,   // 48kHz (matches actual audio files)
+    channels: 2,        // stereo (converted from mono)
+    sampleRate: 24000,   // 24kHz (original sample rate)
     bitDepth: 16,       // 16-bit
     signed: true,
     float: false
@@ -206,7 +206,7 @@ function doPlay(filePath: string, opts?: { isEarcon?: boolean; rate?: number }):
             try {
                 const adjusted = { ...format };
                 if (opts?.rate !== undefined) adjusted.sampleRate = Math.floor(format.sampleRate * opts.rate!);
-                else if (opts?.isEarcon) adjusted.sampleRate = Math.floor(format.sampleRate * 2.4);
+                // Removed earcon rate adjustment - all files now at 24kHz
                 if (currentSpeaker) { try { currentSpeaker.end(); } catch { } currentSpeaker = null; }
                 if (currentFallback) { try { currentFallback.kill(); } catch { } currentFallback = null; }
                 // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
@@ -254,7 +254,7 @@ export function playWave(
     if (opts?.isEarcon) {
         log(`[playWave] Playing earcon via raw PCM cache: ${filePath}`);
         // Determine token and use playEarcon
-        const fname = path.basename(filePath, '.wav');
+        const fname = path.basename(filePath, '.pcm');
         // Try to find a token that maps to this filename
         const token = fname;
         if (findTokenSound(token)) {
@@ -278,9 +278,8 @@ function playPcm(filePath: string, opts?: { isEarcon?: boolean; rate?: number; i
             // Apply rate adjustment if specified
             if (opts?.rate !== undefined) {
                 format.sampleRate = Math.floor(format.sampleRate * opts.rate);
-            } else if (opts?.isEarcon) {
-                format.sampleRate = Math.floor(format.sampleRate * 2.4);
             }
+            // Removed earcon rate adjustment - all files now at 24kHz
             
             // Halt any prior playback
             stopPlayback();

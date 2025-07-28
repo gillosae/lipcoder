@@ -72,7 +72,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     // Play indent earcon for nesting depth
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     speakToken(label);
                 }
@@ -87,7 +87,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     // Play indent earcon for nesting depth on accept as well
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.wav`);
+                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     speakToken(`moved to function ${label} line ${line + 1}`);
                 }

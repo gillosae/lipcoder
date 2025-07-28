@@ -34,10 +34,10 @@ export async function readTextTokens(
             const sevMap = diagCache.get(uri) || {};
             const sev = sevMap[enterLine] ?? vscode.DiagnosticSeverity.Hint;
             const fileMap = {
-                [vscode.DiagnosticSeverity.Error]: 'enter2.wav',
-                [vscode.DiagnosticSeverity.Warning]: 'enter2.wav',
-                [vscode.DiagnosticSeverity.Information]: 'enter2.wav',
-                [vscode.DiagnosticSeverity.Hint]: 'enter.wav',
+                [vscode.DiagnosticSeverity.Error]: 'enter2.pcm',
+                [vscode.DiagnosticSeverity.Warning]: 'enter2.pcm',
+                [vscode.DiagnosticSeverity.Information]: 'enter2.pcm',
+                [vscode.DiagnosticSeverity.Hint]: 'enter.pcm',
             } as const;
             const enterFile = path.join(config.audioPath(), 'earcon', fileMap[sev]);
             playWave(enterFile, { isEarcon: true, immediate: true });
@@ -69,23 +69,23 @@ export async function readTextTokens(
             if (isTab) {
                 // Manual Tab: indent_0 → indent_4
                 const idx = rawUnits > 4 ? 4 : rawUnits;
-                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
+                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
                 indentLevels.set(uri, rawUnits);
 
             } else if (isBackspace) {
                 // Manual Backspace: indent_5 → indent_9
                 const idx = rawUnits + 5 > 9 ? 9 : rawUnits + 5;
-                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
+                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
                 indentLevels.set(uri, rawUnits);
 
             } else {
                 // Auto-indent: same as before
                 if (rawUnits > oldRaw) {
                     const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits - 1;
-                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
                 } else if (rawUnits < oldRaw) {
                     const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits;
-                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`), { isEarcon: true, immediate: true });
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
                 }
                 indentLevels.set(uri, rawUnits);
             }
@@ -97,7 +97,7 @@ export async function readTextTokens(
         for (const change of changes) {
             if (change.text === '' && change.rangeLength === 1) {
                 stopPlayback();
-                playWave(path.join(config.audioPath(), 'earcon', 'backspace.wav'), { isEarcon: true, immediate: true });
+                playWave(path.join(config.audioPath(), 'earcon', 'backspace.pcm'), { isEarcon: true, immediate: true });
                 break;
             }
         }

@@ -27,7 +27,7 @@ export async function genTokenAudio(
     if (category && category.startsWith('keyword_')) {
         const lang = category.split('_')[1];      // "python" or "typescript"
         const filename = token.toLowerCase();     // match your saved filenames
-        const filePath = path.join(config.earconPath(), lang, `${filename}.wav`);
+        const filePath = path.join(config.earconPath(), lang, `${filename}.pcm`);
         log(`[genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
         if (fs.existsSync(filePath)) {
             log(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
@@ -80,8 +80,17 @@ export async function genTokenAudio(
             throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
         }
         const wavBuffer = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(cachedFile, wavBuffer);
-        return cachedFile;
+        
+        // Convert mono WAV to stereo PCM for consistency with other audio files
+        try {
+            // For now, save as WAV but with PCM extension for identification
+            // TODO: Consider converting to actual stereo PCM format
+            fs.writeFileSync(cachedFile, wavBuffer);
+            return cachedFile;
+        } catch (err) {
+            log(`[genTokenAudio] Error saving TTS cache: ${err}`);
+            throw err;
+        }
     }
 
     // 1) Skip blanks
@@ -142,7 +151,7 @@ export function playSpecial(word: string): Promise<void> {
         log(`[playSpecial] fallback to file-based playback for "${word}"`);
         const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
         const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const file = path.join(cacheDir, `text_${sanitized}.wav`);
+        const file = path.join(cacheDir, `text_${sanitized}.pcm`);
         log(`[playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
         return Promise.resolve(); // This will be handled by the main audio module
     }

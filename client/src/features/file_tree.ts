@@ -80,7 +80,7 @@ export function registerFileTree(context: ExtensionContext) {
                         return;  // bail out immediately
                     }
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const file = path.join(config.audioPath(), 'earcon', `indent_${idx}.wav`);
+                    const file = path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`);
                     await playWave(file, { isEarcon: true, immediate: true });
                     if (node.isDirectory) {
                         await speakToken(node.name, 'folder');

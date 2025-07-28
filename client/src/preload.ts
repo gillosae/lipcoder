@@ -35,7 +35,7 @@ export async function preloadKeywordWavs(extRoot: string): Promise<void> {
                     const pcm = fs.readFileSync(pcmPath);
                     const fmt = {
                         channels: 2,      // stereo (from conversion script)
-                        sampleRate: 48000, // 48kHz (matches actual audio files)
+                        sampleRate: 24000, // 24kHz (matches actual audio files)
                         bitDepth: 16,     // 16-bit
                         signed: true,
                         float: false
