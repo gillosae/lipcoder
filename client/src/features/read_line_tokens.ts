@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { log } from '../utils';
 import { specialCharMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { splitWordChunks } from './word_logic';
+import { splitWordChunks, splitCommentChunks } from './word_logic';
 import { speakTokenList } from '../audio';
 import { stopReading, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive } from './stop_reading';
 import { isEditorActive } from '../ide/active';
@@ -59,7 +59,10 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
             
             for (const { text, category } of tokenData) {
                 const tokenPanning = calculatePanning(currentColumn);
-                const chunks = splitWordChunks(text);
+                
+                // Use special comment chunking for comment-related tokens
+                const isCommentToken = category.startsWith('comment_') || category === 'comment';
+                const chunks = isCommentToken ? splitCommentChunks(text, category) : splitWordChunks(text);
                 
                 validChunks.push({
                     tokens: chunks,

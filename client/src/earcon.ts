@@ -7,10 +7,11 @@ import { log, logWarning, logMemory } from './utils';
 import { config } from './config';
 import { isEarcon, specialCharMap } from './mapping';
 
-// Standard PCM format for earcon playback
+// Standard PCM format for earcon playback  
+// NOTE: earcon/*.pcm files are now converted to stereo 24kHz format
 const STANDARD_PCM_FORMAT = {
-    channels: 2,        // stereo (converted from mono)
-    sampleRate: 24000,   // 24kHz (original sample rate)
+    channels: 2,        // stereo (converted format)
+    sampleRate: 24000,   // 24kHz 
     bitDepth: 16,       // 16-bit
     signed: true,
     float: false

@@ -83,3 +83,27 @@ export function splitWordChunks(text: string): string[] {
     // log(`[splitWordChunks] input="${text}" → tokens=${JSON.stringify(result)}`);
     return result;
 }
+
+/**
+ * Handle comment text specially - keep descriptive text as single units
+ * but split symbols individually
+ */
+export function splitCommentChunks(text: string, category: string): string[] {
+    // For comment text (descriptive part), keep as single unit
+    if (category === 'comment_text') {
+        return [text];
+    }
+    
+    // For comment symbols and numbers, treat as individual tokens
+    if (category === 'comment_symbol' || category === 'comment_number') {
+        return [text];
+    }
+    
+    // For whitespace, keep as is
+    if (category === 'whitespace') {
+        return [text];
+    }
+    
+    // For other comment parts, use regular word splitting
+    return splitWordChunks(text);
+}

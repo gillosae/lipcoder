@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { stopPlayback, speakTokenList } from '../audio';
 import { log } from '../utils';
-import { splitWordChunks } from './word_logic';
+import { splitWordChunks, splitCommentChunks } from './word_logic';
 import { config } from '../config';
 
 const bufferMap = new Map<string, string>();

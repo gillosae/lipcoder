@@ -103,6 +103,91 @@ connection.onDocumentSymbol(params => {
     return syms.map(sym => ({ ...sym, location: { ...sym.location, uri: params.textDocument.uri } }));
 });
 
+// Helper function to tokenize comment text that may contain backslash commands
+function tokenizeCommentText(text: string): Array<{ text: string; category: string }> {
+    const tokens: Array<{ text: string; category: string }> = [];
+    
+    // Split on backslashes while preserving the backslashes
+    const parts = text.split(/(\\\w+)/);
+    
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (!part) continue; // Skip empty parts
+        
+        if (part.startsWith('\\')) {
+            // This is a backslash command like \emph
+            tokens.push({ text: '\\', category: 'comment_symbol' });
+            const command = part.slice(1); // Remove the backslash
+            if (command) {
+                tokens.push({ text: command, category: 'comment_text' });
+            }
+        } else {
+            // Regular text - keep as single unit if non-empty
+            if (part.trim()) {
+                tokens.push({ text: part, category: 'comment_text' });
+            }
+        }
+    }
+    
+    return tokens;
+}
+
+// Helper function to tokenize comments properly
+function tokenizeComment(commentText: string): Array<{ text: string; category: string }> {
+    const tokens: Array<{ text: string; category: string }> = [];
+    
+    // Match comment patterns like "# 2) Some descriptive text"
+    const commentMatch = commentText.match(/^(\s*)(#|\/\/)\s*([0-9]*)\s*([)}\]]*)\s*(.*)$/);
+    
+    if (commentMatch) {
+        const [, leadingSpace, commentChar, number, closingChars, description] = commentMatch;
+        
+        // Add leading whitespace if present
+        if (leadingSpace) {
+            tokens.push({ text: leadingSpace, category: 'whitespace' });
+        }
+        
+        // Add comment symbol
+        tokens.push({ text: commentChar, category: 'comment_symbol' });
+        
+        // Add space after comment symbol if it was there
+        const afterCommentMatch = commentText.match(/^(\s*)(#|\/\/)\s+/);
+        if (afterCommentMatch) {
+            tokens.push({ text: ' ', category: 'whitespace' });
+        }
+        
+        // Add number if present
+        if (number) {
+            tokens.push({ text: number, category: 'comment_number' });
+            // Add space after number if description follows
+            if (closingChars || description.trim()) {
+                tokens.push({ text: ' ', category: 'whitespace' });
+            }
+        }
+        
+        // Add closing characters individually (like ), }, ])
+        for (const char of closingChars) {
+            tokens.push({ text: char, category: 'comment_symbol' });
+        }
+        
+        // Add space before description if present
+        if (closingChars && description.trim()) {
+            tokens.push({ text: ' ', category: 'whitespace' });
+        }
+        
+        // Add the descriptive text, but further tokenize backslash commands
+        if (description.trim()) {
+            const textTokens = tokenizeCommentText(description.trim());
+            tokens.push(...textTokens);
+        }
+    } else {
+        // Fallback: treat as regular comment
+        tokens.push({ text: commentText, category: 'comment' });
+    }
+    
+    return tokens;
+}
+
 // 3. Handle readLineTokens requests for tokenizing a specific line
 connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: number }) => {
     const doc = documents.get(params.uri);
@@ -110,6 +195,14 @@ connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: nu
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
     const lineText = lines[params.line] || '';
+    
+    // Check if this is a comment line first
+    const trimmedLine = lineText.trim();
+    if (trimmedLine.startsWith('#') || trimmedLine.startsWith('//')) {
+        return tokenizeComment(lineText);
+    }
+    
+    // For non-comment lines, use the regular TypeScript scanner
     const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, lineText);
 
     const tokens: Array<{ text: string; category: string }> = [];

@@ -89,7 +89,8 @@ class AudioCache {
         let entry = this.get(filePath);
         if (!entry) {
             const pcm = fs.readFileSync(filePath);
-            const format = STANDARD_PCM_FORMAT;
+            // Since we converted all PCM files to 24kHz stereo, use the correct format
+            const format = STANDARD_PCM_FORMAT; // This is already 24kHz stereo
             this.add(filePath, format, pcm);
             entry = this.get(filePath)!;
         }
@@ -254,25 +255,44 @@ class AudioPlayer {
     private fallbackManager = new FallbackPlayerManager();
 
     async playPcmCached(filePath: string, panning?: number): Promise<void> {
-        const entry = this.cache.loadAndCache(filePath);
+        // Generate cache key that includes panning for pre-processed PCM
+        const baseName = path.basename(filePath, '.pcm');
+        const panKey = panning !== undefined && panning !== 0 ? `_pan${panning.toFixed(3)}` : '';
+        const cacheKey = `${baseName}${panKey}`;
+        
+        let cachedEntry = this.cache.get(cacheKey);
+        
+        if (!cachedEntry) {
+            // Load original file
+            const originalEntry = this.cache.loadAndCache(filePath);
+            let finalPcm = originalEntry.pcm;
+            let finalFormat = originalEntry.format;
+            
+            // Pre-apply panning if needed and cache the result
+            if (panning !== undefined && panning !== 0) {
+                finalPcm = AudioUtils.applyPanning(originalEntry.pcm, originalEntry.format, panning);
+                log(`[playPcmCached] Pre-applied panning ${panning.toFixed(3)} and caching: ${cacheKey}`);
+            }
+            
+            // Cache the pre-processed result
+            this.cache.add(cacheKey, finalFormat, finalPcm);
+            cachedEntry = this.cache.get(cacheKey)!;
+        } else {
+            log(`[playPcmCached] Using pre-cached panned PCM: ${cacheKey}`);
+        }
         
         return new Promise<void>((resolve, reject) => {
             this.stopCurrentPlayback();
             
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...entry.format, samplesPerFrame: 128 } as any);
+            const speaker = new Speaker({ ...cachedEntry.format, samplesPerFrame: 128 } as any);
             this.currentSpeaker = speaker;
             
             speaker.on('close', resolve);
             speaker.on('error', reject);
             
-            let finalPcm = entry.pcm;
-            if (panning !== undefined && panning !== 0) {
-                finalPcm = AudioUtils.applyPanning(entry.pcm, entry.format, panning);
-                log(`[playPcmCached] Applied panning ${panning.toFixed(2)} to cached PCM: ${path.basename(filePath)}`);
-            }
-            
-            speaker.write(finalPcm);
+            log(`[playPcmCached] Writing ${cachedEntry.pcm.length} bytes of pre-processed PCM: ${path.basename(filePath)}`);
+            speaker.write(cachedEntry.pcm);
             speaker.end();
         });
     }
@@ -714,6 +734,62 @@ class AudioPlayer {
         this.fallbackManager.killAll();
     }
 
+    async playTtsAsPcm(wavFilePath: string, panning?: number): Promise<void> {
+        log(`[playTtsAsPcm] SIMPLE FAST TTS playback: ${path.basename(wavFilePath)}, panning: ${panning}`);
+        
+        try {
+            // Read and parse WAV file directly
+            const wavData = fs.readFileSync(wavFilePath);
+            const parsed = AudioUtils.parseWavFormat(wavData);
+            
+            let finalPcm = parsed.pcm;
+            let finalFormat = parsed.format;
+            
+            // If panning needed, apply it (same as earcons)
+            if (panning !== undefined && panning !== 0) {
+                if (parsed.format.channels === 1) {
+                    // Convert mono to stereo first
+                    const stereoPcm = Buffer.alloc(parsed.pcm.length * 2);
+                    for (let i = 0; i < parsed.pcm.length; i += 2) {
+                        const sample = parsed.pcm.readInt16LE(i);
+                        stereoPcm.writeInt16LE(sample, i * 2);     // Left
+                        stereoPcm.writeInt16LE(sample, i * 2 + 2); // Right
+                    }
+                    finalFormat = { ...parsed.format, channels: 2 };
+                    finalPcm = stereoPcm;
+                }
+                
+                // Apply panning
+                finalPcm = AudioUtils.applyPanning(finalPcm, finalFormat, panning);
+                log(`[playTtsAsPcm] Applied panning ${panning.toFixed(3)}`);
+            }
+            
+            // Use the exact same simple approach as playPcmCached
+            return new Promise<void>((resolve, reject) => {
+                this.stopCurrentPlayback();
+                
+                // @ts-ignore: samplesPerFrame used for low-latency
+                const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                this.currentSpeaker = speaker;
+                
+                speaker.on('close', () => {
+                    log(`[playTtsAsPcm] SIMPLE playback completed: ${path.basename(wavFilePath)}`);
+                    resolve();
+                });
+                speaker.on('error', reject);
+                
+                log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to new speaker`);
+                speaker.write(finalPcm);
+                speaker.end();
+            });
+            
+        } catch (error) {
+            log(`[playTtsAsPcm] Error, falling back to WAV playback: ${error}`);
+            // Fallback to the working WAV approach
+            return this.playWavFile(wavFilePath, { immediate: true, panning });
+        }
+    }
+
     cleanup(): void {
         logWarning('🧹 Cleaning up audio resources...');
         this.stopAll();
@@ -834,7 +910,8 @@ export async function speakToken(
         } else if (isTTSRequired(token)) {
             const speakerName = opts?.speaker ?? getSpeakerForCategory(category);
             const filePath = await genTokenAudio(token, category, { speaker: speakerName });
-            playPromise = playWave(filePath, { panning: opts?.panning });
+            // Use ultra-fast PCM caching for regular speakToken too
+            playPromise = audioPlayer.playTtsAsPcm(filePath, opts?.panning);
         } else {
             return Promise.resolve();
         }
@@ -876,6 +953,25 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         audioPlayer.stopCurrentPlayback();
         log(`[speakTokenList] Cleared audio queue, starting token processing`);
         
+        // PARALLEL TTS PRE-GENERATION: Use both workers simultaneously
+        log(`[speakTokenList] Pre-generating TTS for all tokens in parallel...`);
+        const ttsPregenPromises = new Map<string, Promise<string>>();
+        
+        for (const { tokens, category } of chunks) {
+            for (const token of tokens) {
+                // Skip TTS pre-generation for comment symbols (they should use earcons)
+                if (category === 'comment_symbol' || isEarconToken(token)) {
+                    continue; // These will be handled as earcons
+                }
+                if (isTTSRequired(token) && !ttsPregenPromises.has(token)) {
+                    log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
+                    ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                }
+            }
+        }
+        
+        log(`[speakTokenList] Started ${ttsPregenPromises.size} parallel TTS requests across 2 workers`);
+        
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
             const { tokens, category, panning } = chunks[chunkIndex];
             log(`[speakTokenList] Processing chunk ${chunkIndex + 1}/${chunks.length}: ${tokens.length} tokens [${tokens.join(', ')}]`);
@@ -892,8 +988,41 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 log(`[speakTokenList] About to process token ${tokenIndex + 1}/${tokens.length}: "${token}"`);
                 
                 try {
-                    // Force immediate playback for sequential token reading
-                    await speakTokenImmediate(token, category, { panning });
+                    // Route tokens to appropriate playback method
+                    // First check if this is a comment symbol that should be treated as earcon
+                    if (category === 'comment_symbol' || isEarconToken(token)) {
+                        log(`[speakTokenList] Playing EARCON for: "${token}" (category: ${category})`);
+                        await playEarcon(token, panning);
+                    } else if (isTTSRequired(token) && ttsPregenPromises.has(token)) {
+                        log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}"`);
+                        const ttsFilePath = await ttsPregenPromises.get(token)!;
+                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                    } else if (isAlphabet(token)) {
+                        log(`[speakTokenList] Playing ALPHABET PCM for: "${token}"`);
+                        const lower = token.toLowerCase();
+                        const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
+                        if (fs.existsSync(alphaPath)) {
+                            await audioPlayer.playPcmCached(alphaPath, panning);
+                        } else {
+                            // Fallback to TTS for missing alphabet
+                            await speakTokenImmediate(token, category, { panning });
+                        }
+                    } else if (isNumber(token)) {
+                        log(`[speakTokenList] Playing NUMBER PCM for: "${token}"`);
+                        const numPath = path.join(config.numberPath(), `${token}.pcm`);
+                        if (fs.existsSync(numPath)) {
+                            await audioPlayer.playPcmCached(numPath, panning);
+                        } else {
+                            // Fallback to TTS for missing number
+                            await speakTokenImmediate(token, category, { panning });
+                        }
+                    } else if (isTTSRequired(token)) {
+                        log(`[speakTokenList] Generating NEW TTS for: "${token}" (not pre-generated)`);
+                        // This shouldn't happen often since we pre-generate, but fallback
+                        await speakTokenImmediate(token, category, { panning });
+                    } else {
+                        log(`[speakTokenList] Skipping token (no handler): "${token}"`);
+                    }
                     log(`[speakTokenList] Successfully completed token: "${token}"`);
                 } catch (err) {
                     log(`[speakTokenList] Error speaking token "${token}": ${err}`);
@@ -955,7 +1084,8 @@ async function speakTokenImmediate(
             log(`[speakTokenImmediate] Processing TTS token: ${token}`);
             try {
                 const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
-                await audioPlayer.playWavFile(filePath, { immediate: true, panning: opts?.panning });
+                // ULTRA FAST PATH: Convert TTS WAV to cached PCM for instant playback
+                await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } catch (ttsError) {
                 log(`[speakTokenImmediate] TTS failed for "${token}", trying fallback playback: ${ttsError}`);
                 // Fallback: Try to use external player to speak the token directly
