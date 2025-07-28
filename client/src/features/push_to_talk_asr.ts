@@ -8,6 +8,13 @@ let statusBarItem: vscode.StatusBarItem | null = null;
 let isRecording = false;
 let recordingTimeout: NodeJS.Timeout | null = null;
 
+/**
+ * Get the current ASRClient instance for cleanup
+ */
+export function getASRClient(): ASRClient | null {
+    return asrClient;
+}
+
 export function registerPushToTalkASR(context: vscode.ExtensionContext) {
     log('[ASR] Registering push-to-talk ASR commands');
     
@@ -125,6 +132,13 @@ export function registerPushToTalkASR(context: vscode.ExtensionContext) {
             }
             outputChannel?.dispose();
             statusBarItem?.dispose();
+            if (asrClient) {
+                if (asrClient.getRecordingStatus()) {
+                    asrClient.stopStreaming();
+                }
+                asrClient.dispose();
+                asrClient = null;
+            }
             log('[ASR] Push-to-talk ASR feature cleanup complete');
         }
     });

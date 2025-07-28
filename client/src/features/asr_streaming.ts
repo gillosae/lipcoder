@@ -5,6 +5,13 @@ import { log } from '../utils';
 let asrClient: ASRClient | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
 
+/**
+ * Get the current ASRClient instance for cleanup
+ */
+export function getASRClient(): ASRClient | null {
+    return asrClient;
+}
+
 export function registerASRStreaming(context: vscode.ExtensionContext) {
     // Create output channel for transcription
     outputChannel = vscode.window.createOutputChannel('LipCoder ASR');
@@ -98,10 +105,15 @@ export function registerASRStreaming(context: vscode.ExtensionContext) {
     // Clean up on deactivation
     context.subscriptions.push({
         dispose: () => {
-            if (asrClient && asrClient.getRecordingStatus()) {
-                asrClient.stopStreaming();
+            if (asrClient) {
+                if (asrClient.getRecordingStatus()) {
+                    asrClient.stopStreaming();
+                }
+                asrClient.dispose();
+                asrClient = null;
             }
             outputChannel?.dispose();
+            outputChannel = null;
         }
     });
 } 

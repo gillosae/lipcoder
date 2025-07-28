@@ -2,15 +2,22 @@ import * as vscode from 'vscode';
 import { ASRClient, ASRChunk } from '../asr';
 import { log } from '../utils';
 
+let asrClient: ASRClient | null = null;
+let statusBarItem: vscode.StatusBarItem | null = null;
+let outputChannel: vscode.OutputChannel | null = null;
+
+/**
+ * Get the current ASRClient instance for cleanup
+ */
+export function getASRClient(): ASRClient | null {
+    return asrClient;
+}
+
 /**
  * Register the toggle ASR command
  */
 export function registerToggleASR(context: vscode.ExtensionContext) {
     log('[Toggle ASR] Registering toggle ASR command');
-    
-    let asrClient: ASRClient | null = null;
-    let statusBarItem: vscode.StatusBarItem | null = null;
-    let outputChannel: vscode.OutputChannel | null = null;
     
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -264,21 +271,30 @@ export function registerToggleASR(context: vscode.ExtensionContext) {
         simulateAudioCommand
     );
     
-    // Cleanup function
-    const cleanup = () => {
-        log('[Toggle ASR] Cleaning up toggle ASR feature');
-        if (asrClient) {
-            asrClient.stopStreaming();
+    // Clean up on deactivation
+    context.subscriptions.push({
+        dispose() {
+            log('[Toggle ASR] Cleaning up toggle ASR resources');
+            
+            if (asrClient) {
+                if (asrClient.getRecordingStatus()) {
+                    asrClient.stopStreaming();
+                }
+                asrClient.dispose();
+                asrClient = null;
+            }
+            
+            if (statusBarItem) {
+                statusBarItem.dispose();
+                statusBarItem = null;
+            }
+            
+            if (outputChannel) {
+                outputChannel.dispose();
+                outputChannel = null;
+            }
         }
-        if (statusBarItem) {
-            statusBarItem.dispose();
-        }
-        if (outputChannel) {
-            outputChannel.dispose();
-        }
-    };
-    
-    context.subscriptions.push({ dispose: cleanup });
+    });
     
     log('[Toggle ASR] Toggle ASR feature registered successfully');
 } 

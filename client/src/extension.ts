@@ -83,4 +83,49 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
 	log("lipcoder deactivate");
+	
+	// Clean up all ASRClient instances from different modules
+	try {
+		// Stop any ASR streaming
+		const { getASRClient: getStreamingClient } = require('./features/asr_streaming');
+		const streamingClient = getStreamingClient();
+		if (streamingClient && streamingClient.getRecordingStatus()) {
+			streamingClient.stopStreaming();
+		}
+	} catch (err) {
+		log(`Failed to cleanup streaming ASR: ${err}`);
+	}
+	
+	try {
+		// Stop toggle ASR
+		const { getASRClient: getToggleClient } = require('./features/toggle_asr');
+		const toggleClient = getToggleClient();
+		if (toggleClient && toggleClient.getRecordingStatus()) {
+			toggleClient.stopStreaming();
+		}
+	} catch (err) {
+		log(`Failed to cleanup toggle ASR: ${err}`);
+	}
+	
+	try {
+		// Stop push-to-talk ASR
+		const { getASRClient: getPushToTalkClient } = require('./features/push_to_talk_asr');
+		const pushToTalkClient = getPushToTalkClient();
+		if (pushToTalkClient && pushToTalkClient.getRecordingStatus()) {
+			pushToTalkClient.stopStreaming();
+		}
+	} catch (err) {
+		log(`Failed to cleanup push-to-talk ASR: ${err}`);
+	}
+	
+	// Clean up audio resources
+	try {
+		const { stopPlayback, cleanupAudioResources } = require('./audio');
+		stopPlayback();
+		cleanupAudioResources();
+	} catch (err) {
+		log(`Failed to cleanup audio resources: ${err}`);
+	}
+	
+	log("lipcoder deactivation complete");
 }

@@ -25,6 +25,10 @@ let currentFileStream: fs.ReadStream | null = null;
 // Cache for arbitrary PCM files for immediate playback
 const pcmCache: Record<string, { format: any; pcm: Buffer }> = {};
 
+// Maximum cache size to prevent memory bloat (in MB)
+const MAX_CACHE_SIZE_MB = 50;
+let currentCacheSize = 0;
+
 // Standard PCM format for all audio files (matches actual audio files)
 const STANDARD_PCM_FORMAT = {
     channels: 2,        // stereo (converted from mono)
@@ -65,13 +69,32 @@ function playImmediate(filePath: string): Promise<void> {
     return new Promise<void>(resolve => cp.on('close', () => resolve()));
 }
 
+/**
+ * Add entry to PCM cache with size management
+ */
+function addToPcmCache(filePath: string, format: any, pcm: Buffer): void {
+    const sizeInMB = pcm.length / (1024 * 1024);
+    
+    // Clear cache if adding this would exceed limit
+    if (currentCacheSize + sizeInMB > MAX_CACHE_SIZE_MB) {
+        log(`🧹 PCM cache size limit reached (${currentCacheSize.toFixed(2)}MB), clearing cache`);
+        Object.keys(pcmCache).forEach(key => delete pcmCache[key]);
+        currentCacheSize = 0;
+    }
+    
+    pcmCache[filePath] = { format, pcm };
+    currentCacheSize += sizeInMB;
+    log(`📦 Added to PCM cache: ${filePath} (${sizeInMB.toFixed(2)}MB, total: ${currentCacheSize.toFixed(2)}MB)`);
+}
+
 function playCachedPcm(filePath: string): Promise<void> {
     // Load and cache PCM data if needed
     let entry = pcmCache[filePath];
     if (!entry) {
         const pcm = fs.readFileSync(filePath);
-        entry = { format: STANDARD_PCM_FORMAT, pcm };
-        pcmCache[filePath] = entry;
+        const format = STANDARD_PCM_FORMAT;
+        addToPcmCache(filePath, format, pcm);
+        entry = pcmCache[filePath];
     }
     return new Promise<void>((resolve, reject) => {
         // Halt any prior playback
@@ -272,14 +295,78 @@ export function playWave(
 function playPcm(filePath: string, opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean }): Promise<void> {
     return new Promise<void>((resolve, reject) => {
         try {
-            const pcmData = fs.readFileSync(filePath);
+            const fileData = fs.readFileSync(filePath);
+            
+            // Check if this is actually a WAV file saved with .pcm extension
+            // WAV files start with "RIFF" signature
+            if (fileData.length >= 4 && fileData.toString('ascii', 0, 4) === 'RIFF') {
+                log(`[playPcm] Detected WAV file with .pcm extension, using WAV playback: ${filePath}`);
+                // This is actually a WAV file, use the WAV playback logic
+                const reader = new wav.Reader();
+                currentReader = reader;
+                let fallback = false;
+                
+                function doFallback(err: any) {
+                    log(`🛑 wav-stream error in playPcm: ${err.stack || err}`);
+                    if (fallback) return;
+                    fallback = true;
+                    reader.removeAllListeners();
+                    let cmd: string, args: string[];
+                    if (process.platform === 'darwin') {
+                        cmd = 'afplay'; args = [filePath];
+                    } else if (process.platform === 'win32') {
+                        cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${filePath}').PlaySync();`];
+                    } else if (process.platform === 'linux') {
+                        cmd = 'play'; args = [filePath];
+                    } else {
+                        cmd = 'aplay'; args = [filePath];
+                    }
+                    const p = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+                    currentFallback = p;
+                    p.on('close', (code) => {
+                        currentFallback = null;
+                        if (code === 0 || code === null) resolve(); else reject(new Error(`fallback player ${code}`));
+                    });
+                }
+                
+                reader.on('format', (format: any) => {
+                    log(`🔊 PCM-WAV got format: ${JSON.stringify(format)}`);
+                    try {
+                        const adjusted = { ...format };
+                        if (opts?.rate !== undefined) adjusted.sampleRate = Math.floor(format.sampleRate * opts.rate!);
+                        
+                        // Halt any prior playback
+                        stopPlayback();
+                        
+                        // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+                        const speaker = new Speaker({ ...adjusted, samplesPerFrame: 128 } as any);
+                        currentSpeaker = speaker;
+                        reader.pipe(speaker);
+                        speaker.on('close', resolve);
+                        speaker.on('error', err => { log(`🛑 PCM-WAV Speaker error: ${err.stack || err}`); reject(err); });
+                    } catch (err) {
+                        doFallback(err);
+                    }
+                });
+                reader.on('error', doFallback);
+                
+                // Create a readable stream from the buffer
+                const stream = new Readable();
+                stream.push(fileData);
+                stream.push(null);
+                stream.pipe(reader);
+                
+                return;
+            }
+            
+            // Handle actual raw PCM data
+            log(`[playPcm] Playing raw PCM data: ${filePath}`);
             let format = { ...STANDARD_PCM_FORMAT };
             
             // Apply rate adjustment if specified
             if (opts?.rate !== undefined) {
                 format.sampleRate = Math.floor(format.sampleRate * opts.rate);
             }
-            // Removed earcon rate adjustment - all files now at 24kHz
             
             // Halt any prior playback
             stopPlayback();
@@ -294,7 +381,7 @@ function playPcm(filePath: string, opts?: { isEarcon?: boolean; rate?: number; i
                 reject(err);
             });
             
-            speaker.write(pcmData);
+            speaker.write(fileData);
             speaker.end();
         } catch (err) {
             log(`🛑 PCM playback error: ${err}`);
@@ -355,6 +442,22 @@ export function stopPlayback(): void {
     if (currentFileStream) { try { currentFileStream.close(); } catch { } currentFileStream = null; }
     // Clear any queued playback tasks
     playQueue = Promise.resolve();
+}
+
+/**
+ * Clean up all audio resources and caches
+ */
+export function cleanupAudioResources(): void {
+    log('🧹 Cleaning up audio resources...');
+    
+    // Stop any current playback
+    stopPlayback();
+    
+    // Clear PCM cache and reset size tracking
+    Object.keys(pcmCache).forEach(key => delete pcmCache[key]);
+    currentCacheSize = 0;
+    
+    log('🧹 Audio resources cleaned up');
 }
 
 /**
