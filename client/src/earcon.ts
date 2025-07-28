@@ -3,13 +3,41 @@ import * as path from 'path';
 import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { getTokenSound } from './tokens';
-import { log } from './utils';
+import { log, logWarning, logMemory } from './utils';
 import { config } from './config';
 import { isEarcon, specialCharMap } from './mapping';
 
-// Cache for each token: { format, pcmBuffer }
-interface EarconData { format: any; pcm: Buffer }
+// Earcon raw PCM cache with memory management
 export const earconRaw: Record<string, Buffer> = {};
+const MAX_EARCON_CACHE_SIZE_MB = 10; // Limit earcon cache to 10MB
+const earconAccessTimes: Record<string, number> = {};
+
+/**
+ * Clean up old earcon cache entries when memory limit is reached
+ */
+function cleanupEarconCache(): void {
+    const currentSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
+    const currentSizeMB = currentSize / (1024 * 1024);
+    
+    if (currentSizeMB > MAX_EARCON_CACHE_SIZE_MB) {
+        logWarning(`[Earcon] Cache size limit reached (${currentSizeMB.toFixed(2)}MB), cleaning up old entries`);
+        
+        // Sort by access time and remove oldest entries
+        const entries = Object.entries(earconAccessTimes).sort(([,a], [,b]) => a - b);
+        const entriesToRemove = Math.ceil(entries.length / 3); // Remove oldest 33%
+        
+        for (let i = 0; i < entriesToRemove && i < entries.length; i++) {
+            const [key] = entries[i];
+            if (earconRaw[key]) {
+                delete earconRaw[key];
+                delete earconAccessTimes[key];
+            }
+        }
+        
+        const newSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
+        logMemory(`[Earcon] Cleaned up ${entriesToRemove} entries, size: ${(currentSizeMB).toFixed(2)}MB → ${(newSize / 1024 / 1024).toFixed(2)}MB`);
+    }
+}
 
 let currentSpeaker: Speaker | null = null;
 let currentFallback: ChildProcess | null = null;
@@ -96,10 +124,24 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         return Promise.resolve();
     }
 
-    // Lazy-load the raw file once
+    // Lazy-load the raw file once with memory management
     if (!earconRaw[token]) {
+        // Check if we need to clean up cache first
+        cleanupEarconCache();
+        
         earconRaw[token] = fs.readFileSync(file);
+        earconAccessTimes[token] = Date.now();
+        
+        // Log cache size periodically
+        const cacheSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
+        if (Object.keys(earconRaw).length % 10 === 0) {
+            logMemory(`[Earcon] Cache: ${Object.keys(earconRaw).length} items (${(cacheSize / 1024 / 1024).toFixed(2)}MB)`);
+        }
+    } else {
+        // Update access time
+        earconAccessTimes[token] = Date.now();
     }
+    
     const buf = earconRaw[token];
     
     let pcm: Buffer;

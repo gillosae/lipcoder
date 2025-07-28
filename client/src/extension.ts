@@ -13,7 +13,7 @@ import { loadDictionaryWord } from './features/word_logic';
 import { registerStopReading } from './features/stop_reading';
 import { registerToggleTypingSpeech } from './features/toggle_typing_speech';
 import { startLanguageClient } from './language_client';
-import { registerReadCurrentLine } from './features/current_line';
+import { registerCurrentLine } from './features/current_line';
 import { registerReadFunctionTokens } from './features/read_function_tokens';
 import { registerBreadcrumb } from './features/breadcrumb';
 import { registerSymbolTree } from './features/symbol_tree';
@@ -47,9 +47,20 @@ function startMemoryMonitoring(): void {
         const heapUsedDelta = currentMemory.heapUsed - lastMemoryUsage.heapUsed;
         const rssUsedDelta = currentMemory.rss - lastMemoryUsage.rss;
         
-        // Log every 10 intervals (roughly every 5 minutes) or if significant growth
-        if (logCounter % 10 === 0 || heapUsedDelta > 10 * 1024 * 1024) { // 10MB growth
+        // Log more frequently and at lower thresholds to catch memory issues
+        if (logCounter % 5 === 0 || heapUsedDelta > 5 * 1024 * 1024) { // Every 2.5 minutes or 5MB growth
             logMemory(`[Memory] Heap: ${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB (+${(heapUsedDelta / 1024 / 1024).toFixed(2)}MB), RSS: ${(currentMemory.rss / 1024 / 1024).toFixed(2)}MB (+${(rssUsedDelta / 1024 / 1024).toFixed(2)}MB)`);
+        }
+        
+        // Trigger aggressive cleanup if memory usage is too high
+        if (currentMemory.heapUsed > 80 * 1024 * 1024) { // 80MB heap threshold
+            logWarning(`[Memory] High memory usage detected (${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB), triggering cleanup`);
+            try {
+                const { cleanupAudioResources } = require('./audio');
+                cleanupAudioResources();
+            } catch (err) {
+                logError(`Failed to cleanup during high memory usage: ${err}`);
+            }
         }
         
         lastMemoryUsage = currentMemory;
@@ -68,6 +79,9 @@ function stopMemoryMonitoring(): void {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    // Store context for global cleanup
+    (global as any).lipcoderContext = context;
+    
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
 	log('Extension Host running on Electron v' + process.versions.electron);
 	installDependencies().catch(err => console.error('installDependencies failed:', err));
@@ -100,7 +114,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerReadFunctionTokens(context, client);
 	registerStopReading(context);
 	registerToggleTypingSpeech(context, client);
-	registerReadCurrentLine(context);
+	registerCurrentLine(context);
 	registerSymbolTree(context);
 	registerSwitchPanel(context);
 	registerFunctionList(context);
@@ -118,121 +132,129 @@ export async function activate(context: vscode.ExtensionContext) {
 
 }
 
-export async function deactivate() {
+export function deactivate() {
 	logWarning("🔄 lipcoder deactivate starting...");
 	
-	// Stop memory monitoring first
-	stopMemoryMonitoring();
-	
-	// Force stop all audio immediately
-	try {
-		const { stopPlayback, cleanupAudioResources } = require('./audio');
-		stopPlayback();
-		logSuccess('✅ Audio playback stopped');
-	} catch (err) {
-		logError(`❌ Failed to stop audio playback: ${err}`);
-	}
-	
-	// Stop language client with timeout
-	try {
-		const { stopLanguageClient } = require('./language_client');
-		await Promise.race([
-			stopLanguageClient(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('Language client stop timeout')), 3000))
-		]);
-		logSuccess('✅ Language client stopped');
-	} catch (err) {
-		logError(`❌ Failed to stop language client: ${err}`);
-	}
-	
-	// Clean up all ASRClient instances aggressively
-	const asrCleanupPromises = [];
-	
-	try {
-		const { getASRClient: getStreamingClient } = require('./features/asr_streaming');
-		const streamingClient = getStreamingClient();
-		if (streamingClient) {
-			if (streamingClient.getRecordingStatus()) {
-				streamingClient.stopStreaming();
-			}
-			streamingClient.dispose();
-			logSuccess('✅ Streaming ASR cleaned up');
-		}
-	} catch (err) {
-		logError(`❌ Failed to cleanup streaming ASR: ${err}`);
-	}
-	
-	try {
-		const { getASRClient: getToggleClient } = require('./features/toggle_asr');
-		const toggleClient = getToggleClient();
-		if (toggleClient) {
-			if (toggleClient.getRecordingStatus()) {
-				toggleClient.stopStreaming();
-			}
-			toggleClient.dispose();
-			logSuccess('✅ Toggle ASR cleaned up');
-		}
-	} catch (err) {
-		logError(`❌ Failed to cleanup toggle ASR: ${err}`);
-	}
-	
-	try {
-		const { getASRClient: getPushToTalkClient } = require('./features/push_to_talk_asr');
-		const pushToTalkClient = getPushToTalkClient();
-		if (pushToTalkClient) {
-			if (pushToTalkClient.getRecordingStatus()) {
-				pushToTalkClient.stopStreaming();
-			}
-			pushToTalkClient.dispose();
-			logSuccess('✅ Push-to-talk ASR cleaned up');
-		}
-	} catch (err) {
-		logError(`❌ Failed to cleanup push-to-talk ASR: ${err}`);
-	}
-	
-	// Clean up LLM resources
-	try {
-		const { cleanupLLMResources } = require('./llm');
-		cleanupLLMResources();
-		logSuccess('✅ LLM resources cleaned up');
-	} catch (err) {
-		logError(`❌ Failed to cleanup LLM resources: ${err}`);
-	}
-	
-	// Final audio cleanup
-	try {
-		const { cleanupAudioResources } = require('./audio');
-		cleanupAudioResources();
-		logSuccess('✅ Audio resources cleaned up');
-	} catch (err) {
-		logError(`❌ Failed to cleanup audio resources: ${err}`);
-	}
-	
-	// Clear any remaining intervals/timeouts
-	try {
-		// Force clear all known timers (less aggressive approach)
-		// Note: This is a best-effort cleanup as we can't iterate all timers safely
-		logWarning('🧹 Clearing known active timers...');
-	} catch (err) {
-		logError(`❌ Failed to clear timers: ${err}`);
-	}
-	
-	// Force garbage collection if available
-	if (global.gc) {
+	// Create a force exit timeout as absolute last resort
+	const forceExitTimer = setTimeout(() => {
+		logError("💀 FORCE EXIT: Extension deactivation took too long, forcing process exit");
+		// Try graceful exit first
 		try {
-			global.gc();
-			logSuccess('🗑️ Forced garbage collection');
-		} catch (err) {
-			logError(`❌ Failed to force GC: ${err}`);
+			process.exit(0);
+		} catch {
+			// If that fails, force kill
+			process.kill(process.pid, 'SIGKILL');
 		}
+	}, 8000); // 8 second timeout
+	
+	try {
+		// Stop memory monitoring first
+		stopMemoryMonitoring();
+		
+		// Dispose all VS Code subscriptions immediately
+		try {
+			const context = (global as any).lipcoderContext;
+			if (context && context.subscriptions) {
+				logWarning(`🧹 Disposing ${context.subscriptions.length} VS Code subscriptions...`);
+				context.subscriptions.forEach((disposable: vscode.Disposable) => {
+					try {
+						disposable.dispose();
+					} catch (err) {
+						// Ignore disposal errors
+					}
+				});
+				context.subscriptions.length = 0; // Clear array
+				logSuccess('✅ All VS Code subscriptions disposed');
+			}
+		} catch (err) {
+			logError(`❌ Failed to dispose VS Code subscriptions: ${err}`);
+		}
+		
+		// Force stop all audio immediately
+		try {
+			const { stopPlayback, cleanupAudioResources } = require('./audio');
+			stopPlayback();
+			cleanupAudioResources();
+			logSuccess('✅ Audio resources cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup audio: ${err}`);
+		}
+		
+		// Aggressive language client cleanup
+		try {
+			const { emergencyStopLanguageClient } = require('./language_client');
+			emergencyStopLanguageClient();
+			logSuccess('✅ Language client stopped');
+		} catch (err) {
+			logError(`❌ Failed to cleanup language client: ${err}`);
+		}
+		
+		// Clean up all ASRClient instances
+		const asrModules = [
+			'./features/asr_streaming',
+			'./features/toggle_asr', 
+			'./features/push_to_talk_asr'
+		];
+		
+		asrModules.forEach((modulePath, index) => {
+			try {
+				const module = require(modulePath);
+				const client = module.getASRClient();
+				if (client) {
+					if (client.getRecordingStatus()) {
+						client.stopStreaming();
+					}
+					client.dispose();
+					logSuccess(`✅ ASR client ${index + 1} cleaned up`);
+				}
+			} catch (err) {
+				logError(`❌ Failed to cleanup ASR client ${index + 1}: ${err}`);
+			}
+		});
+		
+		// Clean up LLM resources
+		try {
+			const { cleanupLLMResources } = require('./llm');
+			cleanupLLMResources();
+			logSuccess('✅ LLM resources cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup LLM: ${err}`);
+		}
+		
+		// Clean up all preloaded caches
+		try {
+			const { cleanupPreloadedCaches } = require('./preload');
+			cleanupPreloadedCaches();
+			logSuccess('✅ Preloaded caches cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup preloaded caches: ${err}`);
+		}
+		
+		// Force garbage collection
+		if (global.gc) {
+			try {
+				global.gc();
+				logSuccess('🗑️ Forced garbage collection');
+			} catch (err) {
+				logError(`❌ Failed to force GC: ${err}`);
+			}
+		}
+		
+		// Clear the force exit timeout
+		clearTimeout(forceExitTimer);
+		
+		// Final memory report
+		const finalMemory = process.memoryUsage();
+		logMemory(`[Memory] Final: Heap: ${(finalMemory.heapUsed / 1024 / 1024).toFixed(2)}MB, RSS: ${(finalMemory.rss / 1024 / 1024).toFixed(2)}MB`);
+		
+		logSuccess("✅ lipcoder deactivation complete");
+		
+	} catch (error) {
+		logError(`💥 Critical error during deactivation: ${error}`);
+		clearTimeout(forceExitTimer);
+		
+		// If deactivation fails completely, force exit immediately
+		logError("💀 Deactivation failed, forcing immediate exit");
+		setTimeout(() => process.exit(0), 100);
 	}
-	
-	// Final memory report
-	const finalMemory = process.memoryUsage();
-	logMemory(`[Memory] Final: Heap: ${(finalMemory.heapUsed / 1024 / 1024).toFixed(2)}MB, RSS: ${(finalMemory.rss / 1024 / 1024).toFixed(2)}MB`);
-	
-	logSuccess("✅ lipcoder deactivation complete");
-	
-	// Give a moment for cleanup to complete
-	await new Promise(resolve => setTimeout(resolve, 500));
 }

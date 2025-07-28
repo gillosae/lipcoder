@@ -28,9 +28,12 @@ const activeChildProcesses = new Set<ChildProcess>();
 // Cache for arbitrary PCM files for immediate playback
 const pcmCache: Record<string, { format: any; pcm: Buffer }> = {};
 
-// Maximum cache size to prevent memory bloat (in MB)
-const MAX_CACHE_SIZE_MB = 50;
+// Reduced cache size to prevent memory bloat
+const MAX_CACHE_SIZE_MB = 15; // Reduced from 50MB to 15MB
 let currentCacheSize = 0;
+
+// LRU cache tracking
+const cacheAccessTimes: Record<string, number> = {};
 
 // Standard PCM format for all audio files (matches actual audio files)
 const STANDARD_PCM_FORMAT = {
@@ -82,21 +85,35 @@ function playImmediate(filePath: string): Promise<void> {
 }
 
 /**
- * Add entry to PCM cache with size management
+ * Add entry to PCM cache with size management and LRU eviction
  */
 function addToPcmCache(filePath: string, format: any, pcm: Buffer): void {
     const sizeInMB = pcm.length / (1024 * 1024);
     
     // Clear cache if adding this would exceed limit
     if (currentCacheSize + sizeInMB > MAX_CACHE_SIZE_MB) {
-        logWarning(`🧹 PCM cache size limit reached (${currentCacheSize.toFixed(2)}MB), clearing cache`);
-        Object.keys(pcmCache).forEach(key => delete pcmCache[key]);
-        currentCacheSize = 0;
+        logWarning(`🧹 PCM cache size limit reached (${currentCacheSize.toFixed(2)}MB), clearing old entries`);
+        
+        // Sort by access time and remove oldest entries
+        const entries = Object.entries(cacheAccessTimes).sort(([,a], [,b]) => a - b);
+        const entriesToRemove = Math.ceil(entries.length / 2); // Remove oldest 50%
+        
+        for (let i = 0; i < entriesToRemove && i < entries.length; i++) {
+            const [key] = entries[i];
+            if (pcmCache[key]) {
+                currentCacheSize -= pcmCache[key].pcm.length / (1024 * 1024);
+                delete pcmCache[key];
+                delete cacheAccessTimes[key];
+            }
+        }
+        
+        logInfo(`📦 Removed ${entriesToRemove} old cache entries, new size: ${currentCacheSize.toFixed(2)}MB`);
     }
     
     pcmCache[filePath] = { format, pcm };
+    cacheAccessTimes[filePath] = Date.now();
     currentCacheSize += sizeInMB;
-    logInfo(`📦 Added to PCM cache: ${filePath} (${sizeInMB.toFixed(2)}MB, total: ${currentCacheSize.toFixed(2)}MB)`);
+    logInfo(`📦 Added to PCM cache: ${path.basename(filePath)} (${sizeInMB.toFixed(2)}MB, total: ${currentCacheSize.toFixed(2)}MB)`);
 }
 
 function playCachedPcm(filePath: string): Promise<void> {
@@ -107,7 +124,11 @@ function playCachedPcm(filePath: string): Promise<void> {
         const format = STANDARD_PCM_FORMAT;
         addToPcmCache(filePath, format, pcm);
         entry = pcmCache[filePath];
+    } else {
+        // Update access time for LRU
+        cacheAccessTimes[filePath] = Date.now();
     }
+    
     return new Promise<void>((resolve, reject) => {
         // Halt any prior playback
         stopPlayback();

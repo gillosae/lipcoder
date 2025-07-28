@@ -78,3 +78,26 @@ export async function stopLanguageClient(): Promise<void> {
         languageClient = null;
     }
 }
+
+/**
+ * Emergency synchronous language client stop for shutdown scenarios
+ */
+export function emergencyStopLanguageClient(): void {
+    if (!languageClient) return;
+    
+    try {
+        logWarning('[LanguageClient] Emergency stop of language client...');
+        
+        // Try to stop synchronously first
+        languageClient.stop();
+        
+        // Force dispose regardless
+        languageClient.dispose();
+        
+        logSuccess('[LanguageClient] Language client emergency stopped');
+    } catch (error) {
+        logError(`[LanguageClient] Error in emergency stop: ${error}`);
+    } finally {
+        languageClient = null;
+    }
+}

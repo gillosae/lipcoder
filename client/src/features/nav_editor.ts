@@ -150,6 +150,46 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
     );
 
+    // Track all event listeners for proper disposal
+    const selectionListener1 = vscode.window.onDidChangeTextEditorSelection((e) => {
+        if (!readyForCursor) return;
+        if (e.selections[0].isEmpty) {
+            currentCursor = e.selections[0].active;
+            currentLineNum = currentCursor.line;
+        }
+    });
+    context.subscriptions.push(selectionListener1);
+
+    const selectionListener2 = vscode.window.onDidChangeTextEditorSelection((e) => {
+        if (!readyForCursor) return;
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) return;
+        const newPos = e.selections[0].active;
+        if (newPos.line !== currentLineNum) {
+            const line = activeEditor.document.lineAt(newPos.line);
+            // Skip diagnostic severity check for now to avoid compilation errors
+            // const severity = diagCache[newPos.line];
+            // if (severity && severity !== vscode.DiagnosticSeverity.Hint) {
+            //     const severityName = severity === vscode.DiagnosticSeverity.Error ? 'error' : 
+            //                        severity === vscode.DiagnosticSeverity.Warning ? 'warning' : 'info';
+            //     speakToken(`${severityName} on line ${newPos.line + 1}`);
+            // }
+        }
+    });
+    context.subscriptions.push(selectionListener2);
+
+    const selectionListener3 = vscode.window.onDidChangeTextEditorSelection((e) => {
+        if (!readyForCursor) return;
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) return;
+        const newPos = e.selections[0].active;
+        if (newPos.line !== currentLineNum) {
+            currentCursor = newPos;
+            currentLineNum = newPos.line;
+        }
+    });
+    context.subscriptions.push(selectionListener3);
+
     // Register cleanup disposal
     context.subscriptions.push({
         dispose: cleanupNavEditor

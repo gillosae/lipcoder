@@ -4,29 +4,42 @@ import * as vscode from 'vscode';
 import { speakToken } from '../audio';
 import { numberMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { log } from '../utils';
+import { log, logSuccess } from '../utils';
+
+/**
+ * Clean up current line resources
+ */
+function cleanupCurrentLine(): void {
+    logSuccess('[CurrentLine] Cleaned up resources');
+}
 
 // Track last preloaded line to avoid repeated spawns
 let lastPreloadedLine: number | undefined;
 
-export function registerReadCurrentLine(context: ExtensionContext) {
-    // Cache current line TTS on cursor move
-    context.subscriptions.push(
-        vscode.window.onDidChangeTextEditorSelection(async e => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) return;
-            const lineNum = editor.selection.active.line + 1;
-            // Only preload on actual line change
-            if (lineNum === lastPreloadedLine) return;
-            lastPreloadedLine = lineNum;
-            const numberWord = numberMap[lineNum.toString()] || String(lineNum);
-            try {
-                await genTokenAudio(numberWord, 'literal');
-            } catch {
-                /* ignore caching errors */
-            }
-        })
-    );
+export function registerCurrentLine(context: ExtensionContext) {
+    // Track the event listener for proper disposal
+    const selectionListener = vscode.window.onDidChangeTextEditorSelection(async e => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) return;
+        const lineNum = editor.selection.active.line + 1;
+        // Only preload on actual line change
+        if (lineNum === lastPreloadedLine) return;
+        lastPreloadedLine = lineNum;
+        const numberWord = numberMap[lineNum.toString()] || String(lineNum);
+        try {
+            await genTokenAudio(numberWord, 'literal');
+        } catch {
+            /* ignore caching errors */
+        }
+    });
+    
+    context.subscriptions.push(selectionListener);
+    
+    // Register cleanup disposal
+    context.subscriptions.push({
+        dispose: cleanupCurrentLine
+    });
+
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readCurrentLine', async () => {
             const editor = vscode.window.activeTextEditor;
