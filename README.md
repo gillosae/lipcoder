@@ -1,4 +1,4 @@
-# LipCoder
+# LipCoder (Working)
 
 **Audio-Enhanced Coding Assistant for Visual Studio Code**
 

@@ -141,28 +141,44 @@ export async function genTokenAudio(
 }
 
 /**
- * Play a preloaded special-word from memory
+ * Play special character audio using direct TTS inference
  */
-export function playSpecial(word: string): Promise<void> {
-    log(`[playSpecial] word="${word}" cached=${!!specialWordCache[word]}`);
-    const entry = specialWordCache[word];
-    if (!entry) {
-        // fallback to file-based playback
-        log(`[playSpecial] fallback to file-based playback for "${word}"`);
-        const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
-        const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const file = path.join(cacheDir, `text_${sanitized}.pcm`);
-        log(`[playSpecial] fallback file=${file}, exists=${fs.existsSync(file)}`);
-        return Promise.resolve(); // This will be handled by the main audio module
-    }
-    return new Promise((resolve, reject) => {
+export async function playSpecial(word: string): Promise<void> {
+    log(`[playSpecial] generating TTS for word="${word}"`);
+    
+    try {
+        // Generate audio using TTS directly, no caching check
+        const audioFile = await genTokenAudio(word, 'special');
+        
+        // Play the generated audio
+        const fs = require('fs');
         const Speaker = require('speaker');
-        const speaker = new Speaker(entry.format);
-        speaker.on('error', reject);
-        speaker.on('close', resolve);
-        speaker.write(entry.pcm);
-        speaker.end();
-    });
+        
+        if (fs.existsSync(audioFile)) {
+            const audioData = fs.readFileSync(audioFile);
+            const format = {
+                channels: 2,      // stereo
+                sampleRate: 24000, // 24kHz
+                bitDepth: 16,     // 16-bit
+                signed: true,
+                float: false
+            };
+            
+            return new Promise((resolve, reject) => {
+                const speaker = new Speaker(format);
+                speaker.on('error', reject);
+                speaker.on('close', resolve);
+                speaker.write(audioData);
+                speaker.end();
+            });
+        } else {
+            log(`[playSpecial] Generated audio file not found: ${audioFile}`);
+            return Promise.resolve();
+        }
+    } catch (error) {
+        log(`[playSpecial] Error generating TTS for "${word}": ${error}`);
+        return Promise.resolve();
+    }
 }
 
 /**

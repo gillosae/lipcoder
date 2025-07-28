@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { log } from '../utils';
+import { twoLenExceptions, threeLenExceptions } from '../mapping';
 
 // Dictionary loading
 let dictWords: Set<string> = new Set();
@@ -15,10 +16,6 @@ export async function loadDictionaryWord() {
 export function isDictionaryWord(token: string): boolean {
     return dictWords.has(token.toLowerCase());
 }
-
-export const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in', 'to', 'by']);
-export const threeLenExceptions = new Set(['fmt', 'rgb', 'str']);
-
 
 // Helper to split a CamelCase identifier
 export function isCamelCase(id: string) {

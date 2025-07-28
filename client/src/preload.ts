@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as wav from 'wav';
 import * as os from 'os';
 import { ExtensionContext } from 'vscode';
-import { earconRaw, specialWordCache } from './audio';
+import { earconRaw } from './audio';
 import { earconTokens, getTokenSound } from './tokens';
 import { specialCharMap } from './mapping';
 import { log, logWarning, logMemory } from './utils';
@@ -19,36 +19,28 @@ const MAX_PRELOAD_MEMORY_MB = 20; // Limit preloading to 20MB
  * Log current cache memory usage
  */
 function logCacheMemory(): void {
-    const specialCacheSize = Object.values(specialWordCache).reduce((total, item) => total + item.pcm.length, 0);
     const earconCacheSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
-    const totalMB = (specialCacheSize + earconCacheSize) / (1024 * 1024);
+    const totalMB = earconCacheSize / (1024 * 1024);
     
-    logMemory(`[Cache] Special: ${Object.keys(specialWordCache).length} items (${(specialCacheSize / 1024 / 1024).toFixed(2)}MB), Earcons: ${Object.keys(earconRaw).length} items (${(earconCacheSize / 1024 / 1024).toFixed(2)}MB), Total: ${totalMB.toFixed(2)}MB`);
+    logMemory(`[Cache] Earcons: ${Object.keys(earconRaw).length} items (${(earconCacheSize / 1024 / 1024).toFixed(2)}MB), Total: ${totalMB.toFixed(2)}MB`);
 }
 
 /**
  * Clear old cache entries when memory limit is reached
  */
 function clearOldCacheEntries(): void {
-    const specialCacheSize = Object.values(specialWordCache).reduce((total, item) => total + item.pcm.length, 0);
     const earconCacheSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
-    const totalSizeMB = (specialCacheSize + earconCacheSize) / (1024 * 1024);
+    const totalSizeMB = earconCacheSize / (1024 * 1024);
     
     if (totalSizeMB > MAX_PRELOAD_MEMORY_MB) {
-        logWarning(`[Cache] Memory limit exceeded (${totalSizeMB.toFixed(2)}MB > ${MAX_PRELOAD_MEMORY_MB}MB), clearing 50% of cache`);
-        
-        // Clear half of special word cache
-        const specialKeys = Object.keys(specialWordCache);
-        const keysToRemove = specialKeys.slice(0, Math.floor(specialKeys.length / 2));
-        keysToRemove.forEach(key => delete specialWordCache[key]);
+        logWarning(`[Cache] Memory limit exceeded (${totalSizeMB.toFixed(2)}MB > ${MAX_PRELOAD_MEMORY_MB}MB), clearing 50% of earcon cache`);
         
         // Clear half of earcon cache  
         const earconKeys = Object.keys(earconRaw);
         const earconKeysToRemove = earconKeys.slice(0, Math.floor(earconKeys.length / 2));
         earconKeysToRemove.forEach(key => delete earconRaw[key]);
         
-        logWarning(`[Cache] Cleared ${keysToRemove.length} special words and ${earconKeysToRemove.length} earcons`);
-        logCacheMemory();
+        logMemory(`[Cache] Cleared ${earconKeysToRemove.length} earcon cache entries`);
     }
 }
 
@@ -79,7 +71,7 @@ export async function preloadKeywordWavs(extRoot: string): Promise<void> {
                         signed: true,
                         float: false
                     };
-                    specialWordCache[keyword] = { format: fmt, pcm };
+                    // No longer caching special characters - using direct TTS inference
                     totalPreloadedMemory += pcm.length;
                     loadedCount++;
                     
@@ -99,86 +91,26 @@ export async function preloadKeywordWavs(extRoot: string): Promise<void> {
 }
 
 export async function preloadSpecialWords() {
-    logWarning('[Preload] Using minimal special word preloading to save memory');
+    logWarning('[Preload] Skipping special word preloading - using direct TTS inference');
     
-    // Only preload the most common special characters
-    const essentialChars = [' ', '.', ',', ';', ':', '(', ')', '[', ']', '{', '}', '"', "'"];
-    const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+    // No longer preloading special characters since we use direct TTS inference
+    // This function is kept for compatibility but does nothing
     
-    let loadedCount = 0;
-    
-    for (const char of essentialChars) {
-        if (totalPreloadedMemory > MAX_PRELOAD_MEMORY_MB * 1024 * 1024) {
-            logWarning(`[Preload] Memory limit reached, stopping special word preload at ${loadedCount} items`);
-            break;
-        }
-        
-        const word = specialCharMap[char];
-        if (!word) continue;
-        
-        const sanitized = word.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const file = path.join(cacheDir, `text_${sanitized}.pcm`);
-        
-        if (fs.existsSync(file)) {
-            try {
-                await new Promise<void>((resolve, reject) => {
-                    const reader = new wav.Reader();
-                    const bufs: Buffer[] = [];
-                    let fmt: any;
-                    reader.on('format', f => { fmt = f; });
-                    reader.on('data', d => bufs.push(d));
-                    reader.on('end', () => {
-                        const pcm = Buffer.concat(bufs);
-                        specialWordCache[word] = { format: fmt, pcm };
-                        totalPreloadedMemory += pcm.length;
-                        loadedCount++;
-                        resolve();
-                    });
-                    reader.on('error', reject);
-                    fs.createReadStream(file).pipe(reader);
-                });
-            } catch (e) {
-                log(`[preloadSpecialWords] Failed loading ${file}: ${e}`);
-            }
-        }
-    }
-    
-    logMemory(`[Preload] Loaded ${loadedCount} essential special words (${(totalPreloadedMemory / 1024 / 1024).toFixed(2)}MB total)`);
-    clearOldCacheEntries();
-    logCacheMemory();
+    logMemory(`[Preload] No special words preloaded - using direct TTS inference`);
 }
 
 /**
  * Clean up all preloaded caches
  */
 export function cleanupPreloadedCaches(): void {
-    const beforeSize = Object.keys(specialWordCache).length + Object.keys(earconRaw).length;
+    const beforeSize = Object.keys(earconRaw).length;
+    logWarning(`[Cleanup] Clearing ${beforeSize} cached items`);
     
-    // Clear all caches
-    Object.keys(specialWordCache).forEach(key => delete specialWordCache[key]);
+    // Clear earcon cache only (no special word cache since we use direct TTS)
     Object.keys(earconRaw).forEach(key => delete earconRaw[key]);
     
-    totalPreloadedMemory = 0;
-    
-    logWarning(`[Preload] Cleared all caches (${beforeSize} items removed)`);
-    
-    // Clean up TTS cache directory
-    try {
-        const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
-        if (fs.existsSync(cacheDir)) {
-            const files = fs.readdirSync(cacheDir);
-            files.forEach(file => {
-                try {
-                    fs.unlinkSync(path.join(cacheDir, file));
-                } catch (err) {
-                    // Ignore cleanup errors
-                }
-            });
-            logWarning(`[Preload] Cleaned up ${files.length} TTS cache files`);
-        }
-    } catch (err) {
-        log(`[Preload] Error cleaning TTS cache: ${err}`);
-    }
+    const afterSize = Object.keys(earconRaw).length;
+    logWarning(`[Cleanup] Cleared ${beforeSize - afterSize} items from cache`);
 }
 
 export async function preloadEverything(context: ExtensionContext) {

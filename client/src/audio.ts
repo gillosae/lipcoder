@@ -11,10 +11,10 @@ import { isAlphabet, isNumber } from './mapping';
 
 // Import from the new modules
 import { playEarcon, stopEarconPlayback, isEarconToken, findTokenSound, earconRaw } from './earcon';
-import { genTokenAudio, playSpecial, isTTSRequired, getSpeakerForCategory, specialWordCache } from './tts';
+import { genTokenAudio, playSpecial, isTTSRequired, getSpeakerForCategory } from './tts';
 
 // Re-export functions that other modules expect from audio.ts
-export { genTokenAudio, playSpecial, specialWordCache } from './tts';
+export { genTokenAudio, playSpecial } from './tts';
 export { playEarcon, earconRaw } from './earcon';
 
 let currentSpeaker: Speaker | null = null;

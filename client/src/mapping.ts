@@ -1,6 +1,10 @@
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 
+// Two and three word exception mappings
+export const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in', 'to', 'by', 'of', 'as', 'at', 'or', 'up']);
+export const threeLenExceptions = new Set(['fmt', 'rgb', 'str', 'png', 'jpg', 'wav', 'mp3', 'mp4', 'ogg', 'url', 'api', 'css']);
+
 const PUNCTUATION_FILES: Record<string, string> = {
     '{': 'brace.pcm', '}': 'brace2.pcm',
     '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
