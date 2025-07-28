@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { log } from '../utils';
-import { playWave, speakToken, stopPlayback } from '../audio';
+import { playWave, speakTokenList, TokenChunk, stopPlayback } from '../audio';
 import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
@@ -87,7 +87,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakToken(label);
+                    speakTokenList([{ tokens: [label], category: undefined }]);
                 }
             });
 
@@ -102,7 +102,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakToken(`moved to function ${label} line ${line + 1}`);
+                    speakTokenList([{ tokens: [`moved to function ${label} line ${line + 1}`], category: undefined }]);
                 }
                 quickPick.hide();
             });
@@ -115,14 +115,14 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const pos = originalSelection.active;
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
-                    speakToken(`back to line ${pos.line + 1}`);
+                    speakTokenList([{ tokens: [`back to line ${pos.line + 1}`], category: undefined }]);
                 }
                 quickPick.dispose();
             });
 
             const MAX_INDENT_UNITS = 5;
             quickPick.show();
-            speakToken('functions');
+            speakTokenList([{ tokens: ['functions'], category: undefined }]);
 
             // Automatically walk through items, reading each every second
             let idx = 0;

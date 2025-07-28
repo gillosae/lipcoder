@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { isFileTreeReading } from './file_tree';
-import { stopReading } from './stop_reading';
-import { stopPlayback, speakToken } from '../audio';
+import { stopReading, getLineTokenReadingActive } from './stop_reading';
+import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
 import { readWordTokens } from './read_word_tokens';
 import { readTextTokens } from './read_text_tokens';
 import { config } from '../config';
@@ -109,7 +109,10 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 e.selections.length === 1 &&
                 isFileTreeReading()
             ) {
-                stopReading();
+                // Only stop reading if line token reading is not currently active
+                if (!getLineTokenReadingActive()) {
+                    stopReading();
+                }
             }
         }),
         vscode.window.onDidChangeTextEditorSelection((e) => {
@@ -123,8 +126,11 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             const old = currentCursor;
             const sel = e.selections[0].active;
             if (old && sel.line === old.line && Math.abs(sel.character - old.character) === 1) {
-                stopReading();
-                stopPlayback();
+                // Only stop reading if line token reading is not currently active
+                if (!getLineTokenReadingActive()) {
+                    stopReading();
+                    stopPlayback();
+                }
 
                 const doc = e.textEditor.document;
                 const char = sel.character > old.character
@@ -132,7 +138,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                     : doc.getText(new vscode.Range(sel, old));
 
                 if (char) {
-                    speakToken(char);
+                    speakTokenList([{ tokens: [char], category: undefined }]);
                 }
                 currentCursor = sel;
                 return;

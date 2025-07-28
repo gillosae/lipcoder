@@ -40,7 +40,6 @@ export function registerToggleASR(context: vscode.ExtensionContext) {
                 asrClient = new ASRClient({
                     chunkDuration: 2000,
                     sampleRate: 16000,
-                    serverUrl: 'http://localhost:5005/asr',
                     onTranscription: (chunk) => {
                         log(`[Toggle ASR] Transcription received: "${chunk.text}"`);
                         vscode.window.showInformationMessage(`ASR: ${chunk.text}`);
@@ -94,7 +93,6 @@ export function registerToggleASR(context: vscode.ExtensionContext) {
                 asrClient = new ASRClient({
                     chunkDuration: 2000,
                     sampleRate: 16000,
-                    serverUrl: 'http://localhost:5005/asr',
                     onTranscription: (chunk) => {
                         log(`[Toggle ASR] Toggle Streaming Transcription received: "${chunk.text}"`);
                         vscode.window.showInformationMessage(`ASR: ${chunk.text}`);
@@ -183,7 +181,6 @@ export function registerToggleASR(context: vscode.ExtensionContext) {
             asrClient = new ASRClient({
                 chunkDuration: 2000,
                 sampleRate: 16000,
-                serverUrl: 'http://localhost:5005/asr',
                 onTranscription: (chunk) => {
                     log(`[Toggle ASR] Start ASR Transcription received: "${chunk.text}"`);
                     vscode.window.showInformationMessage(`ASR: ${chunk.text}`);

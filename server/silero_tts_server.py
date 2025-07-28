@@ -3,6 +3,8 @@ from flask import Flask, request, send_file
 import torch
 import uuid
 import os
+import numpy as np
+import soundfile as sf
 from silero_tts.silero_tts import SileroTTS
 
 app = Flask(__name__)
@@ -31,11 +33,30 @@ def tts():
     tts_model.speaker = speaker
     tts_model.sample_rate = sample_rate
 
-    # Generate to a temporary file
-    temp_path = os.path.join('/tmp', f"tts_{uuid.uuid4().hex}.wav")
-    tts_model.tts(text, temp_path)
+    # Generate to a temporary mono file
+    mono_temp_path = os.path.join('/tmp', f"tts_mono_{uuid.uuid4().hex}.wav")
+    tts_model.tts(text, mono_temp_path)
+    
+    # Convert mono to stereo
+    stereo_temp_path = os.path.join('/tmp', f"tts_stereo_{uuid.uuid4().hex}.wav")
+    
+    # Read the mono audio
+    mono_audio, sr = sf.read(mono_temp_path)
+    
+    # Convert mono to stereo by duplicating the channel
+    if len(mono_audio.shape) == 1:  # Ensure it's mono
+        stereo_audio = np.column_stack((mono_audio, mono_audio))
+    else:
+        stereo_audio = mono_audio  # Already stereo or multi-channel
+    
+    # Write as stereo
+    sf.write(stereo_temp_path, stereo_audio, sr)
+    
+    # Clean up mono file
+    if os.path.exists(mono_temp_path):
+        os.remove(mono_temp_path)
 
-    return send_file(temp_path, mimetype='audio/wav')
+    return send_file(stereo_temp_path, mimetype='audio/wav')
 
 if __name__ == '__main__':
     app.run(port=5002)

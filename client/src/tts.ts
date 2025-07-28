@@ -6,12 +6,12 @@ import { fetch, Agent } from 'undici';
 import { log } from './utils';
 import { config, categoryVoiceMap, sileroConfig } from './config';
 import { isAlphabet, isNumber } from './mapping';
+import { serverManager } from './server_manager';
 
 // Keep-alive agent for HTTP fetch to reuse connections
 const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
 
-// Cache for special-word TTS audio (format + PCM)
-export const specialWordCache: Record<string, { format: any; pcm: Buffer }> = {};
+// Note: specialWordCache removed - now using direct TTS inference
 
 /**
  * Generate (but don't play) audio for a token
@@ -35,148 +35,118 @@ export async function genTokenAudio(
         }
     }
 
-    // 0.5) Cache multi-character tokens to avoid re-generating TTS repeatedly
+    // 0.5) For special characters, skip caching and always generate fresh TTS
+    // For other multi-character tokens, use cache to avoid re-generating repeatedly
     const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
     if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-    if (token.length > 1) {
-        // sanitize the token to a filesystem-safe name
+    
+    const isSpecialChar = category === 'special';
+    
+    if (token.length > 1 && !isSpecialChar) {
+        // Only cache non-special characters
         const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.pcm`);
+        const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
         log(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
             log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
             return cachedFile;
         }
-        // generate and save to the cache
         log(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
-        const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
-        const baseCategory = category?.split('_')[0];
-        const speakerName =
-            opts?.speaker
-            ?? (baseCategory && categoryVoiceMap[baseCategory])
-            ?? sileroConfig.defaultSpeaker!;
-        // Send text to long-running Silero server instead of spawning
-        const res = await fetch('http://localhost:5002/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: token,
-                speaker: speakerName,
-                sample_rate: sampleRate,
-            }),
-            dispatcher: keepAliveAgent
-        });
-        if (!res.ok) {
-            // Capture and log the error body for debugging
-            let errorBody: string;
-            try {
-                errorBody = await res.text();
-            } catch {
-                errorBody = '<unable to read response body>';
-            }
-            log(
-                `[genTokenAudio] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
-            );
-            throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
-        }
-        const wavBuffer = Buffer.from(await res.arrayBuffer());
-        
-        // Convert mono WAV to stereo PCM for consistency with other audio files
-        try {
-            // For now, save as WAV but with PCM extension for identification
-            // TODO: Consider converting to actual stereo PCM format
-            fs.writeFileSync(cachedFile, wavBuffer);
-            return cachedFile;
-        } catch (err) {
-            log(`[genTokenAudio] Error saving TTS cache: ${err}`);
-            throw err;
-        }
+    } else if (isSpecialChar) {
+        log(`[genTokenAudio] *** SPECIAL CHARACTER "${token}" - SKIPPING ALL CACHE CHECKS, USING DIRECT TTS INFERENCE ***`);
     }
-
-    // 1) Skip blanks
-    if (!token.trim()) throw new Error('No text to TTS for token');
-
-    // 2) Determine which Silero speaker to use
+    
+    // Generate TTS (either for cache miss or special characters)
+    const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
     const baseCategory = category?.split('_')[0];
     const speakerName =
         opts?.speaker
         ?? (baseCategory && categoryVoiceMap[baseCategory])
         ?? sileroConfig.defaultSpeaker!;
-
-    // 3) Validate & build outFile as before…
-    const { pythonPath: pythonExe, scriptPath, language, modelId, sampleRate } = sileroConfig;
-    if (!fs.existsSync(pythonExe)) throw new Error(`Python not found: ${pythonExe}`);
-    if (!fs.existsSync(scriptPath)) throw new Error(`Silero script not found: ${scriptPath}`);
-
-    const tmpDir = path.join(os.tmpdir(), 'lipcoder_silero_tts');
-    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-            const outFile = path.join(tmpDir, `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.pcm`);
-
-    const args = [
-        scriptPath,
-        '--language', language,
-        '--model_id', modelId,
-        '--speaker', speakerName,
-        '--text', token,
-        '--sample_rate', String(sampleRate),
-        '--output', outFile,
-    ];
-
-    const proc = spawn(pythonExe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    proc.stderr?.on('data', c => stderr += c.toString());
-
-    await new Promise<void>((resolve, reject) => {
-        proc.on('error', reject);
-        proc.on('close', code => {
-            if (code !== 0) return reject(new Error(
-                `Silero exited ${code}\nCmd: ${pythonExe} ${args.join(' ')}\n${stderr}`
-            ));
-            resolve();
-        });
+    
+    // Send text to long-running Silero server
+    const ttsPort = serverManager.getServerPort('tts');
+    if (!ttsPort) {
+        throw new Error('TTS server is not running or port not available');
+    }
+    const res = await fetch(`http://localhost:${ttsPort}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: token,
+            speaker: speakerName,
+            sample_rate: sampleRate,
+        }),
+        dispatcher: keepAliveAgent
     });
+    if (!res.ok) {
+        // Capture and log the error body for debugging
+        let errorBody: string;
+        try {
+            errorBody = await res.text();
+        } catch {
+            errorBody = '<unable to read response body>';
+        }
+        log(
+            `[genTokenAudio] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
+        );
+        throw new Error(`TTS server error: ${res.status} ${res.statusText}`);
+    }
+    const wavBuffer = Buffer.from(await res.arrayBuffer());
+    
+    // For special characters, don't cache - return temp file
+    // For regular tokens, save to cache
+    try {
+        if (isSpecialChar) {
+            // Special characters: save as WAV file to use same playback path as regular TTS
+            // This allows them to benefit from external player fallback (afplay, etc.)
+            const outFile = path.join(os.tmpdir(), `tts_special_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+            fs.writeFileSync(outFile, wavBuffer);
+            log(`[genTokenAudio] *** SPECIAL CHARACTER "${token}" SAVED AS WAV: ${outFile} (NOT CACHED) ***`);
+            return outFile;
+        } else if (token.length > 1) {
+            // Regular multi-character tokens: save to cache with .wav extension (for regular playWave handling)
+            const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            const cachedFile = path.join(cacheDir, `${category || 'text'}_${sanitized}.wav`);
+            fs.writeFileSync(cachedFile, wavBuffer);
+            log(`[genTokenAudio] cached token saved: ${cachedFile}`);
+            return cachedFile;
+        } else {
+            // Single character fallback - also WAV format
+            const outFile = path.join(os.tmpdir(), `tts_single_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+            fs.writeFileSync(outFile, wavBuffer);
+            return outFile;
+        }
+    } catch (err) {
+        log(`[genTokenAudio] Error saving TTS file: ${err}`);
+        throw err;
+    }
 
-    log(`[genTokenAudio] generated new TTS to ${outFile}`);
-    return outFile;
+    // This should not be reached, but just in case
+    throw new Error('No text to TTS for token');
 }
 
 /**
  * Play special character audio using direct TTS inference
  */
 export async function playSpecial(word: string): Promise<void> {
-    log(`[playSpecial] generating TTS for word="${word}"`);
+    log(`[playSpecial] *** GENERATING FRESH TTS FOR SPECIAL WORD: "${word}" ***`);
     
     try {
-        // Generate audio using TTS directly, no caching check
+        // Always generate audio using TTS directly, never check cache
+        log(`[playSpecial] Calling genTokenAudio with word="${word}", category="special"`);
         const audioFile = await genTokenAudio(word, 'special');
+        log(`[playSpecial] Generated audio file: ${audioFile}`);
         
-        // Play the generated audio
-        const fs = require('fs');
-        const Speaker = require('speaker');
+        // Special characters are saved as WAV files, so they use the same playback path as regular TTS
+        // This allows them to benefit from external player fallback (afplay, etc.) for correct pitch
+        const { playWave } = require('./audio');
+        await playWave(audioFile);
         
-        if (fs.existsSync(audioFile)) {
-            const audioData = fs.readFileSync(audioFile);
-            const format = {
-                channels: 2,      // stereo
-                sampleRate: 24000, // 24kHz
-                bitDepth: 16,     // 16-bit
-                signed: true,
-                float: false
-            };
-            
-            return new Promise((resolve, reject) => {
-                const speaker = new Speaker(format);
-                speaker.on('error', reject);
-                speaker.on('close', resolve);
-                speaker.write(audioData);
-                speaker.end();
-            });
-        } else {
-            log(`[playSpecial] Generated audio file not found: ${audioFile}`);
-            return Promise.resolve();
-        }
+        log(`[playSpecial] Finished playing special word: "${word}"`);
+        
     } catch (error) {
-        log(`[playSpecial] Error generating TTS for "${word}": ${error}`);
+        log(`[playSpecial] ERROR generating TTS for "${word}": ${error}`);
         return Promise.resolve();
     }
 }
@@ -196,4 +166,4 @@ export function getSpeakerForCategory(category?: string, opts?: { speaker?: stri
     return opts?.speaker
         ?? (baseCategory && categoryVoiceMap[baseCategory])
         ?? sileroConfig.defaultSpeaker!;
-} 
+}

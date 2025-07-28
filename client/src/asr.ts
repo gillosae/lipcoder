@@ -1,4 +1,5 @@
 import { log, logError, logWarning, logSuccess, logInfo } from './utils';
+import { serverManager } from './server_manager';
 
 export interface ASRChunk {
     text: string;
@@ -31,10 +32,14 @@ export class ASRClient {
     private readonly MAX_BUFFER_CHUNKS = 100; // Max 100 chunks
 
     constructor(options: ASROptions = {}) {
+        // Get dynamic ASR port from server manager
+        const asrPort = serverManager.getServerPort('asr');
+        const defaultServerUrl = asrPort ? `http://localhost:${asrPort}/asr` : 'http://localhost:5004/asr';
+        
         this.options = {
             chunkDuration: 2000, // 2 seconds
             sampleRate: 16000, // 16kHz
-            serverUrl: 'http://localhost:5005/asr',
+            serverUrl: defaultServerUrl,
             ...options
         };
         log(`[ASR] ASRClient initialized with options: ${JSON.stringify(this.options)}`);

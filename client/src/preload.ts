@@ -93,6 +93,28 @@ export async function preloadKeywordWavs(extRoot: string): Promise<void> {
 export async function preloadSpecialWords() {
     logWarning('[Preload] Skipping special word preloading - using direct TTS inference');
     
+    // Clean up any existing cached special character files
+    try {
+        const cacheDir = path.join(os.tmpdir(), 'lipcoder_tts_cache');
+        if (fs.existsSync(cacheDir)) {
+            const files = fs.readdirSync(cacheDir);
+            const specialFiles = files.filter(f => f.startsWith('text_') || f.startsWith('special_'));
+            for (const file of specialFiles) {
+                try {
+                    fs.unlinkSync(path.join(cacheDir, file));
+                    log(`[preloadSpecialWords] Removed cached special file: ${file}`);
+                } catch (err) {
+                    // Ignore cleanup errors
+                }
+            }
+            if (specialFiles.length > 0) {
+                logWarning(`[preloadSpecialWords] Cleaned up ${specialFiles.length} cached special character files`);
+            }
+        }
+    } catch (err) {
+        log(`[preloadSpecialWords] Error cleaning special cache: ${err}`);
+    }
+    
     // No longer preloading special characters since we use direct TTS inference
     // This function is kept for compatibility but does nothing
     

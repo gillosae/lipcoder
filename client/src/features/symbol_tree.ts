@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
-import { playWave, speakToken, stopPlayback } from '../audio';
+import { playWave, speakTokenList, TokenChunk, stopPlayback } from '../audio';
 import { config } from '../config';
 import { stopReading, lineAbortController } from './stop_reading';
 import { log } from '../utils';
@@ -26,7 +26,7 @@ export function registerSymbolTree(context: ExtensionContext) {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
-                speakToken('Open a File First!');
+                speakTokenList([{ tokens: ['Open a File First!'], category: undefined }]);
                 return;
             }
             const originalSelection = editor.selection;
@@ -87,7 +87,7 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakToken(label);
+                    speakTokenList([{ tokens: [label], category: undefined }]);
                 }
             });
 
@@ -102,11 +102,10 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakToken(
-                        `moved to symbol ${label} line ${line + 1}`,
-                        undefined,
-                        { signal: lineAbortController.signal }
-                    );
+                    speakTokenList([{ 
+                        tokens: [`moved to symbol ${label} line ${line + 1}`], 
+                        category: undefined 
+                    }], lineAbortController.signal);
                 }
                 quickPick.hide();
             });
@@ -119,14 +118,14 @@ export function registerSymbolTree(context: ExtensionContext) {
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
                     stopReading();
-                    speakToken(`back to line ${pos.line + 1}`);
+                    speakTokenList([{ tokens: [`back to line ${pos.line + 1}`], category: undefined }]);
                 }
                 quickPick.dispose();
             });
 
             stopReading();
             quickPick.show();
-            speakToken('symbols');
+            speakTokenList([{ tokens: ['symbols'], category: undefined }]);
 
             // Auto-iterate
             let idx = 0;

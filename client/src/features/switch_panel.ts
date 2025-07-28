@@ -1,7 +1,7 @@
 // client/src/features/switch_panel.ts
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakToken } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 
 interface PanelItem {
     label: string;
@@ -30,8 +30,10 @@ export function registerSwitchPanel(context: ExtensionContext) {
 
             // Visual feedback
             vscode.window.showInformationMessage(`In ${choice}`);
-            await speakToken('in');
-            await speakToken(choice.toLowerCase());
+            await speakTokenList([
+                { tokens: ['in'], category: undefined },
+                { tokens: [choice.toLowerCase()], category: undefined }
+            ]);
 
             // 👉 When switching into the editor, trigger a readCurrentLine
             if (choice === 'Editor') {

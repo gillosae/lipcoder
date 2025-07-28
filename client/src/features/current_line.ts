@@ -1,7 +1,6 @@
-import { genTokenAudio } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
-import { speakToken } from '../audio';
 import { numberMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { log, logSuccess } from '../utils';
@@ -19,18 +18,8 @@ let lastPreloadedLine: number | undefined;
 export function registerCurrentLine(context: ExtensionContext) {
     // Track the event listener for proper disposal
     const selectionListener = vscode.window.onDidChangeTextEditorSelection(async e => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) return;
-        const lineNum = editor.selection.active.line + 1;
-        // Only preload on actual line change
-        if (lineNum === lastPreloadedLine) return;
-        lastPreloadedLine = lineNum;
-        const numberWord = numberMap[lineNum.toString()] || String(lineNum);
-        try {
-            await genTokenAudio(numberWord, 'literal');
-        } catch {
-            /* ignore caching errors */
-        }
+        // Note: Preloading is now handled automatically by speakTokenList when needed
+        // This listener could be removed if preloading is no longer required
     });
     
     context.subscriptions.push(selectionListener);
@@ -52,13 +41,20 @@ export function registerCurrentLine(context: ExtensionContext) {
             const msg = `Line ${lineNum}`;
             vscode.window.showInformationMessage(msg);
             const tokens = msg.split(/\s+/).filter(t => t.length > 0);
-            for (const token of tokens) {
+            
+            // Convert tokens to speakable form and create chunks
+            const chunks: TokenChunk[] = tokens.map(token => {
                 // If the token is purely digits and exists in our map, use the word form
                 const toSpeak = /^\d+$/.test(token) && numberMap[token]
                     ? numberMap[token]
                     : token;
-                await speakToken(toSpeak, 'literal');
-            }
+                return {
+                    tokens: [toSpeak],
+                    category: 'literal'
+                };
+            });
+            
+            await speakTokenList(chunks);
         })
     );
 }

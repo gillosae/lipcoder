@@ -177,7 +177,7 @@ async function startRecording() {
         asrClient = new ASRClient({
             chunkDuration: 2000,
             sampleRate: 16000,
-            serverUrl: 'http://localhost:5005/asr',
+
             onTranscription: (chunk: ASRChunk) => {
                 const timestamp = new Date(chunk.timestamp).toLocaleTimeString();
                 const message = `[${timestamp}] ${chunk.text}`;

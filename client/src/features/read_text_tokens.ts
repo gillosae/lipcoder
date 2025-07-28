@@ -2,9 +2,22 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { config } from '../config';
 import { LineSeverityMap } from './line_severity';
-import { playSpecial, playWave, stopPlayback, playEarcon } from '../audio';
+import { playWave, stopPlayback, playEarcon, speakTokenList, TokenChunk } from '../audio';
 import { isEarcon, specialCharMap } from '../mapping';
 import { log } from '../utils';
+
+// Helper function to calculate panning based on column position
+function calculatePanning(column: number): number {
+    if (!config.globalPanningEnabled) {
+        return 0; // No panning if disabled
+    }
+    
+    // Map column 0-120 to panning -1.0 to +1.0
+    // Columns beyond 120 will be clamped to +1.0
+    const maxColumn = 120;
+    const normalizedColumn = Math.min(column, maxColumn) / maxColumn;
+    return (normalizedColumn * 2) - 1; // Convert 0-1 to -1 to +1
+}
 
 export async function readTextTokens(
     event: vscode.TextDocumentChangeEvent,
@@ -22,6 +35,9 @@ export async function readTextTokens(
         log(`change.text:' ${JSON.stringify(change.text)}, rangeLength: ${change.rangeLength}, startChar: ${change.range.start.character}`);
 
         const uri = event.document.uri.toString();
+        
+        // Calculate panning based on column position
+        const panning = calculatePanning(change.range.start.character);
 
         // ── 1) ENTER FIRST: if *any* change is a newline, play it and bail ─────────
         // Detect Enter even when auto-indent is inserted (e.g., '\n    ')
@@ -106,21 +122,25 @@ export async function readTextTokens(
         const text = change.text;
         if (text.length > 1) {
             // Break grouped input into individual tokens
-            for (const ch of text) {
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                // Calculate panning for each character based on its position
+                const charPanning = calculatePanning(change.range.start.character + i);
+                
                 stopPlayback();
                 try {
                     if (audioMap[ch]) {
-                        playWave(audioMap[ch], { isEarcon: true, immediate: true });
+                        playWave(audioMap[ch], { isEarcon: true, immediate: true, panning: charPanning });
                     } else if (specialCharMap[ch]) {
                         stopPlayback();
                         if (isEarcon(ch)) {
-                            await playEarcon(ch);
+                            await playEarcon(ch, charPanning);
                         } else {
-                            await playSpecial(specialCharMap[ch]);
+                            await speakTokenList([{ tokens: [specialCharMap[ch]], category: 'special', panning: charPanning }]);
                         }
                     } else if (/^[a-zA-Z]$/.test(ch)) {
                         const tokenPath = audioMap[ch.toLowerCase()];
-                        if (tokenPath) playWave(tokenPath, { immediate: true });
+                        if (tokenPath) playWave(tokenPath, { immediate: true, panning: charPanning });
                     } else {
                         console.log('🚫 No audio found for grouped char:', ch);
                     }
@@ -134,18 +154,23 @@ export async function readTextTokens(
         const char = text;
         stopPlayback();
         try {
+            console.log(`[read_text_tokens] Processing char: "${char}", audioMap: ${audioMap[char]}, specialCharMap: ${specialCharMap[char]}, isEarcon: ${isEarcon(char)}`);
             if (audioMap[char]) {
-                playWave(audioMap[char], { isEarcon: true, immediate: true });
+                console.log(`[read_text_tokens] Using audioMap path for "${char}": ${audioMap[char]}`);
+                playWave(audioMap[char], { isEarcon: true, immediate: true, panning });
             } else if (specialCharMap[char]) {
+                console.log(`[read_text_tokens] Using specialCharMap path for "${char}"`);
                 stopPlayback();
                 if (isEarcon(char)) {
-                    await playEarcon(char);
+                    console.log(`[read_text_tokens] Playing earcon for "${char}"`);
+                    await playEarcon(char, panning);
                 } else {
-                    await playSpecial(specialCharMap[char]);
+                    console.log(`[read_text_tokens] Playing special TTS for "${char}": ${specialCharMap[char]}`);
+                    await speakTokenList([{ tokens: [specialCharMap[char]], category: 'special', panning }]);
                 }
             } else if (/^[a-zA-Z]$/.test(char)) {
                 const tokenPath = audioMap[char.toLowerCase()];
-                if (tokenPath) playWave(tokenPath, { immediate: true });
+                if (tokenPath) playWave(tokenPath, { immediate: true, panning });
             } else {
                 console.log('🚫 No audio found for char:', char);
             }

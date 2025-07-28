@@ -7,10 +7,22 @@ import { log, logWarning, logMemory } from './utils';
 import { config } from './config';
 import { isEarcon, specialCharMap } from './mapping';
 
-// Earcon raw PCM cache with memory management
-export const earconRaw: Record<string, Buffer> = {};
+// Standard PCM format for earcon playback
+const STANDARD_PCM_FORMAT = {
+    channels: 2,        // stereo (converted from mono)
+    sampleRate: 24000,   // 24kHz (original sample rate)
+    bitDepth: 16,       // 16-bit
+    signed: true,
+    float: false
+};
+
+// File storage for loaded earcon PCM data (lazy-loaded once per earcon)
+let earconRaw: Record<string, Buffer> = {};
+let earconAccessTimes: Record<string, number> = {};
 const MAX_EARCON_CACHE_SIZE_MB = 10; // Limit earcon cache to 10MB
-const earconAccessTimes: Record<string, number> = {};
+
+// Export earconRaw for compatibility with audio.ts
+export { earconRaw };
 
 /**
  * Clean up old earcon cache entries when memory limit is reached
@@ -94,7 +106,7 @@ function applyEarconPanning(pcm: Buffer, format: any, pan: number): Buffer {
     
     pan = Math.max(-1, Math.min(1, pan));
     const leftGain = pan <= 0 ? 1 : 1 - pan;
-    const rightGain = pan >= 0 ? 1 : 1 + pan;
+    const rightGain = pan <= 0 ? 1 + pan : 1;
     
     const pannedPcm = Buffer.alloc(pcm.length);
     const bytesPerSample = format.bitDepth / 8;
@@ -118,110 +130,89 @@ function applyEarconPanning(pcm: Buffer, format: any, pan: number): Buffer {
  * Play an earcon token using cached PCM data
  */
 export function playEarcon(token: string, pan?: number): Promise<void> {
+    log(`[playEarcon] Starting playback for token: "${token}" with panning: ${pan}`);
+    
     const file = findTokenSound(token);
+    log(`[playEarcon] findTokenSound("${token}") returned: ${file}`);
+    
     if (!file) {
+        log(`[playEarcon] No earcon file found for token: "${token}", resolving immediately`);
         // no earcon mapped
         return Promise.resolve();
     }
 
     // Lazy-load the raw file once with memory management
     if (!earconRaw[token]) {
+        log(`[playEarcon] Loading earcon file for first time: ${file}`);
         // Check if we need to clean up cache first
         cleanupEarconCache();
         
-        earconRaw[token] = fs.readFileSync(file);
-        earconAccessTimes[token] = Date.now();
-        
-        // Log cache size periodically
-        const cacheSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
-        if (Object.keys(earconRaw).length % 10 === 0) {
-            logMemory(`[Earcon] Cache: ${Object.keys(earconRaw).length} items (${(cacheSize / 1024 / 1024).toFixed(2)}MB)`);
+        try {
+            const data = fs.readFileSync(file);
+            earconRaw[token] = data;
+            earconAccessTimes[token] = Date.now();
+            log(`[playEarcon] Successfully loaded earcon data for "${token}": ${data.length} bytes`);
+        } catch (err) {
+            log(`[playEarcon] Failed to load earcon file ${file}: ${err}`);
+            return Promise.resolve();
         }
     } else {
+        log(`[playEarcon] Using cached earcon data for "${token}"`);
         // Update access time
         earconAccessTimes[token] = Date.now();
     }
-    
-    const buf = earconRaw[token];
-    
-    let pcm: Buffer;
-    let fmt: any;
-    
-    const isPcmFile = file.toLowerCase().endsWith('.pcm');
-    
-    if (isPcmFile) {
-        // PCM files are raw data, no header parsing needed
-        pcm = buf;
-        fmt = {
-            channels: 2,        // stereo (from conversion script)
-            sampleRate: 48000,  // 48kHz (earcons are at higher sample rate)
-            bitDepth: 16,       // 16-bit
-            signed: true,
-            float: false
-        };
-    } else {
-        // WAV files (for backward compatibility)
-        // Parse header fields: channels @22, sampleRate @24, bitDepth @34
-        const channels = buf.readUInt16LE(22);
-        const sampleRate = buf.readUInt32LE(24);
-        const bitDepth = buf.readUInt16LE(34);
-        // Locate the "data" subchunk (skipping any extra chunks) and slice out PCM
-        const dataIdx = buf.indexOf(Buffer.from('data'));
-        if (dataIdx < 0) throw new Error(`No data chunk in earcon ${file}`);
-        pcm = buf.slice(dataIdx + 8);
-        // Include signed/float flags for Speaker
-        fmt = { channels, sampleRate, bitDepth, signed: true, float: false };
+
+    const format = STANDARD_PCM_FORMAT;
+    let finalPcm = earconRaw[token];
+
+    // Apply panning if specified
+    if (pan !== undefined && pan !== 0) {
+        log(`[playEarcon] Applied panning ${pan.toFixed(2)} to earcon "${token}"`);
+        finalPcm = applyEarconPanning(finalPcm, format, pan);
     }
 
-    return new Promise((resolve) => {
+    log(`[playEarcon] About to create Speaker for earcon "${token}"`);
+    
+    return new Promise<void>((resolve, reject) => {
+        log(`[playEarcon] Creating Speaker instance for "${token}"`);
+        
         try {
-            // Apply panning if specified
-            let finalPcm = pcm;
-            if (pan !== undefined && pan !== 0) {
-                finalPcm = applyEarconPanning(pcm, fmt, pan);
-                log(`[playEarcon] Applied panning ${pan.toFixed(2)} to earcon "${token}"`);
-            }
+            // Stop any current earcon playback
+            stopEarconPlayback();
             
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...fmt, samplesPerFrame: 128 } as any);
-            // Track this earcon speaker for stopPlayback()
+            const speaker = new Speaker({ ...format, samplesPerFrame: 128 } as any);
             currentSpeaker = speaker;
+            
+            log(`[playEarcon] Speaker created successfully for "${token}"`);
+            
+            speaker.on('close', () => {
+                log(`[playEarcon] Speaker closed for "${token}"`);
+                resolve();
+            });
             speaker.on('error', (err) => {
-                log(`[playEarcon] Speaker error: ${err.stack || err}`);
+                log(`[playEarcon] Speaker error for "${token}": ${err}`);
                 // Fallback to external player
                 let cmd: string, args: string[];
                 if (process.platform === 'darwin') {
                     cmd = 'afplay'; args = [file];
                 } else if (process.platform === 'win32') {
                     cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
-                } else if (process.platform === 'linux') {
-                    cmd = 'aplay'; args = [file];
                 } else {
-                    cmd = 'aplay'; args = [file];
+                    cmd = 'play'; args = [file];
                 }
                 const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
                 currentFallback = cp;
                 cp.on('close', () => resolve());
             });
-            speaker.on('close', () => resolve());
+            
+            log(`[playEarcon] Writing PCM data to speaker for "${token}": ${finalPcm.length} bytes`);
             speaker.write(finalPcm);
             speaker.end();
-        } catch (err: any) {
-            log(`[playEarcon] Exception: ${err.stack || err}`);
-            // Fallback external
-            let cmd: string, args: string[];
-            if (process.platform === 'darwin') {
-                cmd = 'afplay'; args = [file];
-            } else if (process.platform === 'win32') {
-                cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
-            } else if (process.platform === 'linux') {
-                cmd = 'aplay'; args = [file];
-            } else {
-                cmd = 'aplay'; args = [file];
-            }
-            const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-            currentFallback = cp;
-            cp.on('close', () => resolve());
+            log(`[playEarcon] PCM data written and speaker ended for "${token}"`);
+        } catch (err) {
+            log(`[playEarcon] Exception in Speaker creation for "${token}": ${err}`);
+            reject(err);
         }
     });
 }

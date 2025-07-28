@@ -32,6 +32,7 @@ import { registerVibeCodingCommands } from './features/vibe_coding';
 import { registerToggleASR } from './features/toggle_asr';
 import { registerPushToTalkASR } from './features/push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
+import { serverManager } from './server_manager';
 
 // Memory monitoring
 let memoryMonitorInterval: NodeJS.Timeout | null = null;
@@ -57,7 +58,14 @@ function startMemoryMonitoring(): void {
             logWarning(`[Memory] High memory usage detected (${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB), triggering cleanup`);
             try {
                 const { cleanupAudioResources } = require('./audio');
-                cleanupAudioResources();
+                const { getLineTokenReadingActive } = require('./features/stop_reading');
+                
+                // Don't interrupt line token reading for memory cleanup
+                if (getLineTokenReadingActive()) {
+                    logWarning(`[Memory] Skipping cleanup during line token reading to avoid interruption`);
+                } else {
+                    cleanupAudioResources();
+                }
             } catch (err) {
                 logError(`Failed to cleanup during high memory usage: ${err}`);
             }
@@ -92,7 +100,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
 
-	// 2) TTS setup ───────────────────────────────────────────────────────────────────────
+	// 2) Start TTS and ASR servers ──────────────────────────────────────────────────────
+	try {
+		await serverManager.startServers();
+		logSuccess('✅ All servers started successfully');
+	} catch (error) {
+		logError(`❌ Failed to start servers: ${error}`);
+		vscode.window.showErrorMessage(`Failed to start lipcoder servers: ${error}`);
+		// Continue anyway - some features may still work without servers
+	}
+
+	// 3) TTS setup ───────────────────────────────────────────────────────────────────────
 	await loadDictionaryWord();
 	setBackend(TTSBackend.Silero);
 
@@ -100,7 +118,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	preloadEverything(context);
 
 	// 4) Build the unified audioMap ─────────────────────────────────────────────
+	console.log('[EXTENSION] About to create audioMap...');
 	const audioMap = createAudioMap(context);
+	console.log('[EXTENSION] AudioMap created, underscore path:', audioMap['_']);
 
 	// 5) Start LanguageClient ──────────────────────────────────────────────────
 	const client = startLanguageClient(context);
@@ -132,7 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 }
 
-export function deactivate() {
+export async function deactivate() {
 	logWarning("🔄 lipcoder deactivate starting...");
 	
 	// Create a force exit timeout as absolute last resort
@@ -148,8 +168,16 @@ export function deactivate() {
 	}, 8000); // 8 second timeout
 	
 	try {
-		// Stop memory monitoring first
-		stopMemoryMonitoring();
+			// Stop memory monitoring first
+	stopMemoryMonitoring();
+	
+	// Stop all servers
+	try {
+		await serverManager.stopServers();
+		logSuccess('✅ All servers stopped');
+	} catch (error) {
+		logError(`❌ Failed to stop servers: ${error}`);
+	}
 		
 		// Dispose all VS Code subscriptions immediately
 		try {

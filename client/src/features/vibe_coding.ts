@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { speakToken } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 import { log } from '../utils';
 import * as Diff from 'diff';
 
@@ -29,7 +29,7 @@ interface ContextInfo {
 export async function activateVibeCoding() {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-        await speakToken('No active editor');
+        await speakTokenList([{ tokens: ['No active editor'], category: undefined }]);
         return;
     }
 
@@ -45,18 +45,18 @@ export async function activateVibeCoding() {
     });
 
     if (!instruction) {
-        await speakToken('No instruction provided');
+        await speakTokenList([{ tokens: ['No instruction provided'], category: undefined }]);
         return;
     }
 
-    await speakToken('Processing vibe coding request');
+    await speakTokenList([{ tokens: ['Processing vibe coding request'], category: undefined }]);
     
     try {
         const result = await processVibeCodingRequest(editor, instruction, context);
         await displayVibeCodingResults(result);
     } catch (error) {
         log(`[vibe_coding] Error: ${error}`);
-        await speakToken('Error processing vibe coding request');
+        await speakTokenList([{ tokens: ['Error processing vibe coding request'], category: undefined }]);
         vscode.window.showErrorMessage(`Vibe Coding Error: ${error}`);
     }
 }
@@ -632,7 +632,7 @@ async function displayVibeCodingResults(result: VibeCodingResult) {
     const { changes, summary, totalAdded, totalRemoved } = result;
     
     if (changes.length === 0) {
-        await speakToken('No changes were made');
+        await speakTokenList([{ tokens: ['No changes were made'], category: undefined }]);
         vscode.window.showInformationMessage('No changes were made to the code.');
         return;
     }
@@ -646,9 +646,9 @@ async function displayVibeCodingResults(result: VibeCodingResult) {
     
     if (action === 'Apply Changes') {
         await applyCodeChanges(result);
-        await speakToken(`Applied ${totalAdded} additions and ${totalRemoved} removals`);
+        await speakTokenList([{ tokens: [`Applied ${totalAdded} additions and ${totalRemoved} removals`], category: undefined }]);
     } else {
-        await speakToken('Changes cancelled');
+        await speakTokenList([{ tokens: ['Changes cancelled'], category: undefined }]);
     }
 }
 

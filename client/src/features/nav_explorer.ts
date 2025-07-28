@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { stopReading } from './stop_reading';
-import { stopPlayback, speakToken } from '../audio';
+import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
 
 export function registerNavExplorer(context: vscode.ExtensionContext) {
     context.subscriptions.push(
@@ -18,9 +18,9 @@ export function registerNavExplorer(context: vscode.ExtensionContext) {
                 isDir = stat.isDirectory();
             } catch { }
             if (isDir) {
-                await speakToken(name, 'folder');
+                await speakTokenList([{ tokens: [name], category: 'folder' }]);
             } else {
-                await speakToken(name);
+                await speakTokenList([{ tokens: [name], category: undefined }]);
             }
         }),
         vscode.commands.registerCommand('lipcoder.explorerDown', async () => {
@@ -35,9 +35,9 @@ export function registerNavExplorer(context: vscode.ExtensionContext) {
                 isDir = stat.isDirectory();
             } catch { }
             if (isDir) {
-                await speakToken(name, 'folder');
+                await speakTokenList([{ tokens: [name], category: 'folder' }]);
             } else {
-                await speakToken(name);
+                await speakTokenList([{ tokens: [name], category: undefined }]);
             }
         })
     );

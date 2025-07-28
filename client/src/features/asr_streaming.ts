@@ -31,7 +31,7 @@ export function registerASRStreaming(context: vscode.ExtensionContext) {
                 asrClient = new ASRClient({
                     chunkDuration: 2000, // 2 seconds per chunk
                     sampleRate: 16000,
-                    serverUrl: 'http://localhost:5005/asr',
+            
                     onTranscription: (chunk: ASRChunk) => {
                         const timestamp = new Date(chunk.timestamp).toLocaleTimeString();
                         const message = `[${timestamp}] ${chunk.text}`;

@@ -1,5 +1,7 @@
-import { config } from './config';
+import * as fs from 'fs';
 import * as path from 'path';
+import { config } from './config';
+import { SPECIAL_CHAR_FILES } from './mapping';
 
 
 // ── Preload Earcons into Memory ──────────────────────────────────────────────
@@ -33,17 +35,27 @@ export function getTokenSound(token: string): string | null {
         return path.join(config.audioPath(), 'earcon', file);
     }
     const map: Record<string, string> = {
+        // Brackets and parentheses
         '{': 'brace.pcm', '}': 'brace2.pcm',
         '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
         '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
         '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
+        // Punctuation
         ',': 'comma.pcm', ';': 'semicolon.pcm',
-        '/': 'slash.pcm', // '_': 'underbar.pcm',
+        '/': 'slash.pcm', '_': 'underbar.pcm',
         '.': 'dot.pcm', ':': 'colon.pcm', '-': 'bar.pcm',
     };
+    
+    // Check earcon folder first
     if (map[token]) {
         return path.join(config.audioPath(), 'earcon', map[token]);
     }
+    
+    // Check special folder using the imported mapping
+    if (SPECIAL_CHAR_FILES[token]) {
+        return path.join(config.audioPath(), 'special', SPECIAL_CHAR_FILES[token]);
+    }
+    
     return null;
 }
 export namespace getTokenSound {

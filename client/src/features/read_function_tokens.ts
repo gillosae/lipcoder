@@ -3,6 +3,20 @@ import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { log } from '../utils';
 import { stopPlayback, speakTokenList } from '../audio';
+import { config } from '../config';
+
+// Helper function to calculate panning based on column position
+function calculatePanning(column: number): number {
+    if (!config.globalPanningEnabled) {
+        return 0; // No panning if disabled
+    }
+    
+    // Map column 0-120 to panning -1.0 to +1.0
+    // Columns beyond 120 will be clamped to +1.0
+    const maxColumn = 120;
+    const normalizedColumn = Math.min(column, maxColumn) / maxColumn;
+    return (normalizedColumn * 2) - 1; // Convert 0-1 to -1 to +1
+}
 
 export function registerReadFunctionTokens(
     context: ExtensionContext,
@@ -21,6 +35,10 @@ export function registerReadFunctionTokens(
 
                 const uri = editor.document.uri.toString();
                 const position = editor.selection.active;
+                
+                // Calculate panning based on cursor column position
+                const panning = calculatePanning(position.character);
+                
                 log(`[readFunctionTokens] invoked for ${uri} at line ${position.line}, char ${position.character}`);
 
                 // Request tokens for the current function from the LSP
@@ -33,10 +51,10 @@ export function registerReadFunctionTokens(
                 }
                 log(`[readFunctionTokens] received ${tokData.length} tokens`);
 
-                // Speak each token in sequence
+                // Speak each token in sequence with panning
                 for (const { text, category } of tokData) {
                     if (text.trim() === '') continue;
-                    await speakTokenList([{ tokens: [text], category }]);
+                    await speakTokenList([{ tokens: [text], category, panning }]);
                 }
             } catch (err: any) {
                 console.error('readFunctionTokens error:', err);

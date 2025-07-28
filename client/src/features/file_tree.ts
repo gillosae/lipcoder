@@ -2,7 +2,7 @@
 
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { playWave, speakToken } from '../audio';
+import { playWave, speakTokenList, TokenChunk } from '../audio';
 import { config } from '../config';
 import * as path from 'path';
 
@@ -72,7 +72,7 @@ export function registerFileTree(context: ExtensionContext) {
             printTree(tree);
 
             // 2) Speak file tree
-            await speakToken('file tree');
+            await speakTokenList([{ tokens: ['file tree'], category: undefined }]);
             const MAX_INDENT_UNITS = 5;
             async function walkSpeak(nodes: FileNode[], depth = 0) {
                 for (const node of nodes) {
@@ -82,13 +82,15 @@ export function registerFileTree(context: ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const file = path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`);
                     await playWave(file, { isEarcon: true, immediate: true });
+                    
+                    // Speak the file/folder name using speakTokenList
                     if (node.isDirectory) {
-                        await speakToken(node.name, 'folder');
+                        await speakTokenList([{ tokens: [node.name], category: 'folder' }], controller.signal);
                         if (node.children) {
                             await walkSpeak(node.children, depth + 1);
                         }
                     } else {
-                        await speakToken(node.name);
+                        await speakTokenList([{ tokens: [node.name], category: undefined }], controller.signal);
                     }
                 }
             }

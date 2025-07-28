@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { speakToken } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 import { lipcoderLog } from '../logger';
 import * as cp from 'child_process';
 import { installDependencies } from '../install_dependencies';
@@ -34,7 +34,7 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                         await editor.document.save();
                         await vscode.commands.executeCommand('workbench.action.files.revert');
                         vscode.window.showInformationMessage('Document formatted with Black');
-                        await speakToken("Document formatted with Black");
+                        await speakTokenList([{ tokens: ["Document formatted with Black"], category: undefined }]);
                         return;
                     } catch (err: any) {
                         console.error('Error running Black:', err);
@@ -65,7 +65,7 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                         await editor.document.save();
                         await vscode.commands.executeCommand('workbench.action.files.revert');
                         vscode.window.showInformationMessage('Document formatted with Prettier');
-                        await speakToken("Document formatted with Prettier");
+                        await speakTokenList([{ tokens: ["Document formatted with Prettier"], category: undefined }]);
                         return;
                     } catch (err) {
                         console.error('Error running Prettier:', err);
@@ -91,10 +91,10 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                     await vscode.workspace.applyEdit(workspaceEdit);
                     await editor.document.save();
                     vscode.window.showInformationMessage('Document formatted');
-                    await speakToken("Document formatted");
+                    await speakTokenList([{ tokens: ["Document formatted"], category: undefined }]);
                 } else {
                     vscode.window.showInformationMessage('Nothing to format');
-                    await speakToken("Nothing to format");
+                    await speakTokenList([{ tokens: ["Nothing to format"], category: undefined }]);
                 }
             } catch (err: any) {
                 if (err.name === 'Canceled') {

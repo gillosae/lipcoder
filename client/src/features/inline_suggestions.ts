@@ -3,8 +3,8 @@ import * as path from 'path';
 
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
-import { stopPlayback, playWave, speakToken, playEarcon } from '../audio';
-import { stopReading } from './stop_reading';
+import { stopPlayback, playWave, speakTokenList, TokenChunk, playEarcon } from '../audio';
+import { stopReading, getLineTokenReadingActive } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
 
@@ -37,6 +37,12 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             clearTimeout(idleTimer);
         }
         idleTimer = setTimeout(() => {
+            // Don't trigger suggestions if line token reading is active
+            if (getLineTokenReadingActive()) {
+                log(`[InlineSuggestions] Skipping idle trigger during line token reading`);
+                return;
+            }
+            
             if (!suggestionInvoked) {
                 vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
                 suggestionInvoked = true;
@@ -48,6 +54,12 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
     const provider: InlineCompletionItemProvider = {
         async provideInlineCompletionItems(document, position, context: InlineCompletionContext) {
+            // Don't run inline suggestions during line token reading
+            if (getLineTokenReadingActive()) {
+                log(`[InlineSuggestions] Skipping suggestion generation during line token reading`);
+                return { items: [] };
+            }
+            
             // Only allow after manual invoke or our idle trigger
             if (!suggestionInvoked && context.triggerKind !== InlineCompletionTriggerKind.Invoke) {
                 return { items: [] };
@@ -92,12 +104,17 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             const newText = prefix + suggestion;
             const start = new vscode.Position(position.line, 0);
             const end = document.lineAt(position.line).range.end;
-            const item = new InlineCompletionItem(newText);
+            const item = new InlineCompletionItem(
+                newText,
+                new vscode.Range(start, end)
+            );
             item.range = new vscode.Range(start, end);
 
             console.log('audioPath →', config.audioPath());
             // Play visual alert earcon using config.audioPath()
             const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.pcm');
+            
+            // This should not run during line token reading anymore
             stopReading();
             playWave(alertWav, { immediate: true }).catch(console.error);
 
@@ -116,9 +133,14 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.handleSuggestionKey', async () => {
             if (!lastSuggestion) return;
-            stopReading();
+            
+            // Only stop reading if line token reading is not currently active
+            if (!getLineTokenReadingActive()) {
+                stopReading();
+            }
+            
             if (!lastSuggestion.read) {
-                await speakToken(lastSuggestion.suggestion);
+                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }]);
                 lastSuggestion.read = true;
             } else {
                 const editor = vscode.window.activeTextEditor;
@@ -151,9 +173,13 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 !lastSuggestion.read
             ) {
                 // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
-                stopReading();
-                playEarcon('client/audio/alert/suggestion.pcm');
-                await speakToken(lastSuggestion.suggestion);
+                // Only stop reading if line token reading is not currently active
+                if (!getLineTokenReadingActive()) {
+                    stopReading();
+                }
+                
+                playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert
+                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }]);
                 markSuggestionRead();
             } else {
                 // Second Shift+Enter: accept suggestion
@@ -165,23 +191,13 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.rejectSuggestion', async () => {
             const editor = vscode.window.activeTextEditor;
-            if (
-                editor &&
-                lastSuggestion &&
-                editor.selection.active.line === lastSuggestion.line
-            ) {
-                // Reject current suggestion
+            if (editor && lastSuggestion && editor.selection.active.line === lastSuggestion.line) {
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
                 clearLastSuggestion();
-                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
-            } else {
-                // Fallback: hide any suggestion
-                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             }
         })
     );
 
-    // Register cleanup disposal
-    context.subscriptions.push({
-        dispose: cleanupInlineSuggestions
-    });
+    // Register context cleanup  
+    context.subscriptions.push({ dispose: cleanupInlineSuggestions });
 }

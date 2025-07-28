@@ -4,7 +4,7 @@ import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { stopPlayback, speakToken } from '../audio';
+import { stopPlayback, speakTokenList, TokenChunk } from '../audio';
 
 export function registerBreadcrumb(
     context: ExtensionContext,
@@ -48,7 +48,7 @@ export function registerBreadcrumb(
                 ? `You are in ${relativePath} ${pathItems[0].label}`
                 : `You are in ${relativePath}`;
             stopReading();
-            await speakToken(message);
+            await speakTokenList([{ tokens: [message], category: undefined }]);
             if (pathItems.length === 0) {
                 vscode.window.showInformationMessage(message);
                 return;
@@ -70,7 +70,7 @@ export function registerBreadcrumb(
                     const p = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(p, p);
                     editor.revealRange(new vscode.Range(p, p));
-                    speakToken(label);
+                    speakTokenList([{ tokens: [label], category: undefined }]);
                 }
             });
             quickPick.onDidAccept(() => {
@@ -78,7 +78,7 @@ export function registerBreadcrumb(
                 const sel = quickPick.activeItems[0];
                 if (sel) {
                     stopReading();
-                    speakToken(`moved to ${sel.label} line ${sel.line + 1}`);
+                    speakTokenList([{ tokens: [`moved to ${sel.label} line ${sel.line + 1}`], category: undefined }]);
                 }
                 quickPick.hide();
             });
@@ -90,7 +90,7 @@ export function registerBreadcrumb(
                         editor.selection = originalSelection;
                         editor.revealRange(new vscode.Range(pos0, pos0));
                         stopReading();
-                        speakToken(`back to line ${pos0.line + 1}`);
+                        speakTokenList([{ tokens: [`back to line ${pos0.line + 1}`], category: undefined }]);
                     }
                     quickPick.dispose();
                 }

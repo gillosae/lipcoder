@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakToken, speakTokenList } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 import { stopReading } from './stop_reading';
 import { stopPlayback } from '../audio';
 import { logWarning, logError, logSuccess } from '../utils';
@@ -107,10 +107,12 @@ export function registerTerminalReader(context: ExtensionContext) {
                     stopPlayback();
                     // Write into the PTY (handles erase/backspace)
                     ptyProcess.write(input);
-                    // Echo each character spoken
-                    for (const ch of input) {
-                        speakToken(ch);
-                    }
+                    // Echo each character spoken using speakTokenList
+                    const chunks: TokenChunk[] = input.split('').map(ch => ({
+                        tokens: [ch],
+                        category: undefined
+                    }));
+                    speakTokenList(chunks);
                 }
             };
 
@@ -146,7 +148,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.max(currentCharIndex - 1, 0);
             const ch = line.charAt(currentCharIndex);
-            if (ch) await speakToken(ch);
+            if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
         }),
 
         // Move cursor right within current line buffer and speak character
@@ -156,7 +158,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
             const ch = line.charAt(currentCharIndex);
-            if (ch) await speakToken(ch);
+            if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
         })
     );
     

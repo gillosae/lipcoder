@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { log } from '../utils';
 import { LanguageClient } from 'vscode-languageclient/node';
 import type { SymbolInformation } from 'vscode-languageserver-types';
-import { speakToken } from '../audio';
+import { speakTokenList, TokenChunk } from '../audio';
 
 export function registerWhereAmI(context: ExtensionContext, client: LanguageClient) {
     context.subscriptions.push(
@@ -44,7 +44,7 @@ export function registerWhereAmI(context: ExtensionContext, client: LanguageClie
 
                 if (containing.length === 0) {
                     vscode.window.showInformationMessage('Outside of any symbol.');
-                    await speakToken('You are outside of any symbol.');
+                    await speakTokenList([{ tokens: ['You are outside of any symbol.'], category: undefined }]);
                 } else {
                     const symbol = containing[0];
                     const container = symbol.containerName
@@ -52,7 +52,7 @@ export function registerWhereAmI(context: ExtensionContext, client: LanguageClie
                         : '';
                     const msg = `${container}${symbol.name}`;
                     vscode.window.showInformationMessage(`You are in: ${msg}`);
-                    await speakToken(`You are in ${msg}`);
+                    await speakTokenList([{ tokens: [`You are in ${msg}`], category: undefined }]);
                 }
             } catch (err) {
                 vscode.window.showErrorMessage(`whereAmI failed: ${err}`);

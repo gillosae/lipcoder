@@ -16,37 +16,27 @@ const PUNCTUATION_FILES: Record<string, string> = {
     "'": 'quote.pcm', '"': 'bigquote.pcm',
 };
 
-const SPECIAL_TOKENS: Record<string, string> = {
-    ampersand: 'ampersand.pcm', asterisk: 'asterisk.pcm',
-    at: 'at.pcm', backslash: 'backslash.pcm',
-    backtick: 'backtick.pcm', bar: 'bar.pcm',
-    caret: 'caret.pcm', comma: 'comma.pcm',
-    dollar: 'dollar.pcm', //dot: 'dot.pcm', 
-    equals: 'equals.pcm', excitation: 'excitation.pcm',
-    percent: 'percent.pcm', plus: 'plus.pcm',
-    question: 'question.pcm', sharp: 'sharp.pcm',
-    tilde: 'tilde.pcm', underbar: 'underbar.pcm',
-    won: 'won.pcm',
+export const SPECIAL_CHAR_FILES: Record<string, string> = {
+    '!': 'excitation.pcm', '@': 'at.pcm', '#': 'sharp.pcm', '$': 'dollar.pcm',
+    '%': 'percent.pcm', '^': 'caret.pcm', '&': 'ampersand.pcm', '*': 'asterisk.pcm',
+    '+': 'plus.pcm', '~': 'tilde.pcm', '|': 'bar.pcm', '?': 'question.pcm',
+    '₩': 'won.pcm', '=': 'equals.pcm', '`': 'backtick.pcm', '\\': 'backslash.pcm',
 };
 
-// “fallback” spoken names for any single‐char not on disk
+
+// "fallback" spoken names for chars that need TTS (not direct PCM mappings)
 export const specialCharMap: Record<string, string> = {
-    // punctuation → word
-    '!': 'excitation', '@': 'at', '#': 'sharp', '$': 'dollar',
-    '%': 'percent', '^': 'caret', '&': 'ampersand', '*': 'asterisk',
-    '+': 'plus', '~': 'tilde', '|': 'bar', '?': 'question',
-    '₩': 'won', '=': 'equals', '`': 'backtick', '\\': 'backslash',
-    '.': 'dot',  // ← add this line
-    ',': 'comma', '_': 'underbar',
-    // digits → word
+    // digits → word (for spelling out numbers)
     '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
     '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
-    // letters → name
+    // letters → name (for spelling out letters)
     a: 'ay', b: 'bee', c: 'see', d: 'dee', e: 'ee', f: 'eff',
     g: 'gee', h: 'aitch', i: 'eye', j: 'jay', k: 'kay', l: 'el',
     m: 'em', n: 'en', o: 'oh', p: 'pee', q: 'cue', r: 'ar',
     s: 'ess', t: 'tee', u: 'you', v: 'vee', w: 'double you',
     x: 'ex', y: 'why', z: 'zee',
+    // characters without direct PCM files
+    '.': 'dot', ',': 'comma',
 };
 
 // Converts numbers 0–3000 to English words
@@ -123,30 +113,34 @@ export function createAudioMap(ctx: ExtensionContext): Record<string, string> {
     const ALPHABET_DIR = path.join(BASE, 'alphabet');
     const SPECIAL_DIR = path.join(BASE, 'special');
 
-    return {
+    const audioMap = {
         // 1) on‐disk single‐char WAVs
         ...mapFiles(PUNCTUATION_FILES, EARCON_DIR),
         ...rangeMap(0, 9, NUMBER_DIR),
         ...alphabetMap(ALPHABET_DIR),
         ' ': path.join(EARCON_DIR, 'space.pcm'),
-        '_': path.join(SPECIAL_DIR, 'underbar.pcm'),
-        ...mapFiles(SPECIAL_TOKENS, SPECIAL_DIR)
+        ...mapFiles(SPECIAL_CHAR_FILES, SPECIAL_DIR)
     };
+    
+    // Debug logging for underscore
+    console.log(`[createAudioMap] underscore mapped to: ${(audioMap as any)['_'] || 'undefined'}`);
+    
+    return audioMap;
 }
 
 export function isEarcon(ch: string): boolean {
-    // Single-char earcons include both punctuation and special‐token mappings
+    // Single-char earcons include both punctuation and special‐char mappings
     return (
         ch.length === 1
         && (
             PUNCTUATION_FILES[ch] !== undefined
-            || specialCharMap[ch] !== undefined
+            || SPECIAL_CHAR_FILES[ch] !== undefined
         )
     );
 }
 
 export function isSpecial(ch: string): boolean {
-    return ch.length === 1 && specialCharMap[ch] !== undefined;
+    return ch.length === 1 && SPECIAL_CHAR_FILES[ch] !== undefined;
 }
 
 export function isAlphabet(token: string): boolean {
