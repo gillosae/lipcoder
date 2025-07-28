@@ -205,9 +205,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: Report bugs on [GitHub Issues](https://github.com/your-repo/lipcoder/issues)
-- **Discussions**: Join conversations on [GitHub Discussions](https://github.com/your-repo/lipcoder/discussions)
-- **Email**: support@lipcoder.dev
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/gillosae/lipcoder/issues)
+- **Discussions**: Join conversations on [GitHub Discussions](https://github.com/gillosae/lipcoder/discussions)
+- **Email**: hyway@snu.ac.kr
 
 ---
 
