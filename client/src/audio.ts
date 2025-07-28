@@ -18,6 +18,102 @@ export { genTokenAudio, playSpecial } from './tts';
 export { playEarcon, earconRaw } from './earcon';
 
 // ===============================
+// PITCH-PRESERVING TIME STRETCHING
+// ===============================
+
+/**
+ * Apply pitch-preserving time stretching to an audio file using FFmpeg
+ * Returns path to the processed file (cached for efficiency)
+ */
+async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed: number): Promise<string> {
+    // Skip processing if playspeed is 1.0 (no change needed)
+    if (Math.abs(playSpeed - 1.0) < 0.01) {
+        return inputFilePath;
+    }
+    
+    // Generate cache key based on file and playspeed
+    const inputBasename = path.basename(inputFilePath, path.extname(inputFilePath));
+    const speedKey = playSpeed.toFixed(3).replace('.', '_');
+    const outputFileName = `${inputBasename}_speed${speedKey}.wav`;
+    const outputFilePath = path.join(os.tmpdir(), 'lipcoder_timestretch', outputFileName);
+    
+    // Create cache directory if it doesn't exist
+    const cacheDir = path.dirname(outputFilePath);
+    if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    
+    // Return cached file if it exists and is newer than input
+    if (fs.existsSync(outputFilePath)) {
+        const inputStat = fs.statSync(inputFilePath);
+        const outputStat = fs.statSync(outputFilePath);
+        if (outputStat.mtime > inputStat.mtime) {
+            log(`[timeStretch] Using cached time-stretched file: ${outputFileName}`);
+            return outputFilePath;
+        }
+    }
+    
+    log(`[timeStretch] Applying ${playSpeed}x time stretch with pitch preservation to: ${path.basename(inputFilePath)}`);
+    
+    return new Promise((resolve, reject) => {
+        // FFmpeg command: -af "atempo=speed" preserves pitch while changing tempo
+        // atempo filter has limits (0.5-100.0), so we may need to chain multiple filters for extreme speeds
+        let atempoFilters: string[] = [];
+        let remainingSpeed = playSpeed;
+        
+        // Chain atempo filters if speed is outside single filter range
+        while (remainingSpeed > 2.0) {
+            atempoFilters.push('atempo=2.0');
+            remainingSpeed /= 2.0;
+        }
+        while (remainingSpeed < 0.5) {
+            atempoFilters.push('atempo=0.5');
+            remainingSpeed /= 0.5;
+        }
+        
+        // Add final adjustment
+        if (Math.abs(remainingSpeed - 1.0) > 0.01) {
+            atempoFilters.push(`atempo=${remainingSpeed.toFixed(6)}`);
+        }
+        
+        const filterChain = atempoFilters.join(',');
+        
+        const ffmpegArgs = [
+            '-i', inputFilePath,
+            '-af', filterChain,
+            '-y', // Overwrite output file
+            outputFilePath
+        ];
+        
+        log(`[timeStretch] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
+        
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs, { 
+            stdio: ['ignore', 'pipe', 'pipe'] // Capture stdout and stderr
+        });
+        
+        let stderr = '';
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+        
+        ffmpeg.on('close', (code) => {
+            if (code === 0) {
+                log(`[timeStretch] Successfully created time-stretched file: ${outputFileName}`);
+                resolve(outputFilePath);
+            } else {
+                logError(`[timeStretch] FFmpeg failed with code ${code}. stderr: ${stderr}`);
+                reject(new Error(`FFmpeg time stretch failed: ${stderr}`));
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            logError(`[timeStretch] FFmpeg spawn error: ${err}`);
+            reject(err);
+        });
+    });
+}
+
+// ===============================
 // AUDIO FORMAT CONSTANTS
 // ===============================
 
@@ -255,6 +351,84 @@ class AudioPlayer {
     private fallbackManager = new FallbackPlayerManager();
 
     async playPcmCached(filePath: string, panning?: number): Promise<void> {
+        // For pitch-preserving PCM playback, convert to WAV and use time stretching
+        if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+            log(`[playPcmCached] Using pitch-preserving time stretching for: ${path.basename(filePath)}`);
+            try {
+                // Load PCM data and convert to temporary WAV
+                const originalEntry = this.cache.loadAndCache(filePath);
+                const pcmData = originalEntry.pcm;
+                const format = originalEntry.format;
+                
+                // Create temporary WAV file for FFmpeg processing
+                const tempWavPath = path.join(os.tmpdir(), `pcm_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+                
+                // Create WAV header for the PCM data
+                const wavHeader = Buffer.alloc(44);
+                wavHeader.write('RIFF', 0);
+                wavHeader.writeUInt32LE(36 + pcmData.length, 4);
+                wavHeader.write('WAVE', 8);
+                wavHeader.write('fmt ', 12);
+                wavHeader.writeUInt32LE(16, 16); // fmt chunk size
+                wavHeader.writeUInt16LE(1, 20);  // PCM format
+                wavHeader.writeUInt16LE(format.channels, 22);
+                wavHeader.writeUInt32LE(format.sampleRate, 24);
+                wavHeader.writeUInt32LE(format.sampleRate * format.channels * (format.bitDepth / 8), 28);
+                wavHeader.writeUInt16LE(format.channels * (format.bitDepth / 8), 32);
+                wavHeader.writeUInt16LE(format.bitDepth, 34);
+                wavHeader.write('data', 36);
+                wavHeader.writeUInt32LE(pcmData.length, 40);
+                
+                const wavData = Buffer.concat([wavHeader, pcmData]);
+                fs.writeFileSync(tempWavPath, wavData);
+                
+                // Use pitch-preserving time stretching
+                const processedFilePath = await applyPitchPreservingTimeStretch(tempWavPath, config.playSpeed);
+                
+                // Play the processed file
+                const processedData = fs.readFileSync(processedFilePath);
+                const parsed = AudioUtils.parseWavFormat(processedData);
+                
+                let finalPcm = parsed.pcm;
+                let finalFormat = parsed.format;
+                
+                // Apply panning if needed
+                if (panning !== undefined && panning !== 0) {
+                    finalPcm = AudioUtils.applyPanning(parsed.pcm, parsed.format, panning);
+                    log(`[playPcmCached] Applied panning ${panning.toFixed(3)} to pitch-preserving audio`);
+                }
+                
+                return new Promise<void>((resolve, reject) => {
+                    this.stopCurrentPlayback();
+                    
+                    // Use original format since time stretching is already applied
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                    this.currentSpeaker = speaker;
+                    
+                    speaker.on('close', () => {
+                        log(`[playPcmCached] Pitch-preserving playback completed: ${path.basename(filePath)}`);
+                        resolve();
+                    });
+                    speaker.on('error', reject);
+                    
+                    log(`[playPcmCached] Writing ${finalPcm.length} bytes (pitch-preserving)`);
+                    speaker.write(finalPcm);
+                    speaker.end();
+                }).finally(() => {
+                    // Clean up temp files
+                    try { fs.unlinkSync(tempWavPath); } catch { }
+                    if (processedFilePath !== tempWavPath) {
+                        try { fs.unlinkSync(processedFilePath); } catch { } // Clean up if not cached
+                    }
+                });
+                
+            } catch (pitchError) {
+                log(`[playPcmCached] Pitch-preserving failed: ${pitchError}, falling back to sample rate adjustment`);
+                // Fall through to original method below
+            }
+        }
+        
+        // Original method with sample rate adjustment (changes pitch)
         // Generate cache key that includes panning for pre-processed PCM
         const baseName = path.basename(filePath, '.pcm');
         const panKey = panning !== undefined && panning !== 0 ? `_pan${panning.toFixed(3)}` : '';
@@ -284,8 +458,15 @@ class AudioPlayer {
         return new Promise<void>((resolve, reject) => {
             this.stopCurrentPlayback();
             
+            // Apply global playspeed to cached PCM playback (changes pitch)
+            const adjustedFormat = { 
+                ...cachedEntry.format, 
+                sampleRate: Math.floor(cachedEntry.format.sampleRate * config.playSpeed) 
+            };
+            log(`[playPcmCached] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
+            
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...cachedEntry.format, samplesPerFrame: 128 } as any);
+            const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 128 } as any);
             this.currentSpeaker = speaker;
             
             speaker.on('close', resolve);
@@ -737,6 +918,65 @@ class AudioPlayer {
     async playTtsAsPcm(wavFilePath: string, panning?: number): Promise<void> {
         log(`[playTtsAsPcm] SIMPLE FAST TTS playback: ${path.basename(wavFilePath)}, panning: ${panning}`);
         
+        // Use pitch-preserving time stretching if enabled and playspeed != 1.0
+        if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+            try {
+                log(`[playTtsAsPcm] Using pitch-preserving time stretching for playspeed ${config.playSpeed}x`);
+                const processedFilePath = await applyPitchPreservingTimeStretch(wavFilePath, config.playSpeed);
+                
+                // Play the time-stretched file at normal rate since tempo is already adjusted
+                const wavData = fs.readFileSync(processedFilePath);
+                const parsed = AudioUtils.parseWavFormat(wavData);
+                
+                let finalPcm = parsed.pcm;
+                let finalFormat = parsed.format; // Use original format since time stretching is already applied
+                
+                // Apply panning if needed
+                if (panning !== undefined && panning !== 0) {
+                    if (parsed.format.channels === 1) {
+                        // Convert mono to stereo first
+                        const stereoPcm = Buffer.alloc(parsed.pcm.length * 2);
+                        for (let i = 0; i < parsed.pcm.length; i += 2) {
+                            const sample = parsed.pcm.readInt16LE(i);
+                            stereoPcm.writeInt16LE(sample, i * 2);     // Left
+                            stereoPcm.writeInt16LE(sample, i * 2 + 2); // Right
+                        }
+                        finalFormat = { ...parsed.format, channels: 2 };
+                        finalPcm = stereoPcm;
+                    }
+                    
+                    // Apply panning
+                    finalPcm = AudioUtils.applyPanning(finalPcm, finalFormat, panning);
+                    log(`[playTtsAsPcm] Applied panning ${panning.toFixed(3)}`);
+                }
+                
+                log(`[playTtsAsPcm] Using pitch-preserving processed file - no sample rate adjustment needed`);
+                
+                return new Promise<void>((resolve, reject) => {
+                    this.stopCurrentPlayback();
+                    
+                    // @ts-ignore: samplesPerFrame used for low-latency
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                    this.currentSpeaker = speaker;
+                    
+                    speaker.on('close', () => {
+                        log(`[playTtsAsPcm] Pitch-preserving playback completed: ${path.basename(wavFilePath)}`);
+                        resolve();
+                    });
+                    speaker.on('error', reject);
+                    
+                    log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (pitch-preserving)`);
+                    speaker.write(finalPcm);
+                    speaker.end();
+                });
+                
+            } catch (pitchError) {
+                log(`[playTtsAsPcm] Pitch-preserving failed: ${pitchError}, falling back to sample rate adjustment`);
+                // Fall through to original method below
+            }
+        }
+        
+        // Original method with sample rate adjustment (changes pitch)
         try {
             // Read and parse WAV file directly
             const wavData = fs.readFileSync(wavFilePath);
@@ -764,21 +1004,28 @@ class AudioPlayer {
                 log(`[playTtsAsPcm] Applied panning ${panning.toFixed(3)}`);
             }
             
+            // Apply global playspeed to TTS playback (changes pitch)
+            const adjustedFormat = { 
+                ...finalFormat, 
+                sampleRate: Math.floor(finalFormat.sampleRate * config.playSpeed) 
+            };
+            log(`[playTtsAsPcm] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
+            
             // Use the exact same simple approach as playPcmCached
             return new Promise<void>((resolve, reject) => {
                 this.stopCurrentPlayback();
                 
                 // @ts-ignore: samplesPerFrame used for low-latency
-                const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 128 } as any);
+                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 128 } as any);
                 this.currentSpeaker = speaker;
                 
                 speaker.on('close', () => {
-                    log(`[playTtsAsPcm] SIMPLE playback completed: ${path.basename(wavFilePath)}`);
+                    log(`[playTtsAsPcm] Sample rate adjustment playback completed: ${path.basename(wavFilePath)}`);
                     resolve();
                 });
                 speaker.on('error', reject);
                 
-                log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to new speaker`);
+                log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (sample rate adjustment)`);
                 speaker.write(finalPcm);
                 speaker.end();
             });
@@ -1121,7 +1368,32 @@ export function playWave(
     filePath: string,
     opts?: { isEarcon?: boolean; rate?: number; immediate?: boolean; panning?: number }
 ): Promise<void> {
-    return audioPlayer.playWavFile(filePath, opts);
+    // Apply global playspeed if no specific rate is provided
+    const effectiveRate = opts?.rate ?? config.playSpeed;
+    
+    // Use pitch-preserving time stretching if enabled and rate != 1.0
+    if (config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) {
+        return applyPitchPreservingTimeStretch(filePath, effectiveRate)
+            .then(processedFilePath => {
+                // Play the time-stretched file at normal rate (1.0) since tempo is already adjusted
+                return audioPlayer.playWavFile(processedFilePath, {
+                    ...opts,
+                    rate: 1.0 // Don't apply rate again - it's already in the processed file
+                });
+            })
+            .catch(error => {
+                log(`[playWave] Pitch-preserving time stretch failed: ${error}, falling back to sample rate adjustment`);
+                // Fallback to original method if FFmpeg fails
+                return audioPlayer.playWavFile(filePath, { ...opts, rate: effectiveRate });
+            });
+    }
+    
+    // Use original sample rate adjustment method
+    const effectiveOpts = {
+        ...opts,
+        rate: effectiveRate
+    };
+    return audioPlayer.playWavFile(filePath, effectiveOpts);
 }
 
 export function generateTone(duration = 200, freq = 440): Promise<void> {

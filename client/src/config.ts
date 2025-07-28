@@ -53,7 +53,8 @@ export function setBackend(backend: TTSBackend, partial?: Partial<SileroConfig>)
 // Path and Etc Config ─────────────────────────────────────────────────────
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
-    playSpeed: 1.4,              // playback speed multiplier
+    playSpeed: 1.4,              // playback speed multiplier - now supports pitch preservation!
+    preservePitch: true,         // use pitch-preserving time stretching (requires FFmpeg)
     panningEnabled: true,        // enable positional panning for tokens (legacy)
     globalPanningEnabled: true,  // enable global panning system for ALL audio
 
@@ -68,6 +69,7 @@ export const config = {
 } as {
     typingSpeechEnabled: boolean;
     playSpeed: number;
+    preservePitch: boolean;
     panningEnabled: boolean;
     globalPanningEnabled: boolean;
 

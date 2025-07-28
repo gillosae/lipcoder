@@ -169,6 +169,36 @@
         "command": "lipcoder.openPushToTalkTestPage",
         "title": "Open Push-to-Talk Test Page",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.setPlaySpeed",
+        "title": "Set Playback Speed",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedSlow",
+        "title": "Set Playback Speed: Slow (0.8×)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedNormal",
+        "title": "Set Playback Speed: Normal (1.0×)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedFast",
+        "title": "Set Playback Speed: Fast (1.5×)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedVeryFast",
+        "title": "Set Playback Speed: Very Fast (2.0×)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.togglePitchPreservation",
+        "title": "Toggle Pitch Preservation",
+        "category": "LipCoder"
       }
     ]
   },

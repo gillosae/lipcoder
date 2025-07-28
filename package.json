@@ -150,6 +150,34 @@
         "command": "lipcoder.testASRServer",
         "title": "Test ASR Server",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.openPushToTalkTestPage",
+        "title": "LipCoder: Open Push-to-Talk Test Page"
+      },
+      {
+        "command": "lipcoder.setPlaySpeed",
+        "title": "LipCoder: Set Playback Speed"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedSlow",
+        "title": "LipCoder: Set Playback Speed - Slow (0.8×)"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedNormal",
+        "title": "LipCoder: Set Playback Speed - Normal (1.0×)"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedFast",
+        "title": "LipCoder: Set Playback Speed - Fast (1.5×)"
+      },
+      {
+        "command": "lipcoder.setPlaySpeedVeryFast",
+        "title": "LipCoder: Set Playback Speed - Very Fast (2.0×)"
+      },
+      {
+        "command": "lipcoder.togglePitchPreservation",
+        "title": "LipCoder: Toggle Pitch Preservation"
       }
     ],
     "keybindings": [

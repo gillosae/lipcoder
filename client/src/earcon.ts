@@ -6,6 +6,7 @@ import { getTokenSound } from './tokens';
 import { log, logWarning, logMemory } from './utils';
 import { config } from './config';
 import { isEarcon, specialCharMap } from './mapping';
+import * as os from 'os';
 
 // Standard PCM format for earcon playback  
 // NOTE: earcon/*.pcm files are now converted to stereo 24kHz format
@@ -142,6 +143,72 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         return Promise.resolve();
     }
 
+    // For pitch-preserving earcons, convert PCM to WAV and use time stretching
+    if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+        log(`[playEarcon] Using pitch-preserving time stretching for earcon "${token}"`);
+        
+        // Lazy-load the raw file once with memory management
+        if (!earconRaw[token]) {
+            log(`[playEarcon] Loading earcon file for first time: ${file}`);
+            cleanupEarconCache();
+            
+            try {
+                const data = fs.readFileSync(file);
+                earconRaw[token] = data;
+                earconAccessTimes[token] = Date.now();
+                log(`[playEarcon] Successfully loaded earcon data for "${token}": ${data.length} bytes`);
+            } catch (err) {
+                log(`[playEarcon] Failed to load earcon file ${file}: ${err}`);
+                return Promise.resolve();
+            }
+        } else {
+            log(`[playEarcon] Using cached earcon data for "${token}"`);
+            earconAccessTimes[token] = Date.now();
+        }
+        
+        // Convert PCM to temporary WAV file for FFmpeg processing
+        const tempWavPath = path.join(os.tmpdir(), `earcon_${token}_${Date.now()}.wav`);
+        try {
+            // Create WAV header for the PCM data
+            const pcmData = earconRaw[token];
+            const format = STANDARD_PCM_FORMAT;
+            
+            // Create a simple WAV file with header
+            const wavHeader = Buffer.alloc(44);
+            wavHeader.write('RIFF', 0);
+            wavHeader.writeUInt32LE(36 + pcmData.length, 4);
+            wavHeader.write('WAVE', 8);
+            wavHeader.write('fmt ', 12);
+            wavHeader.writeUInt32LE(16, 16); // fmt chunk size
+            wavHeader.writeUInt16LE(1, 20);  // PCM format
+            wavHeader.writeUInt16LE(format.channels, 22);
+            wavHeader.writeUInt32LE(format.sampleRate, 24);
+            wavHeader.writeUInt32LE(format.sampleRate * format.channels * (format.bitDepth / 8), 28);
+            wavHeader.writeUInt16LE(format.channels * (format.bitDepth / 8), 32);
+            wavHeader.writeUInt16LE(format.bitDepth, 34);
+            wavHeader.write('data', 36);
+            wavHeader.writeUInt32LE(pcmData.length, 40);
+            
+            const wavData = Buffer.concat([wavHeader, pcmData]);
+            fs.writeFileSync(tempWavPath, wavData);
+            
+            // Use the regular playWave function which will handle pitch-preserving time stretching
+            const { playWave } = require('./audio');
+            return playWave(tempWavPath, { isEarcon: true, immediate: true, panning: pan })
+                .finally(() => {
+                    // Clean up temp file
+                    try { fs.unlinkSync(tempWavPath); } catch { }
+                });
+                
+        } catch (err) {
+            log(`[playEarcon] Failed to create temp WAV for pitch preservation: ${err}, falling back to sample rate adjustment`);
+            // Clean up temp file if it was created
+            try { fs.unlinkSync(tempWavPath); } catch { }
+            // Fall through to original method below
+        }
+    }
+
+    // Original method with sample rate adjustment (changes pitch)
     // Lazy-load the raw file once with memory management
     if (!earconRaw[token]) {
         log(`[playEarcon] Loading earcon file for first time: ${file}`);
@@ -165,56 +232,48 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
 
     const format = STANDARD_PCM_FORMAT;
     let finalPcm = earconRaw[token];
-
-    // Apply panning if specified
+    
+    // Pre-apply panning if needed
     if (pan !== undefined && pan !== 0) {
-        log(`[playEarcon] Applied panning ${pan.toFixed(2)} to earcon "${token}"`);
-        finalPcm = applyEarconPanning(finalPcm, format, pan);
+        finalPcm = applyEarconPanning(earconRaw[token], format, pan);
+        log(`[playEarcon] Applied panning ${pan.toFixed(3)} to "${token}"`);
     }
-
-    log(`[playEarcon] About to create Speaker for earcon "${token}"`);
     
     return new Promise<void>((resolve, reject) => {
-        log(`[playEarcon] Creating Speaker instance for "${token}"`);
+        // Stop any current earcon playback
+        stopEarconPlayback();
         
-        try {
-            // Stop any current earcon playback
-            stopEarconPlayback();
-            
-            // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...format, samplesPerFrame: 128 } as any);
-            currentSpeaker = speaker;
-            
-            log(`[playEarcon] Speaker created successfully for "${token}"`);
-            
-            speaker.on('close', () => {
-                log(`[playEarcon] Speaker closed for "${token}"`);
-                resolve();
-            });
-            speaker.on('error', (err) => {
-                log(`[playEarcon] Speaker error for "${token}": ${err}`);
-                // Fallback to external player
-                let cmd: string, args: string[];
-                if (process.platform === 'darwin') {
-                    cmd = 'afplay'; args = [file];
-                } else if (process.platform === 'win32') {
-                    cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
-                } else {
-                    cmd = 'play'; args = [file];
-                }
-                const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
-                currentFallback = cp;
-                cp.on('close', () => resolve());
-            });
-            
-            log(`[playEarcon] Writing PCM data to speaker for "${token}": ${finalPcm.length} bytes`);
-            speaker.write(finalPcm);
-            speaker.end();
-            log(`[playEarcon] PCM data written and speaker ended for "${token}"`);
-        } catch (err) {
-            log(`[playEarcon] Exception in Speaker creation for "${token}": ${err}`);
-            reject(err);
-        }
+        // Apply global playspeed to earcon playback (changes pitch)
+        const adjustedFormat = { ...format, sampleRate: Math.floor(format.sampleRate * config.playSpeed) };
+        log(`[playEarcon] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
+        
+        // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
+        const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 128 } as any);
+        currentSpeaker = speaker;
+        
+        speaker.on('close', () => {
+            log(`[playEarcon] Sample rate adjustment playback completed for token: "${token}"`);
+            resolve();
+        });
+        speaker.on('error', (err) => {
+            log(`[playEarcon] Speaker error for "${token}": ${err}`);
+            // Fallback to external player
+            let cmd: string, args: string[];
+            if (process.platform === 'darwin') {
+                cmd = 'afplay'; args = [file];
+            } else if (process.platform === 'win32') {
+                cmd = 'powershell'; args = ['-c', `(New-Object Media.SoundPlayer '${file}').PlaySync();`];
+            } else {
+                cmd = 'play'; args = [file];
+            }
+            const cp = hookChildErrors(spawn(cmd, args, { stdio: 'ignore' }));
+            currentFallback = cp;
+            cp.on('close', () => resolve());
+        });
+        
+        log(`[playEarcon] Writing ${finalPcm.length} bytes for token: "${token}"`);
+        speaker.write(finalPcm);
+        speaker.end();
     });
 }
 
