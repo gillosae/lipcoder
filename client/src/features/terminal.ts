@@ -62,6 +62,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                 );
                 return;
             }
+            
             // Reset buffers
             terminalLines = [];
             currentLineIndex = -1;
@@ -91,16 +92,24 @@ export function registerTerminalReader(context: ExtensionContext) {
             ptyProcess.onData((data: string) => {
                 writeEmitter.fire(data);
                 
-                // Buffer each non-empty line for navigation
-                const parts = data.split(/\r?\n/);
-                for (const part of parts) {
-                    if (part.trim()) {
-                        terminalLines.push(part);
+                // Simple content extraction - just get clean text lines
+                const lines = data.split(/\r?\n/);
+                for (const line of lines) {
+                    const cleanLine = line.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '').trim();
+                    if (cleanLine && cleanLine.length > 0) {
+                        terminalLines.push(cleanLine);
+                        // Keep only recent lines to prevent memory issues
+                        if (terminalLines.length > 100) {
+                            terminalLines = terminalLines.slice(-50);
+                            currentLineIndex = Math.min(currentLineIndex, terminalLines.length - 1);
+                        }
                     }
                 }
+                
                 currentLineIndex = terminalLines.length - 1;
                 currentCharIndex = 0;
             });
+            
             ptyProcess.onExit(() => {
                 closeEmitter.fire();
             });
@@ -123,9 +132,21 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = 0;
                         const line = terminalLines[currentLineIndex];
                         
-                        // Show navigation status at bottom
-                        const statusLine = `\r\n\u001b[90m[${currentLineIndex + 1}/${terminalLines.length}] ${line}\u001b[0m\r\n`;
-                        writeEmitter.fire(statusLine);
+                        // Move cursor to line position with non-destructive highlighting
+                        const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
+                        const cursorOps = [
+                            '\u001b[s', // Save cursor position
+                            linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
+                            '\u001b[1G', // Go to beginning of line
+                            '\u001b[4m', // Start underline (non-destructive highlight)
+                        ].filter(s => s).join('');
+                        
+                        writeEmitter.fire(cursorOps);
+                        
+                        // Brief pause to show position, then restore
+                        setTimeout(() => {
+                            writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
+                        }, 300);
                         
                         speakTokenList([{ tokens: [line], category: undefined }]);
                         return; // Don't pass to PTY
@@ -139,9 +160,21 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = 0;
                         const line = terminalLines[currentLineIndex];
                         
-                        // Show navigation status at bottom
-                        const statusLine = `\r\n\u001b[90m[${currentLineIndex + 1}/${terminalLines.length}] ${line}\u001b[0m\r\n`;
-                        writeEmitter.fire(statusLine);
+                        // Move cursor to line position with non-destructive highlighting
+                        const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
+                        const cursorOps = [
+                            '\u001b[s', // Save cursor position
+                            linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
+                            '\u001b[1G', // Go to beginning of line
+                            '\u001b[4m', // Start underline (non-destructive highlight)
+                        ].filter(s => s).join('');
+                        
+                        writeEmitter.fire(cursorOps);
+                        
+                        // Brief pause to show position, then restore
+                        setTimeout(() => {
+                            writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
+                        }, 300);
                         
                         speakTokenList([{ tokens: [line], category: undefined }]);
                         return; // Don't pass to PTY
@@ -155,12 +188,23 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = Math.max(currentCharIndex - 1, 0);
                         const ch = line.charAt(currentCharIndex);
                         
-                        // Show character position with context
-                        const beforeChar = line.substring(Math.max(0, currentCharIndex - 10), currentCharIndex);
-                        const afterChar = line.substring(currentCharIndex + 1, Math.min(line.length, currentCharIndex + 11));
-                        const charContext = `${beforeChar}[${ch || ' '}]${afterChar}`;
-                        const statusLine = `\r\n\u001b[90mChar ${currentCharIndex + 1}: ${charContext}\u001b[0m\r\n`;
-                        writeEmitter.fire(statusLine);
+                        // Move cursor to character position with highlighting
+                        if (ch) {
+                            const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
+                            const cursorOps = [
+                                '\u001b[s', // Save cursor position
+                                linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
+                                `\u001b[${currentCharIndex + 1}G`, // Move to character position
+                                '\u001b[7m', // Reverse video highlight for character
+                            ].filter(s => s).join('');
+                            
+                            writeEmitter.fire(cursorOps);
+                            
+                            // Brief pause to show character position, then restore
+                            setTimeout(() => {
+                                writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
+                            }, 300);
+                        }
                         
                         if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
                         return; // Don't pass to PTY
@@ -174,12 +218,23 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
                         const ch = line.charAt(currentCharIndex);
                         
-                        // Show character position with context
-                        const beforeChar = line.substring(Math.max(0, currentCharIndex - 10), currentCharIndex);
-                        const afterChar = line.substring(currentCharIndex + 1, Math.min(line.length, currentCharIndex + 11));
-                        const charContext = `${beforeChar}[${ch || ' '}]${afterChar}`;
-                        const statusLine = `\r\n\u001b[90mChar ${currentCharIndex + 1}: ${charContext}\u001b[0m\r\n`;
-                        writeEmitter.fire(statusLine);
+                        // Move cursor to character position with highlighting
+                        if (ch) {
+                            const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
+                            const cursorOps = [
+                                '\u001b[s', // Save cursor position
+                                linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
+                                `\u001b[${currentCharIndex + 1}G`, // Move to character position
+                                '\u001b[7m', // Reverse video highlight for character
+                            ].filter(s => s).join('');
+                            
+                            writeEmitter.fire(cursorOps);
+                            
+                            // Brief pause to show character position, then restore
+                            setTimeout(() => {
+                                writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
+                            }, 300);
+                        }
                         
                         if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
                         return; // Don't pass to PTY
