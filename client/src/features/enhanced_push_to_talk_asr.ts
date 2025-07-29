@@ -3,6 +3,7 @@ import { ASRClient, ASRChunk } from '../asr';
 import { GPT4oASRClient, GPT4oASRChunk } from '../gpt4o_asr';
 import { ASRPopup } from '../asr_popup';
 import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config';
+import { CommandRouter } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
 
 let asrClient: ASRClient | null = null;
@@ -10,6 +11,7 @@ let gpt4oAsrClient: GPT4oASRClient | null = null;
 let asrPopup: ASRPopup | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
+let commandRouter: CommandRouter | null = null;
 let isRecording = false;
 let context: vscode.ExtensionContext | null = null;
 
@@ -48,6 +50,9 @@ function cleanupASRResources(): void {
         asrPopup = null;
     }
     
+    // Reset command router
+    commandRouter = null;
+    
     logSuccess('[Enhanced-ASR] ASR resources cleaned up');
 }
 
@@ -80,8 +85,8 @@ function initializeASRClients(): void {
         if (!asrClient) {
             try {
                 asrClient = new ASRClient({
-                    onTranscription: (chunk: ASRChunk) => {
-                        handleTranscription(chunk.text);
+                    onTranscription: async (chunk: ASRChunk) => {
+                        await handleTranscription(chunk.text);
                     },
                     onError: (error: Error) => {
                         handleError(error);
@@ -96,8 +101,8 @@ function initializeASRClients(): void {
         if (!gpt4oAsrClient) {
             try {
                 gpt4oAsrClient = new GPT4oASRClient({
-                    onTranscription: (chunk: GPT4oASRChunk) => {
-                        handleTranscription(chunk.text);
+                    onTranscription: async (chunk: GPT4oASRChunk) => {
+                        await handleTranscription(chunk.text);
                     },
                     onError: (error: Error) => {
                         handleError(error);
@@ -129,6 +134,20 @@ function initializeASRClients(): void {
             }
         }
         
+        // Initialize command router
+        if (!commandRouter) {
+            try {
+                commandRouter = new CommandRouter({
+                    showNotifications: true,
+                    enableLogging: true,
+                    fallbackToTextInsertion: true
+                });
+                log('[Enhanced-ASR] CommandRouter initialized successfully');
+            } catch (error) {
+                logError(`[Enhanced-ASR] Failed to initialize CommandRouter: ${error}`);
+            }
+        }
+        
         logSuccess('[Enhanced-ASR] ASR clients initialized successfully');
     } catch (error) {
         logError(`[Enhanced-ASR] Failed to initialize ASR clients: ${error}`);
@@ -139,7 +158,7 @@ function initializeASRClients(): void {
 /**
  * Handle transcription result
  */
-function handleTranscription(text: string): void {
+async function handleTranscription(text: string): Promise<void> {
     log(`[Enhanced-ASR] Transcription received: "${text}"`);
     
     // Update popup
@@ -153,17 +172,30 @@ function handleTranscription(text: string): void {
         outputChannel.show(true);
     }
     
-    // Insert at cursor if editor is active
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-        const position = editor.selection.active;
-        editor.edit(editBuilder => {
-            editBuilder.insert(position, text + ' ');
-        });
+    // Try to process as command first
+    let commandExecuted = false;
+    if (commandRouter) {
+        try {
+            commandExecuted = await commandRouter.processTranscription(text);
+        } catch (error) {
+            logError(`[Enhanced-ASR] Command router processing failed: ${error}`);
+        }
     }
     
-    // Show notification
-    vscode.window.showInformationMessage(`ASR: ${text}`);
+    // If no command was executed, fall back to text insertion
+    if (!commandExecuted) {
+        // Insert at cursor if editor is active
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const position = editor.selection.active;
+            editor.edit(editBuilder => {
+                editBuilder.insert(position, text + ' ');
+            });
+        }
+        
+        // Show notification for text insertion
+        vscode.window.showInformationMessage(`ASR: ${text}`);
+    }
 }
 
 /**
@@ -411,6 +443,97 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to show ASR popup: ${error}`);
                 vscode.window.showErrorMessage(`Failed to show ASR popup: ${error}`);
+            }
+        }),
+        
+        // Command Router management
+        vscode.commands.registerCommand('lipcoder.showCommandPatterns', () => {
+            if (!commandRouter) {
+                vscode.window.showWarningMessage('Command router not initialized');
+                return;
+            }
+            
+            const patterns = commandRouter.getPatterns();
+            const patternList = patterns.map(p => 
+                `• ${p.description || p.command}: "${p.pattern}"`
+            ).join('\n');
+            
+            vscode.window.showInformationMessage(
+                `Available Command Patterns (${patterns.length}):\n\n${patternList}`,
+                { modal: true }
+            );
+        }),
+        
+        vscode.commands.registerCommand('lipcoder.toggleCommandRouter', () => {
+            if (!commandRouter) {
+                vscode.window.showWarningMessage('Command router not initialized');
+                return;
+            }
+            
+            // Toggle between enabling and disabling notifications as a proxy for router activity
+            const currentOptions = commandRouter.getPatterns().length > 0;
+            if (currentOptions) {
+                commandRouter.clearPatterns();
+                vscode.window.showInformationMessage('Command router disabled - will only insert text');
+            } else {
+                commandRouter.resetToDefaults();
+                vscode.window.showInformationMessage('Command router enabled with default patterns');
+            }
+        }),
+        
+        vscode.commands.registerCommand('lipcoder.toggleLLMMatching', () => {
+            if (!commandRouter) {
+                vscode.window.showWarningMessage('Command router not initialized');
+                return;
+            }
+            
+            // Toggle LLM matching
+            const currentOptions = commandRouter.getPatterns().length > 0;
+            if (currentOptions) {
+                commandRouter.updateOptions({ useLLMMatching: false });
+                vscode.window.showInformationMessage('LLM matching disabled - using exact pattern matching only');
+            } else {
+                commandRouter.updateOptions({ useLLMMatching: true });
+                vscode.window.showInformationMessage('LLM matching enabled - using intelligent command interpretation');
+            }
+        }),
+        
+        vscode.commands.registerCommand('lipcoder.addCustomCommandPattern', async () => {
+            if (!commandRouter) {
+                vscode.window.showWarningMessage('Command router not initialized');
+                return;
+            }
+            
+            const pattern = await vscode.window.showInputBox({
+                prompt: 'Enter speech pattern to match (e.g., "close file")',
+                placeHolder: 'Speech pattern...'
+            });
+            
+            if (!pattern) return;
+            
+            const command = await vscode.window.showInputBox({
+                prompt: 'Enter VS Code command to execute',
+                placeHolder: 'workbench.action.closeActiveEditor'
+            });
+            
+            if (!command) return;
+            
+            const description = await vscode.window.showInputBox({
+                prompt: 'Enter description (optional)',
+                placeHolder: 'Close active file'
+            });
+            
+            try {
+                commandRouter.addPattern({
+                    pattern: pattern,
+                    command: command,
+                    description: description || command,
+                    preventDefault: true
+                });
+                
+                vscode.window.showInformationMessage(`Added custom command pattern: "${pattern}" → ${command}`);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to add pattern: ${error}`);
             }
         })
     );

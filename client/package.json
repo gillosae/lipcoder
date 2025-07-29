@@ -210,6 +210,61 @@
         "command": "lipcoder.togglePitchPreservation",
         "title": "Toggle Pitch Preservation",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.startASRRecording",
+        "title": "Start ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRRecording",
+        "title": "Stop ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleASRRecording",
+        "title": "Toggle ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.switchASRBackend",
+        "title": "Switch ASR Backend",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showEnhancedASROutput",
+        "title": "Show Enhanced ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearEnhancedASROutput",
+        "title": "Clear Enhanced ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showASRPopup",
+        "title": "Show ASR Recording Popup",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showCommandPatterns",
+        "title": "Show Available Voice Command Patterns",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleCommandRouter",
+        "title": "Toggle Voice Command Router",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.addCustomCommandPattern",
+        "title": "Add Custom Voice Command Pattern",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleLLMMatching",
+        "title": "Toggle LLM Command Matching",
+        "category": "LipCoder"
       }
     ]
   },

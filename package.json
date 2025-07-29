@@ -206,6 +206,26 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.showCommandPatterns",
+        "title": "Show Available Voice Command Patterns",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleCommandRouter",
+        "title": "Toggle Voice Command Router",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.addCustomCommandPattern",
+        "title": "Add Custom Voice Command Pattern",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleLLMMatching",
+        "title": "Toggle LLM Command Matching",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.openPushToTalkTestPage",
         "title": "LipCoder: Open Push-to-Talk Test Page"
       },
@@ -330,6 +350,11 @@
       {
         "command": "lipcoder.openTerminal",
         "key": "ctrl+shift+t"
+      },
+      {
+        "command": "lipcoder.toggleASRRecording",
+        "key": "ctrl+shift+a",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
