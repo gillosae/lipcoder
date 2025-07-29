@@ -105,6 +105,17 @@ connection.onDocumentSymbol(params => {
 
 // Helper function to tokenize complex text with LaTeX-like syntax
 function tokenizeComplexText(text: string): Array<{ text: string; category: string }> {
+    // TODO: ENHANCE FOR SEMANTIC TOKENS
+    // To get granular voice mapping (function names, strings, numbers, etc.),
+    // this function needs to be enhanced to use VS Code's semantic token information.
+    // Current limitation: only provides 'variable', 'operator', 'type', 'comment' categories.
+    // 
+    // Enhancement approach:
+    // 1. Accept document position/range information
+    // 2. Use VS Code's semantic token provider API
+    // 3. Map semantic token types to detailed categories like:
+    //    - 'function.name', 'string', 'number', 'class.name', etc.
+    
     const tokens: Array<{ text: string; category: string }> = [];
     let i = 0;
     
