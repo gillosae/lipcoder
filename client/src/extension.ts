@@ -32,6 +32,7 @@ import { registerVibeCodingCommands } from './features/vibe_coding';
 import { registerToggleASR } from './features/toggle_asr';
 import { registerPushToTalkASR } from './features/push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
+import { registerTTSBackendSwitch } from './features/tts_backend_switch';
 import { serverManager } from './server_manager';
 
 // Memory monitoring
@@ -183,6 +184,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerToggleASR(context);
 	registerPushToTalkASR(context);
 	registerTogglePanning(context);
+	registerTTSBackendSwitch(context);
 
 }
 

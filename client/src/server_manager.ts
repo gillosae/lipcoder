@@ -28,6 +28,12 @@ class ServerManager {
             defaultPort: 5003
         });
         
+        this.servers.set('espeak_tts', {
+            name: 'Espeak TTS Server',
+            script: 'start_espeak_tts.sh',
+            defaultPort: 5005
+        });
+        
         this.servers.set('asr', {
             name: 'ASR Server', 
             script: 'start_asr.sh',
@@ -65,6 +71,12 @@ class ServerManager {
         const config = this.servers.get(serverKey);
         if (!config) {
             throw new Error(`Unknown server: ${serverKey}`);
+        }
+
+        // Check if server is already running
+        if (config.process && !config.process.killed && config.process.exitCode === null) {
+            log(`[ServerManager] ${config.name} is already running on port ${config.actualPort}`);
+            return;
         }
 
         // Find available port
@@ -137,16 +149,61 @@ class ServerManager {
         logSuccess(`✅ ${config.name} started successfully on port ${config.actualPort}`);
     }
 
-    // Start all servers
+    // Public method to start a specific server
+    async startIndividualServer(serverKey: string): Promise<void> {
+        log(`[ServerManager] Starting individual server: ${serverKey}`);
+        await this.startServer(serverKey);
+    }
+
+    // Public method to stop a specific server
+    async stopIndividualServer(serverKey: string): Promise<void> {
+        const config = this.servers.get(serverKey);
+        if (!config) {
+            throw new Error(`Unknown server: ${serverKey}`);
+        }
+
+        if (!config.process || config.process.killed || config.process.exitCode !== null) {
+            log(`[ServerManager] ${config.name} is not running`);
+            return;
+        }
+
+        log(`[ServerManager] Stopping ${config.name}...`);
+        
+        return new Promise((resolve) => {
+            const process = config.process!;
+            
+            // Set up exit handler
+            const onExit = () => {
+                log(`[ServerManager] ${config.name} stopped`);
+                resolve();
+            };
+            
+            process.once('exit', onExit);
+            
+            // Try graceful shutdown first
+            process.kill('SIGTERM');
+            
+            // Force kill after timeout
+            setTimeout(() => {
+                if (!process.killed && process.exitCode === null) {
+                    logWarning(`[ServerManager] Force killing ${config.name}`);
+                    process.kill('SIGKILL');
+                }
+            }, 3000);
+        });
+    }
+
+    // Start all servers (modified to only start default TTS backend)
     async startServers(): Promise<void> {
-        log('[ServerManager] Starting all servers with improved Python detection...');
+        log('[ServerManager] Starting servers with default TTS backend...');
         
         try {
             await Promise.all([
-                this.startServer('tts'),
-                this.startServer('asr')
+                this.startServer('tts'),  // Start with Silero as default
+                this.startServer('asr')   // Always start ASR
+                // Don't start espeak_tts by default - it will be started when user switches
             ]);
-            logSuccess('✅ All servers started successfully');
+            logSuccess('✅ Default servers started successfully');
         } catch (error) {
             logError(`Failed to start servers: ${error}`);
             // Clean up any partially started servers
@@ -214,6 +271,29 @@ class ServerManager {
         }
         
         return status;
+    }
+
+    // Switch TTS backend by stopping current and starting new one
+    async switchTTSBackend(newBackend: 'silero' | 'espeak'): Promise<void> {
+        const currentTTSServers = ['tts', 'espeak_tts'];
+        
+        log(`[ServerManager] Switching TTS backend to: ${newBackend}`);
+        
+        // Stop all TTS servers first
+        const stopPromises = currentTTSServers.map(async serverKey => {
+            const config = this.servers.get(serverKey);
+            if (config && config.process && !config.process.killed && config.process.exitCode === null) {
+                await this.stopIndividualServer(serverKey);
+            }
+        });
+        
+        await Promise.all(stopPromises);
+        
+        // Start the new TTS server
+        const targetServer = newBackend === 'silero' ? 'tts' : 'espeak_tts';
+        await this.startIndividualServer(targetServer);
+        
+        logSuccess(`✅ TTS backend switched to ${newBackend}`);
     }
 }
 

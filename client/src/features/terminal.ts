@@ -45,9 +45,20 @@ export function registerTerminalReader(context: ExtensionContext) {
             let pty: any;
             try {
                 pty = require('node-pty');
+                logSuccess('[Terminal] node-pty loaded successfully');
             } catch (err) {
-                vscode.window.showErrorMessage(
-                    'LipCoder: Failed to load node-pty. Ensure it is installed and rebuilt for VS Code\'s Electron: run `npm install node-pty && npm rebuild node-pty --runtime=electron --target=' + process.versions.electron + ' --disturl=https://atom.io/download/electron` in the client folder.'
+                logError(`[Terminal] Failed to load node-pty: ${err}`);
+                
+                // Fall back to basic terminal
+                const fallbackTerminal = vscode.window.createTerminal({
+                    name: 'LipCoder Terminal (Fallback)',
+                    shellPath: process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'],
+                    cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath
+                });
+                
+                fallbackTerminal.show();
+                vscode.window.showWarningMessage(
+                    'LipCoder Terminal: Using fallback mode due to node-pty error. Some features may be limited.'
                 );
                 return;
             }
@@ -158,6 +169,21 @@ export function registerTerminalReader(context: ExtensionContext) {
             currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
             const ch = line.charAt(currentCharIndex);
             if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
+        }),
+
+        // Add a command to manually add terminal output for navigation
+        vscode.commands.registerCommand('lipcoder.addTerminalOutput', async () => {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter terminal output to add for navigation',
+                placeHolder: 'Terminal output...'
+            });
+            
+            if (input && input.trim()) {
+                terminalLines.push(input.trim());
+                currentLineIndex = terminalLines.length - 1;
+                currentCharIndex = -1;
+                await speakTokenList([{ tokens: ['Added to terminal buffer'], category: undefined }]);
+            }
         })
     );
     

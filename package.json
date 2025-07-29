@@ -94,6 +94,26 @@
         "title": "LipCoder: Open Pseudo Terminal"
       },
       {
+        "command": "lipcoder.terminalNextLine",
+        "title": "LipCoder: Terminal Next Line"
+      },
+      {
+        "command": "lipcoder.terminalPrevLine",
+        "title": "LipCoder: Terminal Previous Line"
+      },
+      {
+        "command": "lipcoder.terminalCharLeft",
+        "title": "LipCoder: Terminal Character Left"
+      },
+      {
+        "command": "lipcoder.terminalCharRight",
+        "title": "LipCoder: Terminal Character Right"
+      },
+      {
+        "command": "lipcoder.addTerminalOutput",
+        "title": "LipCoder: Add Terminal Output for Navigation"
+      },
+      {
         "command": "lipcoder.formatCode",
         "title": "LipCoder: Format Code"
       },
@@ -105,7 +125,6 @@
         "command": "lipcoder.vibeCoding",
         "title": "LipCoder: Vibe Coding - Modify Code with Natural Language"
       },
-
       {
         "command": "lipcoder.startASRStreaming",
         "title": "Start ASR Streaming",
@@ -171,14 +190,14 @@
         "command": "lipcoder.setPlaySpeedFast",
         "title": "LipCoder: Set Playback Speed - Fast (1.5×)"
       },
-                  {
-                "command": "lipcoder.setPlaySpeedVeryFast",
-                "title": "LipCoder: Set Playback Speed - Very Fast (2.0×)"
-            },
-            {
-                "command": "lipcoder.clearAudioCache",
-                "title": "LipCoder: Clear Audio Cache (Fix Crackling)"
-            },
+      {
+        "command": "lipcoder.setPlaySpeedVeryFast",
+        "title": "LipCoder: Set Playback Speed - Very Fast (2.0×)"
+      },
+      {
+        "command": "lipcoder.clearAudioCache",
+        "title": "LipCoder: Clear Audio Cache (Fix Crackling)"
+      },
       {
         "command": "lipcoder.togglePitchPreservation",
         "title": "LipCoder: Toggle Pitch Preservation"
@@ -194,6 +213,26 @@
       {
         "command": "lipcoder.setAudioMinimapSpeed",
         "title": "LipCoder: Set Audio Minimap Speed Threshold"
+      },
+      {
+        "command": "lipcoder.selectTTSBackend",
+        "title": "LipCoder: Select TTS Backend",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.switchToSilero",
+        "title": "LipCoder: Switch to Silero TTS",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.switchToEspeak",
+        "title": "LipCoder: Switch to espeak-ng TTS",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.showTTSStatus",
+        "title": "LipCoder: Show TTS Backend Status",
+        "category": "TTS"
       }
     ],
     "keybindings": [
@@ -292,6 +331,7 @@
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.5.2",
+    "electron-rebuild": "^3.2.9",
     "esbuild": "^0.25.3",
     "eslint": "^9.25.1",
     "npm-run-all": "^4.1.5",
@@ -299,6 +339,7 @@
   },
   "dependencies": {
     "node-fetch": "^3.3.2",
+    "node-pty": "^1.0.0",
     "speaker": "^0.5.5",
     "ts-node": "^10.9.2",
     "undici": "^7.11.0",

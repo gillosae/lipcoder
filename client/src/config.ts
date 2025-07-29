@@ -23,6 +23,16 @@ export interface SileroConfig {
     sampleRate: number;
 }
 
+export interface EspeakConfig {
+    language: string;
+    defaultVoice: string;
+    speed: number;        // words per minute (default: 175)
+    pitch: number;        // 0-99 (default: 50)
+    amplitude: number;    // 0-200 (default: 100)
+    gap: number;          // gap between words in 10ms units
+    sampleRate: number;   // output sample rate
+}
+
 export let currentBackend = TTSBackend.Silero;
 export let sileroConfig: SileroConfig = {
     pythonPath: '',
@@ -30,6 +40,16 @@ export let sileroConfig: SileroConfig = {
     language: 'en',
     modelId: 'v3_en',
     defaultSpeaker: 'en_3',
+    sampleRate: 24000,
+};
+
+export let espeakConfig: EspeakConfig = {
+    language: 'en',
+    defaultVoice: 'en-us',  // Use valid espeak-ng voice name
+    speed: 175,
+    pitch: 50,
+    amplitude: 100,
+    gap: 0,
     sampleRate: 24000,
 };
 
@@ -98,11 +118,67 @@ export const categoryVoiceMap: Record<string, string> = {
     'default': 'en_5',               // Fallback voice
 };
 
+// Espeak voice mapping for different categories
+export const espeakCategoryVoiceMap: Record<string, Partial<EspeakConfig>> = {
+    // Different voices and settings for semantic categories
+    // Note: espeak-ng doesn't have multiple speakers like Silero, so we use different
+    // language variants and parameter changes to create variety
+    
+    variable: { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },     // Variables, function names - default US voice
+    operator: { defaultVoice: 'en-gb', pitch: 60, speed: 180, amplitude: 110 },    // Math operators - higher pitch British voice
+    type: { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 160, amplitude: 90 },   // Punctuation & symbols - lower pitch RP voice
+    comment: { defaultVoice: 'en-us', pitch: 45, speed: 165, amplitude: 85 },      // Comments - softer US voice
+    
+    // Future semantic categories
+    keyword: { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 105 },                // Keywords - British voice
+    'keyword.control': { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 105 },
+    'keyword.operator': { defaultVoice: 'en-gb', pitch: 60, speed: 180, amplitude: 110 },
+    'keyword.import': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 165, amplitude: 95 },
+    
+    'function.name': { defaultVoice: 'en-us', pitch: 52, speed: 175, amplitude: 100 },
+    'function.call': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
+    'function.builtin': { defaultVoice: 'en-gb', pitch: 58, speed: 180, amplitude: 105 },
+    
+    'string': { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
+    'string.quoted': { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
+    literal: { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
+    
+    'number': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 185, amplitude: 100 },
+    'number.integer': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 185, amplitude: 100 },
+    'number.float': { defaultVoice: 'en-gb-x-rp', pitch: 53, speed: 180, amplitude: 100 },
+    
+    'type.class': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 170, amplitude: 95 },
+    'class.name': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 170, amplitude: 95 },
+    'class.builtin': { defaultVoice: 'en-gb', pitch: 50, speed: 175, amplitude: 100 },
+    
+    'parameter': { defaultVoice: 'en-us', pitch: 52, speed: 175, amplitude: 95 },
+    'parameter.name': { defaultVoice: 'en-us', pitch: 52, speed: 175, amplitude: 95 },
+    'property': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
+    'property.name': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
+    
+    'punctuation': { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 200, amplitude: 80 },
+    'punctuation.bracket': { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 200, amplitude: 80 },
+    'punctuation.delimiter': { defaultVoice: 'en-gb-x-rp', pitch: 38, speed: 210, amplitude: 75 },
+    
+    'constant': { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 100 },
+    'constant.builtin': { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 100 },
+    
+    'namespace': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 165, amplitude: 95 },
+    'module': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 165, amplitude: 95 },
+    
+    'special': { defaultVoice: 'en-us', pitch: 65, speed: 190, amplitude: 120 },   // Special characters - higher energy
+    
+    'text': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
+    'default': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
+};
+
 // Allow runtime switching of TTS backend & config
-export function setBackend(backend: TTSBackend, partial?: Partial<SileroConfig>) {
+export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>) {
     currentBackend = backend;
-    if (backend === TTSBackend.Silero && partial) {
-        sileroConfig = { ...sileroConfig, ...(partial as SileroConfig) };
+    if (backend === TTSBackend.Silero && sileroPartial) {
+        sileroConfig = { ...sileroConfig, ...sileroPartial };
+    } else if (backend === TTSBackend.Espeak && espeakPartial) {
+        espeakConfig = { ...espeakConfig, ...espeakPartial };
     }
 }
 
