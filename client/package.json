@@ -55,7 +55,7 @@
       },
       {
         "key": "ctrl+shift+a",
-        "command": "lipcoder.toggleASR",
+        "command": "lipcoder.toggleASRRecording",
         "when": "editorTextFocus"
       },
       {
@@ -75,7 +75,18 @@
         "lipcoder.openaiApiKey": {
           "type": "string",
           "default": "",
-          "description": "Your OpenAI API key for ChatGPT completions."
+          "description": "Your OpenAI API key for ChatGPT completions and GPT-4o transcription."
+        },
+        "lipcoder.asrBackend": {
+          "type": "string",
+          "enum": ["silero", "gpt4o-transcribe"],
+          "default": "gpt4o-transcribe",
+          "description": "ASR backend to use for speech recognition. GPT-4o backend uses Whisper for reliable transcription and requires an API key."
+        },
+        "lipcoder.gpt4oModel": {
+          "type": "string",
+          "default": "whisper-1",
+          "description": "Whisper model to use for transcription."
         }
       }
     },

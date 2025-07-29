@@ -14,6 +14,26 @@ export enum TTSBackend {
     Espeak = 'espeak',
 }
 
+// ASR Backends & Config ─────────────────────────────────────────────────────
+export enum ASRBackend {
+    Silero = 'silero',
+    GPT4o = 'gpt4o-transcribe',
+}
+
+export interface SileroASRConfig {
+    serverUrl: string;
+    sampleRate: number;
+    chunkDuration: number;
+}
+
+export interface GPT4oASRConfig {
+    apiKey: string;
+    model: string; // Whisper model (whisper-1)
+    language?: string;
+    sampleRate: number;
+    temperature?: number;
+}
+
 export interface SileroConfig {
     pythonPath: string;
     scriptPath: string;
@@ -34,6 +54,24 @@ export interface EspeakConfig {
 }
 
 export let currentBackend = TTSBackend.Silero;
+
+// ASR Configuration ─────────────────────────────────────────────────────
+export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
+
+export let sileroASRConfig: SileroASRConfig = {
+    serverUrl: 'http://localhost:5004/asr',
+    sampleRate: 16000,
+    chunkDuration: 2000, // 2 seconds
+};
+
+export let gpt4oASRConfig: GPT4oASRConfig = {
+    apiKey: '', // Will be loaded from VS Code settings
+    model: 'whisper-1', // Using Whisper for reliable transcription
+    language: 'en',
+    sampleRate: 16000, // Whisper prefers 16kHz
+    temperature: 0.0, // For accurate transcription
+};
+
 export let sileroConfig: SileroConfig = {
     pythonPath: '',
     scriptPath: '',
@@ -182,6 +220,16 @@ export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroCo
     }
 }
 
+// Allow runtime switching of ASR backend & config
+export function setASRBackend(backend: ASRBackend, sileroASRPartial?: Partial<SileroASRConfig>, gpt4oASRPartial?: Partial<GPT4oASRConfig>) {
+    currentASRBackend = backend;
+    if (backend === ASRBackend.Silero && sileroASRPartial) {
+        sileroASRConfig = { ...sileroASRConfig, ...sileroASRPartial };
+    } else if (backend === ASRBackend.GPT4o && gpt4oASRPartial) {
+        gpt4oASRConfig = { ...gpt4oASRConfig, ...gpt4oASRPartial };
+    }
+}
+
 // Path and Etc Config ─────────────────────────────────────────────────────
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
@@ -225,6 +273,44 @@ export const config = {
     specialPath: () => string;
     musicalPath: () => string;
 };
+
+// Load configuration from VS Code settings
+export function loadConfigFromSettings() {
+    try {
+        const vscode = require('vscode');
+        
+        // Check if workspace is available
+        if (!vscode.workspace) {
+            console.warn('[Config] VS Code workspace not available, using defaults');
+            return;
+        }
+        
+        const config = vscode.workspace.getConfiguration('lipcoder');
+        
+        // Load OpenAI API key for GPT-4o ASR
+        const apiKey = config.get('openaiApiKey', '') as string;
+        if (apiKey) {
+            gpt4oASRConfig.apiKey = apiKey;
+        }
+        
+        // Load ASR backend selection
+        const asrBackend = config.get('asrBackend', 'gpt4o-transcribe') as string;
+        if (asrBackend === 'silero') {
+            currentASRBackend = ASRBackend.Silero;
+        } else if (asrBackend === 'gpt4o-transcribe') {
+            currentASRBackend = ASRBackend.GPT4o;
+        }
+        
+        // Load Whisper model
+        const whisperModel = config.get('gpt4oModel', 'whisper-1') as string;
+        gpt4oASRConfig.model = whisperModel;
+        
+        console.log('[Config] Configuration loaded successfully');
+    } catch (error) {
+        console.error('[Config] Failed to load configuration from VS Code settings:', error);
+        // Use defaults on error
+    }
+}
 
 const specialMap: Record<string, string> =  {
     '!': 'excitation.pcm', '@': 'at.pcm', '#': 'sharp.pcm', '$': 'dollar.pcm',

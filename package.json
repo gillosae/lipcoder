@@ -171,6 +171,41 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.startASRRecording",
+        "title": "Start ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRRecording",
+        "title": "Stop ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleASRRecording",
+        "title": "Toggle ASR Recording",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.switchASRBackend",
+        "title": "Switch ASR Backend",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showASRPopup",
+        "title": "Show ASR Popup",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showEnhancedASROutput",
+        "title": "Show Enhanced ASR Output",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearEnhancedASROutput",
+        "title": "Clear Enhanced ASR Output",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.openPushToTalkTestPage",
         "title": "LipCoder: Open Push-to-Talk Test Page"
       },

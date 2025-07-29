@@ -31,6 +31,7 @@ import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
 import { registerToggleASR } from './features/toggle_asr';
 import { registerPushToTalkASR } from './features/push_to_talk_asr';
+import { registerEnhancedPushToTalkASR } from './features/enhanced_push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
 import { registerTTSBackendSwitch } from './features/tts_backend_switch';
 import { serverManager } from './server_manager';
@@ -100,6 +101,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
+	
+	// 1.2) Load configuration from VS Code settings ─────────────────────────────────────
+	// Note: Configuration loading moved to individual features to avoid initialization issues
 
 	// 1.5) Clean old corrupted cache files on startup ───────────────────────────────────
 	try {
@@ -183,6 +187,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerVibeCodingCommands(context);
 	registerToggleASR(context);
 	registerPushToTalkASR(context);
+	registerEnhancedPushToTalkASR(context);
 	registerTogglePanning(context);
 	registerTTSBackendSwitch(context);
 

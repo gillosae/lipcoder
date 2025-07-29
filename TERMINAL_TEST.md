@@ -28,10 +28,14 @@ The native module `pty.node` has been successfully compiled and is now available
    - **← (Left Arrow)** - Move left and speak character + shows "👈 Char X: [text]"
    - **→ (Right Arrow)** - Move right and speak character + shows "👉 Char X: [text]"
 
-3. Alternative: Use Command Palette:
-   - "LipCoder: Terminal Next Line" - should speak terminal output
-   - "LipCoder: Terminal Previous Line" - should navigate backward
-   - "LipCoder: Terminal Character Left/Right" - should speak individual characters
+3. Alternative: Use Command Palette (also with earcons):
+   - "LipCoder: Terminal Next Line" - plays `indent_2.pcm` + speaks terminal output
+   - "LipCoder: Terminal Previous Line" - plays `indent_1.pcm` + navigates backward  
+   - "LipCoder: Terminal Character Left" - plays `comma.pcm` + speaks individual characters
+   - "LipCoder: Terminal Character Right" - plays `dot.pcm` + speaks individual characters
+
+4. Test Manual Output Addition:
+   - "LipCoder: Add Terminal Output for Navigation" - plays `enter.pcm` + confirmation message
 
 ### 3. Test Input Echo
 1. Type characters in the terminal
@@ -65,10 +69,17 @@ If you still see fallback mode:
 
 ✅ **"node-pty loaded successfully"** message in logs  
 ✅ Terminal opens without fallback warnings  
-✅ Audio navigation works through all terminal output  
-✅ **Arrow keys navigate and speak terminal content**  
-✅ **Visual indicators show current position** (📍 for lines, 👈👉 for characters)
-✅ Character-by-character input echo with TTS  
-✅ Full PTY shell interaction  
+✅ **Enhanced audio navigation with TTS and earcons**  
+✅ **Arrow keys navigate with distinct audio feedback**  
+✅ **Visual cursor positioning with highlighting**  
+✅ **All TTS uses no category (undefined) for clean speech**  
+✅ **Distinct earcons for different navigation types:**
+   - `indent_1.pcm` for up navigation
+   - `indent_2.pcm` for down navigation  
+   - `comma.pcm` for left character navigation
+   - `dot.pcm` for right character navigation
+   - `enter.pcm` for confirmations
+✅ Character-by-character input echo with TTS (no category)  
+✅ Full PTY shell interaction with rich audio feedback
 
-The terminal should now have full accessibility features with both audio and visual feedback! 
+The terminal now has **editor-like accessibility** with comprehensive TTS and earcon integration! 

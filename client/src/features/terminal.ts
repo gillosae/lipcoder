@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, TokenChunk, playWave } from '../audio';
 import { stopReading } from './stop_reading';
 import { stopAllAudio } from './stop_reading';
 import { logWarning, logError, logSuccess } from '../utils';
+import { config } from '../config';
+import * as path from 'path';
 
 let terminalLines: string[] = [];
 let currentLineIndex = -1;
@@ -122,8 +124,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                 close: () => {
                     ptyProcess.kill();
                 },
-                handleInput: (input: string) => {
-                    // Handle special navigation keys
+                handleInput: async (input: string) => {
+                    // Handle special navigation keys with audio feedback
                     if (input === '\u001b[A') { // Up arrow
                         // Navigate to previous terminal line
                         if (terminalLines.length === 0) return;
@@ -131,6 +133,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentLineIndex = Math.max(currentLineIndex - 1, 0);
                         currentCharIndex = 0;
                         const line = terminalLines[currentLineIndex];
+                        
+                        // Play navigation earcon for up movement
+                        const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
+                        await playWave(upEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Small delay to let earcon complete before TTS
+                        await new Promise(resolve => setTimeout(resolve, 50));
                         
                         // Move cursor to line position with non-destructive highlighting
                         const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
@@ -148,7 +157,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                             writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
                         }, 300);
                         
-                        speakTokenList([{ tokens: [line], category: undefined }]);
+                        // Use TTS with no category for terminal content
+                        await speakTokenList([{ tokens: [line], category: undefined }]);
                         return; // Don't pass to PTY
                     }
                     
@@ -160,6 +170,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = 0;
                         const line = terminalLines[currentLineIndex];
                         
+                        // Play navigation earcon for down movement
+                        const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
+                        await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Small delay to let earcon complete before TTS
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
                         // Move cursor to line position with non-destructive highlighting
                         const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
                         const cursorOps = [
@@ -176,7 +193,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                             writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
                         }, 300);
                         
-                        speakTokenList([{ tokens: [line], category: undefined }]);
+                        // Use TTS with no category for terminal content
+                        await speakTokenList([{ tokens: [line], category: undefined }]);
                         return; // Don't pass to PTY
                     }
                     
@@ -188,6 +206,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = Math.max(currentCharIndex - 1, 0);
                         const ch = line.charAt(currentCharIndex);
                         
+                        // Play character navigation earcon for left movement
+                        const leftEarcon = path.join(config.audioPath(), 'earcon', 'comma.pcm');
+                        await playWave(leftEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Small delay to let earcon complete before TTS
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
                         // Move cursor to character position with highlighting
                         if (ch) {
                             const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
@@ -206,7 +231,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                             }, 300);
                         }
                         
-                        if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
+                        // Use TTS with no category for character content
+                        if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
                         return; // Don't pass to PTY
                     }
                     
@@ -218,6 +244,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                         currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
                         const ch = line.charAt(currentCharIndex);
                         
+                        // Play character navigation earcon for right movement
+                        const rightEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
+                        await playWave(rightEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Small delay to let earcon complete before TTS
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
                         // Move cursor to character position with highlighting
                         if (ch) {
                             const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
@@ -236,7 +269,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                             }, 300);
                         }
                         
-                        if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
+                        // Use TTS with no category for character content
+                        if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
                         return; // Don't pass to PTY
                     }
                     
@@ -244,12 +278,12 @@ export function registerTerminalReader(context: ExtensionContext) {
                     stopAllAudio();
                     // Write into the PTY (handles erase/backspace)
                     ptyProcess.write(input);
-                    // Echo each character spoken using speakTokenList
+                    // Echo each character spoken using speakTokenList with no category
                     const chunks: TokenChunk[] = input.split('').map(ch => ({
                         tokens: [ch],
                         category: undefined
                     }));
-                    speakTokenList(chunks);
+                    await speakTokenList(chunks);
                 }
             };
 
@@ -265,6 +299,14 @@ export function registerTerminalReader(context: ExtensionContext) {
             currentLineIndex = Math.min(currentLineIndex + 1, terminalLines.length - 1);
             currentCharIndex = -1;
             const line = terminalLines[currentLineIndex];
+            
+            // Play navigation earcon
+            const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
+            await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            // Small delay to let earcon complete before TTS
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
             await speakTokenList([{ tokens: [line], category: undefined }]);
         }),
 
@@ -275,6 +317,14 @@ export function registerTerminalReader(context: ExtensionContext) {
             currentLineIndex = Math.max(currentLineIndex - 1, 0);
             currentCharIndex = -1;
             const line = terminalLines[currentLineIndex];
+            
+            // Play navigation earcon
+            const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
+            await playWave(upEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            // Small delay to let earcon complete before TTS
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
             await speakTokenList([{ tokens: [line], category: undefined }]);
         }),
 
@@ -285,7 +335,16 @@ export function registerTerminalReader(context: ExtensionContext) {
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.max(currentCharIndex - 1, 0);
             const ch = line.charAt(currentCharIndex);
-            if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
+            
+            // Play character navigation earcon
+            const leftEarcon = path.join(config.audioPath(), 'earcon', 'comma.pcm');
+            await playWave(leftEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            // Small delay to let earcon complete before TTS
+            if (ch) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                await speakTokenList([{ tokens: [ch], category: undefined }]);
+            }
         }),
 
         // Move cursor right within current line buffer and speak character
@@ -295,7 +354,16 @@ export function registerTerminalReader(context: ExtensionContext) {
             const line = terminalLines[currentLineIndex];
             currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
             const ch = line.charAt(currentCharIndex);
-            if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
+            
+            // Play character navigation earcon
+            const rightEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
+            await playWave(rightEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            // Small delay to let earcon complete before TTS
+            if (ch) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                await speakTokenList([{ tokens: [ch], category: undefined }]);
+            }
         }),
 
         // Add a command to manually add terminal output for navigation
@@ -309,6 +377,14 @@ export function registerTerminalReader(context: ExtensionContext) {
                 terminalLines.push(input.trim());
                 currentLineIndex = terminalLines.length - 1;
                 currentCharIndex = -1;
+                
+                // Play confirmation earcon
+                const confirmEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
+                await playWave(confirmEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                
+                // Small delay to let earcon complete before TTS
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
                 await speakTokenList([{ tokens: ['Added to terminal buffer'], category: undefined }]);
             }
         })
