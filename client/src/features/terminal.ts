@@ -90,6 +90,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             // Forward PTY output into VS Code terminal and buffer lines
             ptyProcess.onData((data: string) => {
                 writeEmitter.fire(data);
+                
                 // Buffer each non-empty line for navigation
                 const parts = data.split(/\r?\n/);
                 for (const part of parts) {
@@ -98,7 +99,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     }
                 }
                 currentLineIndex = terminalLines.length - 1;
-                currentCharIndex = -1;
+                currentCharIndex = 0;
             });
             ptyProcess.onExit(() => {
                 closeEmitter.fire();
@@ -113,7 +114,78 @@ export function registerTerminalReader(context: ExtensionContext) {
                     ptyProcess.kill();
                 },
                 handleInput: (input: string) => {
-                    // (Re)stop any other speech using centralized system
+                    // Handle special navigation keys
+                    if (input === '\u001b[A') { // Up arrow
+                        // Navigate to previous terminal line
+                        if (terminalLines.length === 0) return;
+                        stopReading();
+                        currentLineIndex = Math.max(currentLineIndex - 1, 0);
+                        currentCharIndex = 0;
+                        const line = terminalLines[currentLineIndex];
+                        
+                        // Show navigation status at bottom
+                        const statusLine = `\r\n\u001b[90m[${currentLineIndex + 1}/${terminalLines.length}] ${line}\u001b[0m\r\n`;
+                        writeEmitter.fire(statusLine);
+                        
+                        speakTokenList([{ tokens: [line], category: undefined }]);
+                        return; // Don't pass to PTY
+                    }
+                    
+                    if (input === '\u001b[B') { // Down arrow
+                        // Navigate to next terminal line
+                        if (terminalLines.length === 0) return;
+                        stopReading();
+                        currentLineIndex = Math.min(currentLineIndex + 1, terminalLines.length - 1);
+                        currentCharIndex = 0;
+                        const line = terminalLines[currentLineIndex];
+                        
+                        // Show navigation status at bottom
+                        const statusLine = `\r\n\u001b[90m[${currentLineIndex + 1}/${terminalLines.length}] ${line}\u001b[0m\r\n`;
+                        writeEmitter.fire(statusLine);
+                        
+                        speakTokenList([{ tokens: [line], category: undefined }]);
+                        return; // Don't pass to PTY
+                    }
+                    
+                    if (input === '\u001b[D') { // Left arrow
+                        // Navigate character left
+                        if (terminalLines.length === 0 || currentLineIndex < 0) return;
+                        stopReading();
+                        const line = terminalLines[currentLineIndex];
+                        currentCharIndex = Math.max(currentCharIndex - 1, 0);
+                        const ch = line.charAt(currentCharIndex);
+                        
+                        // Show character position with context
+                        const beforeChar = line.substring(Math.max(0, currentCharIndex - 10), currentCharIndex);
+                        const afterChar = line.substring(currentCharIndex + 1, Math.min(line.length, currentCharIndex + 11));
+                        const charContext = `${beforeChar}[${ch || ' '}]${afterChar}`;
+                        const statusLine = `\r\n\u001b[90mChar ${currentCharIndex + 1}: ${charContext}\u001b[0m\r\n`;
+                        writeEmitter.fire(statusLine);
+                        
+                        if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
+                        return; // Don't pass to PTY
+                    }
+                    
+                    if (input === '\u001b[C') { // Right arrow
+                        // Navigate character right
+                        if (terminalLines.length === 0 || currentLineIndex < 0) return;
+                        stopReading();
+                        const line = terminalLines[currentLineIndex];
+                        currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
+                        const ch = line.charAt(currentCharIndex);
+                        
+                        // Show character position with context
+                        const beforeChar = line.substring(Math.max(0, currentCharIndex - 10), currentCharIndex);
+                        const afterChar = line.substring(currentCharIndex + 1, Math.min(line.length, currentCharIndex + 11));
+                        const charContext = `${beforeChar}[${ch || ' '}]${afterChar}`;
+                        const statusLine = `\r\n\u001b[90mChar ${currentCharIndex + 1}: ${charContext}\u001b[0m\r\n`;
+                        writeEmitter.fire(statusLine);
+                        
+                        if (ch) speakTokenList([{ tokens: [ch], category: undefined }]);
+                        return; // Don't pass to PTY
+                    }
+                    
+                    // For regular input, stop any other speech and proceed normally
                     stopAllAudio();
                     // Write into the PTY (handles erase/backspace)
                     ptyProcess.write(input);

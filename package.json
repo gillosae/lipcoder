@@ -291,6 +291,10 @@
         "command": "lipcoder.vibeCoding",
         "key": "ctrl+shift+v",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.openTerminal",
+        "key": "ctrl+shift+t"
       }
     ],
     "configuration": {

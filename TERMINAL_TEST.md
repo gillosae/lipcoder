@@ -22,7 +22,13 @@ The native module `pty.node` has been successfully compiled and is now available
    pwd
    ```
 
-2. Try navigation commands from Command Palette:
+2. Try navigation with **ARROW KEYS** (directly in LipCoder terminal):
+   - **↑ (Up Arrow)** - Navigate to previous line and speak it + shows "📍 Line X/Y"
+   - **↓ (Down Arrow)** - Navigate to next line and speak it + shows "📍 Line X/Y"
+   - **← (Left Arrow)** - Move left and speak character + shows "👈 Char X: [text]"
+   - **→ (Right Arrow)** - Move right and speak character + shows "👉 Char X: [text]"
+
+3. Alternative: Use Command Palette:
    - "LipCoder: Terminal Next Line" - should speak terminal output
    - "LipCoder: Terminal Previous Line" - should navigate backward
    - "LipCoder: Terminal Character Left/Right" - should speak individual characters
@@ -43,12 +49,26 @@ If you still see fallback mode:
 2. Reload the extension window
 3. Check the Output panel for any remaining errors
 
+## Keyboard Shortcuts
+
+| Key | Action | Context |
+|-----|--------|---------|
+| `Ctrl+Shift+T` | Open LipCoder Terminal | Global |
+| `↑` (Up) | **Navigate to previous line** (overrides command history) | LipCoder Terminal |
+| `↓` (Down) | **Navigate to next line** (overrides command history) | LipCoder Terminal |
+| `←` (Left) | **Character left** (overrides cursor movement) | LipCoder Terminal |
+| `→` (Right) | **Character right** (overrides cursor movement) | LipCoder Terminal |
+
+**Important**: Arrow keys now work directly in the LipCoder terminal and override the default terminal behavior (command history and cursor movement). This ensures your navigation always works for audio feedback.
+
 ## Success Indicators
 
 ✅ **"node-pty loaded successfully"** message in logs  
 ✅ Terminal opens without fallback warnings  
 ✅ Audio navigation works through all terminal output  
+✅ **Arrow keys navigate and speak terminal content**  
+✅ **Visual indicators show current position** (📍 for lines, 👈👉 for characters)
 ✅ Character-by-character input echo with TTS  
 ✅ Full PTY shell interaction  
 
-The terminal should now have full accessibility features with audio feedback! 
+The terminal should now have full accessibility features with both audio and visual feedback! 
