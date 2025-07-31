@@ -376,6 +376,710 @@ export class CommandRouter {
     }
 
     /**
+     * Create simple line navigation handler for "line N" pattern
+     */
+    private createSimpleLineNavigationHandler() {
+        return async (match: RegExpMatchArray | string[], originalText: string) => {
+            const lineNumberStr = match[1]?.trim(); // For "line N", the number is in match[1]
+            if (!lineNumberStr) {
+                vscode.window.showErrorMessage('Please specify a line number');
+                return false;
+            }
+
+            const lineNumber = parseInt(lineNumberStr);
+            if (isNaN(lineNumber) || lineNumber < 1) {
+                vscode.window.showErrorMessage(`Invalid line number: ${lineNumberStr}`);
+                return false;
+            }
+
+            // Use editor context if available, with proper validation
+            let targetEditor = this.editorContext?.editor;
+            
+            // Validate that the captured editor is still valid
+            if (targetEditor) {
+                try {
+                    // Check if the document is still open and valid
+                    if (!targetEditor.document || targetEditor.document.isClosed) {
+                        logWarning('[CommandRouter] Captured editor context is no longer valid for line navigation, falling back to active editor');
+                        targetEditor = undefined;
+                    }
+                } catch (error) {
+                    logError(`[CommandRouter] Error accessing captured editor for line navigation: ${error}`);
+                    targetEditor = undefined;
+                }
+            }
+            
+            // Fallback to current active editor
+            if (!targetEditor) {
+                targetEditor = vscode.window.activeTextEditor;
+            }
+            
+            if (!targetEditor) {
+                vscode.window.showErrorMessage('No editor available to navigate to line');
+                return false;
+            }
+
+            try {
+                // Make sure the target editor is active
+                await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                
+                // Navigate to the specified line (VS Code uses 0-based indexing)
+                const position = new vscode.Position(lineNumber - 1, 0);
+                targetEditor.selection = new vscode.Selection(position, position);
+                targetEditor.revealRange(new vscode.Range(position, position));
+                
+                const fileName = path.basename(targetEditor.document.fileName);
+                vscode.window.showInformationMessage(`Went to line ${lineNumber} in ${fileName}`);
+                logSuccess(`[CommandRouter] Successfully navigated to line ${lineNumber} in ${fileName}`);
+                return true;
+            } catch (error) {
+                logError(`[CommandRouter] Error navigating to line: ${error}`);
+                vscode.window.showErrorMessage(`Failed to navigate to line ${lineNumber}: ${error}`);
+                return false;
+            }
+        };
+    }
+
+    /**
+     * Create variable definition navigation handler
+     */
+    private createVariableDefinitionHandler() {
+        return async (match: RegExpMatchArray | string[], originalText: string) => {
+            const variableName = match[2]?.trim();
+            if (!variableName) {
+                vscode.window.showErrorMessage('Please specify a variable name');
+                return false;
+            }
+
+            // Use editor context if available, with proper validation
+            let targetEditor = this.editorContext?.editor;
+            
+            // Validate that the captured editor is still valid
+            if (targetEditor) {
+                try {
+                    // Check if the document is still open and valid
+                    if (!targetEditor.document || targetEditor.document.isClosed) {
+                        logWarning('[CommandRouter] Captured editor context is no longer valid for variable search, falling back to active editor');
+                        targetEditor = undefined;
+                    }
+                } catch (error) {
+                    logError(`[CommandRouter] Error accessing captured editor for variable search: ${error}`);
+                    targetEditor = undefined;
+                }
+            }
+            
+            // Fallback to current active editor
+            if (!targetEditor) {
+                targetEditor = vscode.window.activeTextEditor;
+            }
+            
+            if (!targetEditor) {
+                vscode.window.showErrorMessage('No editor available to search for variable');
+                return false;
+            }
+
+            try {
+                // Search for the variable in the document text
+                const document = targetEditor.document;
+                const text = document.getText();
+                
+                // Try to find variable declaration patterns
+                const variablePatterns = [
+                    new RegExp(`\\b(let|const|var)\\s+${variableName}\\b`, 'i'),
+                    new RegExp(`\\b${variableName}\\s*[:]\\s*`, 'i'), // TypeScript type annotation
+                    new RegExp(`\\bdef\\s+${variableName}\\s*\\(`, 'i'), // Python function def
+                    new RegExp(`\\bfunction\\s+${variableName}\\s*\\(`, 'i'), // JavaScript function
+                    new RegExp(`\\b${variableName}\\s*=`, 'i'), // Assignment
+                ];
+
+                let foundPosition: vscode.Position | null = null;
+                let foundLine = -1;
+
+                for (const pattern of variablePatterns) {
+                    const match = text.match(pattern);
+                    if (match && match.index !== undefined) {
+                        const position = document.positionAt(match.index);
+                        foundPosition = position;
+                        foundLine = position.line;
+                        break;
+                    }
+                }
+
+                if (foundPosition) {
+                    // Make sure the target editor is active
+                    await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                    
+                    targetEditor.selection = new vscode.Selection(foundPosition, foundPosition);
+                    targetEditor.revealRange(new vscode.Range(foundPosition, foundPosition));
+                    
+                    const fileName = path.basename(targetEditor.document.fileName);
+                    vscode.window.showInformationMessage(`Found variable: ${variableName} at line ${foundLine + 1} in ${fileName}`);
+                    logSuccess(`[CommandRouter] Successfully navigated to variable ${variableName} at line ${foundLine + 1}`);
+                    return true;
+                } else {
+                    // Fallback: use VS Code's go to definition command
+                    try {
+                        await vscode.commands.executeCommand('editor.action.revealDefinition');
+                        vscode.window.showInformationMessage(`Using VS Code's go to definition for: ${variableName}`);
+                        return true;
+                    } catch (error) {
+                        vscode.window.showWarningMessage(`Variable "${variableName}" not found`);
+                        return false;
+                    }
+                }
+            } catch (error) {
+                logError(`[CommandRouter] Error searching for variable: ${error}`);
+                vscode.window.showErrorMessage(`Failed to search for variable: ${error}`);
+                return false;
+            }
+        };
+    }
+
+    /**
+     * Create parent navigation handler
+     */
+    private createParentNavigationHandler() {
+        return async (match: RegExpMatchArray | string[], originalText: string) => {
+            // Use editor context if available, with proper validation
+            let targetEditor = this.editorContext?.editor;
+            
+            // Validate that the captured editor is still valid
+            if (targetEditor) {
+                try {
+                    // Check if the document is still open and valid
+                    if (!targetEditor.document || targetEditor.document.isClosed) {
+                        logWarning('[CommandRouter] Captured editor context is no longer valid for parent navigation, falling back to active editor');
+                        targetEditor = undefined;
+                    }
+                } catch (error) {
+                    logError(`[CommandRouter] Error accessing captured editor for parent navigation: ${error}`);
+                    targetEditor = undefined;
+                }
+            }
+            
+            // Fallback to current active editor
+            if (!targetEditor) {
+                targetEditor = vscode.window.activeTextEditor;
+            }
+            
+            if (!targetEditor) {
+                vscode.window.showErrorMessage('No editor available for parent navigation');
+                return false;
+            }
+
+            try {
+                const document = targetEditor.document;
+                const currentPosition = targetEditor.selection.active;
+                
+                // Get document symbols to find parent scope
+                const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                    'vscode.executeDocumentSymbolProvider',
+                    document.uri
+                ) || [];
+
+                // Find the parent symbol containing the current position
+                function findParentSymbol(nodes: vscode.DocumentSymbol[], targetPos: vscode.Position): vscode.DocumentSymbol | null {
+                    for (const node of nodes) {
+                        // Check if current position is within this symbol
+                        if (targetPos.isAfterOrEqual(node.range.start) && targetPos.isBeforeOrEqual(node.range.end)) {
+                            // Check children first to find the most specific parent
+                            if (node.children && node.children.length > 0) {
+                                const childParent = findParentSymbol(node.children, targetPos);
+                                if (childParent) {
+                                    return node; // Return this node as parent of the found child
+                                }
+                            }
+                            // If we're in this symbol but no deeper child contains us, 
+                            // we need to find THIS symbol's parent
+                            return null; // Will be handled by caller
+                        }
+                    }
+                    return null;
+                }
+
+                // Find parent symbol by walking up the hierarchy
+                function findParent(nodes: vscode.DocumentSymbol[], targetPos: vscode.Position, parent?: vscode.DocumentSymbol): vscode.DocumentSymbol | null {
+                    for (const node of nodes) {
+                        if (targetPos.isAfterOrEqual(node.range.start) && targetPos.isBeforeOrEqual(node.range.end)) {
+                            if (node.children && node.children.length > 0) {
+                                const childResult = findParent(node.children, targetPos, node);
+                                if (childResult) {
+                                    return childResult;
+                                }
+                            }
+                            // We found the innermost symbol, return its parent
+                            return parent || null;
+                        }
+                    }
+                    return null;
+                }
+
+                const parentSymbol = findParent(symbols, currentPosition);
+
+                if (parentSymbol) {
+                    // Navigate to parent symbol
+                    const parentPosition = new vscode.Position(parentSymbol.range.start.line, parentSymbol.range.start.character);
+                    
+                    // Make sure the target editor is active
+                    await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                    
+                    targetEditor.selection = new vscode.Selection(parentPosition, parentPosition);
+                    targetEditor.revealRange(new vscode.Range(parentPosition, parentPosition));
+                    
+                    const fileName = path.basename(targetEditor.document.fileName);
+                    const parentType = vscode.SymbolKind[parentSymbol.kind] ? vscode.SymbolKind[parentSymbol.kind].toLowerCase() : 'symbol';
+                    vscode.window.showInformationMessage(`Moved to parent ${parentType}: ${parentSymbol.name} at line ${parentPosition.line + 1} in ${fileName}`);
+                    logSuccess(`[CommandRouter] Successfully navigated to parent ${parentType} ${parentSymbol.name}`);
+                    return true;
+                } else {
+                    vscode.window.showInformationMessage('No parent scope found - you are at the top level');
+                    return false;
+                }
+            } catch (error) {
+                logError(`[CommandRouter] Error navigating to parent: ${error}`);
+                vscode.window.showErrorMessage(`Failed to navigate to parent: ${error}`);
+                return false;
+            }
+        };
+    }
+
+    /**
+     * Classify command intent and execute using LLM
+     */
+    private async classifyAndExecuteWithLLM(text: string): Promise<boolean> {
+        let result: string | undefined;
+        try {
+            const client = getOpenAIClient();
+            
+            const prompt = `You are a voice command classifier for a code editor. Analyze the following voice command and determine the intent and parameters.
+
+Voice Command: "${text}"
+
+Available command categories:
+1. LINE_NAVIGATION - Navigate to specific line number (e.g., "go to line 25", "line 10", "move to line 50")
+2. FUNCTION_NAVIGATION - Navigate to function (e.g., "go to function myFunc", "find function calculate")  
+3. VARIABLE_DEFINITION - Find variable definition (e.g., "find variable config", "go to variable data definition")
+4. PARENT_NAVIGATION - Navigate to parent scope (e.g., "go to parent", "move up", "parent")
+5. LIPCODER_COMMAND - LipCoder specific commands (e.g., "symbol tree", "function list", "breadcrumb")
+6. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
+7. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
+8. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
+9. NOT_A_COMMAND - Just regular text to type
+
+Respond with ONLY valid JSON (no markdown code blocks):
+{
+  "category": "CATEGORY_NAME",
+  "confidence": 0.95,
+  "parameters": {
+    "lineNumber": 25,
+    "functionName": "myFunc",
+    "variableName": "config",
+    "command": "symbolTree",
+    "operation": "save"
+  },
+  "reasoning": "Brief explanation"
+}
+
+Only include parameters relevant to the category. Use null for missing parameters. DO NOT wrap in code blocks.`;
+
+            const response = await client.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [{ role: "user", content: prompt }],
+                max_tokens: 200,
+                temperature: 0.1
+            });
+
+            result = response.choices[0]?.message?.content?.trim();
+            if (!result) {
+                return false;
+            }
+
+            // Handle JSON wrapped in markdown code blocks
+            let jsonString = result;
+            if (result.startsWith('```json') && result.endsWith('```')) {
+                jsonString = result.slice(7, -3).trim();
+            } else if (result.startsWith('```') && result.endsWith('```')) {
+                jsonString = result.slice(3, -3).trim();
+            }
+
+            const commandInfo = JSON.parse(jsonString);
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🤖 LLM Classification:`);
+                log(`[CommandRouter] Category: ${commandInfo.category}`);
+                log(`[CommandRouter] Confidence: ${commandInfo.confidence}`);
+                log(`[CommandRouter] Parameters: ${JSON.stringify(commandInfo.parameters)}`);
+                log(`[CommandRouter] Reasoning: ${commandInfo.reasoning}`);
+            }
+
+            // Only execute if confidence is high enough
+            if (commandInfo.confidence < 0.7) {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ⚠️ Low confidence (${commandInfo.confidence}), skipping execution`);
+                }
+                return false;
+            }
+
+            // Execute based on category
+            return await this.executeLLMCommand(commandInfo, text);
+
+        } catch (error) {
+            if (this.options.enableLogging) {
+                logError(`[CommandRouter] LLM classification failed: ${error}`);
+                log(`[CommandRouter] LLM raw response: ${result || 'no response'}`);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Execute command based on LLM classification
+     */
+    private async executeLLMCommand(commandInfo: any, originalText: string): Promise<boolean> {
+        const { category, parameters } = commandInfo;
+
+        try {
+            switch (category) {
+                case 'LINE_NAVIGATION':
+                    return await this.executeLLMLineNavigation(parameters, originalText);
+                
+                case 'FUNCTION_NAVIGATION':
+                    return await this.executeLLMFunctionNavigation(parameters, originalText);
+                
+                case 'VARIABLE_DEFINITION':
+                    return await this.executeLLMVariableDefinition(parameters, originalText);
+                
+                case 'PARENT_NAVIGATION':
+                    return await this.executeLLMParentNavigation(originalText);
+                
+                case 'LIPCODER_COMMAND':
+                    return await this.executeLLMLipCoderCommand(parameters, originalText);
+                
+                case 'FILE_OPERATION':
+                    return await this.executeLLMFileOperation(parameters, originalText);
+                
+                case 'EDITOR_OPERATION':
+                    return await this.executeLLMEditorOperation(parameters, originalText);
+                
+                case 'NAVIGATION_OPERATION':
+                    return await this.executeLLMNavigationOperation(parameters, originalText);
+                
+                case 'NOT_A_COMMAND':
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] 📝 LLM determined this is not a command, will type text`);
+                    }
+                    return false; // Let it fall through to text insertion
+                
+                default:
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] ❓ Unknown category: ${category}`);
+                    }
+                    return false;
+            }
+        } catch (error) {
+            logError(`[CommandRouter] Error executing LLM command: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute line navigation command
+     */
+    private async executeLLMLineNavigation(parameters: any, originalText: string): Promise<boolean> {
+        const lineNumber = parameters?.lineNumber;
+        if (!lineNumber || lineNumber < 1) {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ❌ Invalid line number: ${lineNumber}`);
+            }
+            return false;
+        }
+
+        // Use editor context if available
+        let targetEditor = this.editorContext?.editor;
+        if (targetEditor) {
+            try {
+                if (!targetEditor.document || targetEditor.document.isClosed) {
+                    targetEditor = undefined;
+                }
+            } catch (error) {
+                targetEditor = undefined;
+            }
+        }
+        
+        if (!targetEditor) {
+            targetEditor = vscode.window.activeTextEditor;
+        }
+        
+        if (!targetEditor) {
+            vscode.window.showErrorMessage('No editor available to navigate to line');
+            return false;
+        }
+
+        try {
+            await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+            const position = new vscode.Position(lineNumber - 1, 0);
+            targetEditor.selection = new vscode.Selection(position, position);
+            targetEditor.revealRange(new vscode.Range(position, position));
+            
+            const fileName = path.basename(targetEditor.document.fileName);
+            vscode.window.showInformationMessage(`🚀 Went to line ${lineNumber} in ${fileName}`);
+            logSuccess(`[CommandRouter] ✅ LLM navigated to line ${lineNumber}`);
+            return true;
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to navigate to line ${lineNumber}: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute function navigation command
+     */
+    private async executeLLMFunctionNavigation(parameters: any, originalText: string): Promise<boolean> {
+        const functionName = parameters?.functionName;
+        if (!functionName) {
+            return false;
+        }
+
+        let targetEditor = this.editorContext?.editor || vscode.window.activeTextEditor;
+        if (!targetEditor) {
+            vscode.window.showErrorMessage('No editor available to search for function');
+            return false;
+        }
+
+        const position = await findFunctionWithLLM(functionName, targetEditor);
+        if (position) {
+            try {
+                await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                const newPosition = new vscode.Position(position.line, position.character);
+                targetEditor.selection = new vscode.Selection(newPosition, newPosition);
+                targetEditor.revealRange(new vscode.Range(newPosition, newPosition));
+                
+                const fileName = path.basename(targetEditor.document.fileName);
+                vscode.window.showInformationMessage(`🎯 Found function: ${functionName} at line ${position.line + 1} in ${fileName}`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to navigate to function: ${error}`);
+                return false;
+            }
+        } else {
+            vscode.window.showWarningMessage(`Function "${functionName}" not found`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute variable definition command
+     */
+    private async executeLLMVariableDefinition(parameters: any, originalText: string): Promise<boolean> {
+        const variableName = parameters?.variableName;
+        if (!variableName) {
+            return false;
+        }
+
+        // Try VS Code's built-in go to definition
+        try {
+            await vscode.commands.executeCommand('editor.action.revealDefinition');
+            vscode.window.showInformationMessage(`🔍 Using VS Code's go to definition for: ${variableName}`);
+            return true;
+        } catch (error) {
+            vscode.window.showWarningMessage(`Variable "${variableName}" definition not found`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute parent navigation command
+     */
+    private async executeLLMParentNavigation(originalText: string): Promise<boolean> {
+        let targetEditor = this.editorContext?.editor || vscode.window.activeTextEditor;
+        if (!targetEditor) {
+            vscode.window.showErrorMessage('No editor available for parent navigation');
+            return false;
+        }
+
+        try {
+            const document = targetEditor.document;
+            const currentPosition = targetEditor.selection.active;
+            
+            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                document.uri
+            ) || [];
+
+            // Find parent symbol
+            function findParent(nodes: vscode.DocumentSymbol[], targetPos: vscode.Position, parent?: vscode.DocumentSymbol): vscode.DocumentSymbol | null {
+                for (const node of nodes) {
+                    if (targetPos.isAfterOrEqual(node.range.start) && targetPos.isBeforeOrEqual(node.range.end)) {
+                        if (node.children && node.children.length > 0) {
+                            const childResult = findParent(node.children, targetPos, node);
+                            if (childResult) {
+                                return childResult;
+                            }
+                        }
+                        return parent || null;
+                    }
+                }
+                return null;
+            }
+
+            const parentSymbol = findParent(symbols, currentPosition);
+
+            if (parentSymbol) {
+                const parentPosition = new vscode.Position(parentSymbol.range.start.line, parentSymbol.range.start.character);
+                await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                targetEditor.selection = new vscode.Selection(parentPosition, parentPosition);
+                targetEditor.revealRange(new vscode.Range(parentPosition, parentPosition));
+                
+                const fileName = path.basename(targetEditor.document.fileName);
+                const parentType = vscode.SymbolKind[parentSymbol.kind] ? vscode.SymbolKind[parentSymbol.kind].toLowerCase() : 'symbol';
+                vscode.window.showInformationMessage(`⬆️ Moved to parent ${parentType}: ${parentSymbol.name} in ${fileName}`);
+                return true;
+            } else {
+                vscode.window.showInformationMessage('No parent scope found - you are at the top level');
+                return false;
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to navigate to parent: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute LipCoder specific command
+     */
+    private async executeLLMLipCoderCommand(parameters: any, originalText: string): Promise<boolean> {
+        const command = parameters?.command;
+        if (!command) {
+            return false;
+        }
+
+        const commandMap: { [key: string]: string } = {
+            'symbolTree': 'lipcoder.symbolTree',
+            'symbols': 'lipcoder.symbolTree',
+            'functionList': 'lipcoder.functionList',
+            'functions': 'lipcoder.functionList',
+            'breadcrumb': 'lipcoder.breadcrumb',
+            'whereAmI': 'lipcoder.breadcrumb',
+            'fileTree': 'lipcoder.fileTree',
+            'explorer': 'lipcoder.fileTree',
+            'readLine': 'lipcoder.readLineTokens',
+            'lineTokens': 'lipcoder.readLineTokens',
+            'readFunction': 'lipcoder.readFunctionTokens',
+            'functionTokens': 'lipcoder.readFunctionTokens',
+            'stopReading': 'lipcoder.stopReadLineTokens',
+            'stopSpeech': 'lipcoder.stopReadLineTokens',
+            'currentLine': 'lipcoder.readCurrentLine',
+            'lineNumber': 'lipcoder.readCurrentLine',
+            'switchPanel': 'lipcoder.switchPanel',
+            'panel': 'lipcoder.switchPanel'
+        };
+
+        const vsCodeCommand = commandMap[command];
+        if (vsCodeCommand) {
+            try {
+                if (vsCodeCommand.startsWith('lipcoder.') && this.editorContext && this.editorContext.editor) {
+                    await vscode.commands.executeCommand(vsCodeCommand, this.editorContext.editor);
+                } else {
+                    await vscode.commands.executeCommand(vsCodeCommand);
+                }
+                vscode.window.showInformationMessage(`🎯 Executed: ${command}`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to execute ${command}: ${error}`);
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Execute file operation command
+     */
+    private async executeLLMFileOperation(parameters: any, originalText: string): Promise<boolean> {
+        const operation = parameters?.operation;
+        
+        const operationMap: { [key: string]: string } = {
+            'save': 'workbench.action.files.save',
+            'open': 'workbench.action.quickOpen',
+            'new': 'workbench.action.files.newUntitledFile'
+        };
+
+        const command = operationMap[operation];
+        if (command) {
+            try {
+                await vscode.commands.executeCommand(command);
+                vscode.window.showInformationMessage(`📁 Executed: ${operation} file`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to ${operation} file: ${error}`);
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Execute editor operation command
+     */
+    private async executeLLMEditorOperation(parameters: any, originalText: string): Promise<boolean> {
+        const operation = parameters?.operation;
+        
+        const operationMap: { [key: string]: string } = {
+            'copy': 'editor.action.clipboardCopyAction',
+            'paste': 'editor.action.clipboardPasteAction',
+            'undo': 'undo',
+            'redo': 'redo',
+            'format': 'editor.action.formatDocument',
+            'comment': 'editor.action.commentLine',
+            'selectAll': 'editor.action.selectAll'
+        };
+
+        const command = operationMap[operation];
+        if (command) {
+            try {
+                await vscode.commands.executeCommand(command);
+                vscode.window.showInformationMessage(`✏️ Executed: ${operation}`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to ${operation}: ${error}`);
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Execute navigation operation command
+     */
+    private async executeLLMNavigationOperation(parameters: any, originalText: string): Promise<boolean> {
+        const operation = parameters?.operation;
+        
+        const operationMap: { [key: string]: string } = {
+            'find': 'actions.find',
+            'search': 'actions.find',
+            'replace': 'editor.action.startFindReplaceAction',
+            'gotoLine': 'workbench.action.gotoLine'
+        };
+
+        const command = operationMap[operation];
+        if (command) {
+            try {
+                await vscode.commands.executeCommand(command);
+                vscode.window.showInformationMessage(`🔍 Executed: ${operation}`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to ${operation}: ${error}`);
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
      * Create script execution handler that has access to this context
      */
     private createScriptExecutionHandler() {
@@ -420,14 +1124,90 @@ export class CommandRouter {
                 preventDefault: true
             },
             
-            // Navigation commands
+            // Navigation commands - more flexible patterns
             {
-                pattern: /^(go to line|goto line)\s*(\d+)$/i,
+                pattern: /(?:go\s*to\s*line|goto\s*line|move\s*to\s*line|moveto\s*line|jump\s*to\s*line|jumpto\s*line).*?(\d+)/i,
                 command: '',
-                description: 'Go to specific line number',
+                description: 'Go to specific line number (flexible)',
                 preventDefault: true,
                 isRegex: true,
-                customHandler: this.createLineNavigationHandler()
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    log(`[CommandRouter] 🎯 Line navigation handler called!`);
+                    log(`[CommandRouter] Original text: "${originalText}"`);
+                    log(`[CommandRouter] Match array: ${JSON.stringify(match)}`);
+                    log(`[CommandRouter] Match[0]: "${match[0]}"`);
+                    log(`[CommandRouter] Match[1]: "${match[1]}"`);
+                    
+                    const lineNumberStr = match[1]?.trim();
+                    if (!lineNumberStr) {
+                        log(`[CommandRouter] ❌ No line number found in match[1]`);
+                        vscode.window.showErrorMessage('Please specify a line number');
+                        return false;
+                    }
+
+                    const lineNumber = parseInt(lineNumberStr);
+                    if (isNaN(lineNumber) || lineNumber < 1) {
+                        log(`[CommandRouter] ❌ Invalid line number: "${lineNumberStr}"`);
+                        vscode.window.showErrorMessage(`Invalid line number: ${lineNumberStr}`);
+                        return false;
+                    }
+
+                    log(`[CommandRouter] ✅ Parsed line number: ${lineNumber}`);
+
+                    // Use editor context if available
+                    let targetEditor = this.editorContext?.editor;
+                    
+                    if (targetEditor) {
+                        try {
+                            if (!targetEditor.document || targetEditor.document.isClosed) {
+                                log(`[CommandRouter] Editor context invalid, falling back to active editor`);
+                                targetEditor = undefined;
+                            }
+                        } catch (error) {
+                            log(`[CommandRouter] Error checking editor context: ${error}`);
+                            targetEditor = undefined;
+                        }
+                    }
+                    
+                    if (!targetEditor) {
+                        targetEditor = vscode.window.activeTextEditor;
+                        log(`[CommandRouter] Using active editor: ${!!targetEditor}`);
+                    }
+                    
+                    if (!targetEditor) {
+                        log(`[CommandRouter] ❌ No editor available`);
+                        vscode.window.showErrorMessage('No editor available to navigate to line');
+                        return false;
+                    }
+
+                    try {
+                        log(`[CommandRouter] 🚀 Navigating to line ${lineNumber}...`);
+                        
+                        await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                        
+                        const position = new vscode.Position(lineNumber - 1, 0);
+                        targetEditor.selection = new vscode.Selection(position, position);
+                        targetEditor.revealRange(new vscode.Range(position, position));
+                        
+                        const fileName = path.basename(targetEditor.document.fileName);
+                        const message = `Went to line ${lineNumber} in ${fileName}`;
+                        vscode.window.showInformationMessage(message);
+                        log(`[CommandRouter] ✅ Successfully navigated to line ${lineNumber}`);
+                        return true;
+                    } catch (error) {
+                        log(`[CommandRouter] ❌ Error navigating: ${error}`);
+                        vscode.window.showErrorMessage(`Failed to navigate to line ${lineNumber}: ${error}`);
+                        return false;
+                    }
+                }
+            },
+            {
+                pattern: /^.*?line\s*(\d+).*?$/i,
+                command: '',
+                description: 'Navigate to line number (flexible)',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: this.createSimpleLineNavigationHandler()
             },
             {
                 pattern: /^(go to line|goto line)$/i,
@@ -550,14 +1330,48 @@ export class CommandRouter {
                 preventDefault: true
             },
 
-            // Advanced navigation with LLM
+            // Advanced navigation with LLM - more flexible patterns
             {
-                pattern: /^(go to function|find function|navigate to function)\s+(.+)$/i,
+                pattern: /^.*?(go to function|find function|navigate to function|move to function|moveto function|jump to function|jumpto function).*?([a-zA-Z_][a-zA-Z0-9_]*).*?$/i,
                 command: '',  // Will be handled by customHandler
-                description: 'Go to function using LLM search',
+                description: 'Go to function using LLM search (flexible)',
                 preventDefault: true,
                 isRegex: true,
                 customHandler: this.createFunctionSearchHandler()
+            },
+            {
+                pattern: /^(move to variable|moveto variable)\s+(.+)\s+(definition|def)$/i,
+                command: '',  // Will be handled by customHandler
+                description: 'Move to variable definition',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: this.createVariableDefinitionHandler()
+            },
+            {
+                pattern: /^(go to variable|goto variable)\s+(.+)\s+(definition|def)$/i,
+                command: '',  // Will be handled by customHandler
+                description: 'Go to variable definition',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: this.createVariableDefinitionHandler()
+            },
+            {
+                pattern: /^(move to parent|moveto parent|go to parent|goto parent|parent|up one level)$/i,
+                command: '',  // Will be handled by customHandler
+                description: 'Move to parent scope/function',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: this.createParentNavigationHandler()
+            },
+            
+            // Simplified variable patterns (without requiring "definition")
+            {
+                pattern: /^(find variable|find var)\s+(.+)$/i,
+                command: '',  // Will be handled by customHandler
+                description: 'Find variable definition',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: this.createVariableDefinitionHandler()
             },
 
             // Package.json script execution
@@ -568,6 +1382,122 @@ export class CommandRouter {
                 preventDefault: true,
                 isRegex: true,
                 customHandler: this.createScriptExecutionHandler()
+            },
+
+            // Test command for debugging
+            {
+                pattern: /^(test command|test)$/i,
+                command: '',
+                description: 'Test command for debugging',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    vscode.window.showInformationMessage(`✅ Test command worked! You said: "${originalText}"`);
+                    log(`[CommandRouter] ✅ Test command handler executed successfully`);
+                    return true;
+                }
+            },
+
+            // Debug pattern for specific "go to line 10" case
+            {
+                pattern: /Go to line 10\./,
+                command: '',
+                description: 'Debug pattern for "Go to line 10."',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    log(`[CommandRouter] 🎯 DEBUG: Exact "Go to line 10." pattern matched!`);
+                    vscode.window.showInformationMessage(`🎯 Debug pattern matched: "${originalText}"`);
+                    
+                    // Navigate to line 10
+                    const targetEditor = vscode.window.activeTextEditor;
+                    if (targetEditor) {
+                        const position = new vscode.Position(9, 0); // Line 10 (0-indexed)
+                        targetEditor.selection = new vscode.Selection(position, position);
+                        targetEditor.revealRange(new vscode.Range(position, position));
+                        vscode.window.showInformationMessage("Navigated to line 10 via debug pattern!");
+                    }
+                    return true;
+                }
+            },
+
+            // Super simple debug pattern - match anything with "line" and a number
+            {
+                pattern: /line.*?(\d+)/i,
+                command: '',
+                description: 'Super simple line pattern',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    log(`[CommandRouter] 🔥 SIMPLE pattern matched!`);
+                    log(`[CommandRouter] Original: "${originalText}"`);
+                    log(`[CommandRouter] Match: ${JSON.stringify(match)}`);
+                    
+                    const lineNum = match[1] ? parseInt(match[1]) : 1;
+                    vscode.window.showInformationMessage(`🔥 Simple pattern found line: ${lineNum} in "${originalText}"`);
+                    
+                    const targetEditor = vscode.window.activeTextEditor;
+                    if (targetEditor && lineNum > 0) {
+                        const position = new vscode.Position(lineNum - 1, 0);
+                        targetEditor.selection = new vscode.Selection(position, position);
+                        targetEditor.revealRange(new vscode.Range(position, position));
+                        vscode.window.showInformationMessage(`Navigated to line ${lineNum}!`);
+                    }
+                    return true;
+                }
+            },
+
+            // LipCoder-specific commands
+            {
+                pattern: /^(symbol tree|symbols)$/i,
+                command: 'lipcoder.symbolTree',
+                description: 'Speak symbol tree',
+                preventDefault: true
+            },
+            {
+                pattern: /^(function list|functions)$/i,
+                command: 'lipcoder.functionList',
+                description: 'Speak function list',
+                preventDefault: true
+            },
+            {
+                pattern: /^(breadcrumb|where am i)$/i,
+                command: 'lipcoder.breadcrumb',
+                description: 'Read breadcrumb/location',
+                preventDefault: true
+            },
+            {
+                pattern: /^(file tree|explorer)$/i,
+                command: 'lipcoder.fileTree',
+                description: 'Speak file tree',
+                preventDefault: true
+            },
+            {
+                pattern: /^(read line|line tokens)$/i,
+                command: 'lipcoder.readLineTokens',
+                description: 'Read current line tokens',
+                preventDefault: true
+            },
+            {
+                pattern: /^(read function|function tokens)$/i,
+                command: 'lipcoder.readFunctionTokens',
+                description: 'Read function tokens',
+                preventDefault: true
+            },
+            {
+                pattern: /^(stop reading|stop speech)$/i,
+                command: 'lipcoder.stopReadLineTokens',
+                description: 'Stop LipCoder speech',
+                preventDefault: true
+            },
+            {
+                pattern: /^(current line|line number)$/i,
+                command: 'lipcoder.readCurrentLine',
+                description: 'Read current line number',
+                preventDefault: true
+            },
+            {
+                pattern: /^(switch panel|panel)$/i,
+                command: 'lipcoder.switchPanel',
+                description: 'Switch between panels',
+                preventDefault: true
             }
         ];
 
@@ -694,7 +1624,7 @@ Response:`;
     }
 
     /**
-     * Process transcribed text and execute matching commands
+     * Process transcribed text and execute matching commands using LLM
      */
     async processTranscription(text: string): Promise<boolean> {
         if (!text || !text.trim()) {
@@ -704,10 +1634,31 @@ Response:`;
         const trimmedText = text.trim();
         
         if (this.options.enableLogging) {
+            log(`[CommandRouter] ==========================================`);
             log(`[CommandRouter] Processing transcription: "${trimmedText}"`);
+            log(`[CommandRouter] Using LLM-based command classification`);
         }
 
-        // First try LLM-based intelligent matching
+        // Use LLM to classify and execute command
+        try {
+            const commandResult = await this.classifyAndExecuteWithLLM(trimmedText);
+            if (commandResult) {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ✅ LLM successfully executed command`);
+                }
+                return true;
+            } else {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ⚠️ LLM did not execute command, falling back to pattern matching`);
+                }
+            }
+        } catch (error) {
+            if (this.options.enableLogging) {
+                logError(`[CommandRouter] LLM command processing failed: ${error}`);
+            }
+        }
+
+        // Fallback to pattern matching if LLM fails
         let matchedPattern: CommandPattern | null = null;
         if (this.options.useLLMMatching) {
             matchedPattern = await this.matchCommandWithLLM(trimmedText);
@@ -715,10 +1666,25 @@ Response:`;
 
         // If LLM didn't find a match, fall back to exact pattern matching
         if (!matchedPattern) {
-            for (const pattern of this.patterns) {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] LLM didn't find match, trying exact pattern matching...`);
+            }
+            
+            for (let i = 0; i < this.patterns.length; i++) {
+                const pattern = this.patterns[i];
+                
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] Testing pattern ${i}: ${pattern.pattern} against "${trimmedText}"`);
+                }
+                
                 const match = this.matchPattern(trimmedText, pattern);
                 
                 if (match) {
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] ✅ MATCH FOUND! Pattern ${i}: ${pattern.description}`);
+                        log(`[CommandRouter] Match result: ${JSON.stringify(match)}`);
+                    }
+                    
                     // Handle custom handlers immediately
                     if (pattern.customHandler) {
                         try {
@@ -735,7 +1701,15 @@ Response:`;
                     
                     matchedPattern = pattern;
                     break;
+                } else {
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] ❌ No match for pattern ${i}`);
+                    }
                 }
+            }
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] Pattern matching complete. Found match: ${!!matchedPattern}`);
             }
         }
 
@@ -821,7 +1795,15 @@ Response:`;
 
 
         // Execute the VS Code command
-        await vscode.commands.executeCommand(pattern.command, ...args);
+        // For LipCoder commands, pass the captured editor context if available
+        if (pattern.command.startsWith('lipcoder.') && this.editorContext && this.editorContext.editor) {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] Executing LipCoder command with captured editor context: ${this.editorContext.documentUri.fsPath}`);
+            }
+            await vscode.commands.executeCommand(pattern.command, this.editorContext.editor, ...args);
+        } else {
+            await vscode.commands.executeCommand(pattern.command, ...args);
+        }
 
         if (this.options.showNotifications) {
             vscode.window.showInformationMessage(`Executed: ${pattern.description || pattern.command}`);

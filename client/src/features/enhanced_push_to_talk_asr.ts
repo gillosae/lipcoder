@@ -6,6 +6,7 @@ import { ASRPopup } from '../asr_popup';
 import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config';
 import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
+import { stopAllAudio } from './stop_reading';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -27,6 +28,14 @@ interface EditorContext {
 let recordingContext: EditorContext | null = null;
 let autoStopTimer: NodeJS.Timeout | null = null;
 const MAX_RECORDING_DURATION = 30000; // 30 seconds max
+
+// ASR Mode Configuration
+enum ASRMode {
+    Command = 'command',
+    Write = 'write'
+}
+
+let currentASRMode: ASRMode = ASRMode.Command;
 
 /**
  * Get the appropriate ASR client based on current backend
@@ -88,13 +97,15 @@ function updateStatusBar(recording: boolean): void {
     if (!statusBarItem) return;
     
     if (recording) {
-        statusBarItem.text = `$(record) Recording... Press Ctrl+Shift+A to stop (${currentASRBackend})`;
+        const modeText = currentASRMode === ASRMode.Command ? 'Command' : 'Write';
+        const stopKey = currentASRMode === ASRMode.Command ? 'Ctrl+Shift+A' : 'Ctrl+Shift+W';
+        statusBarItem.text = `$(record) Recording ${modeText} Mode... Press ${stopKey} to stop (${currentASRBackend})`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-        statusBarItem.tooltip = 'Recording in progress. Press Ctrl+Shift+A again to stop and process speech.';
+        statusBarItem.tooltip = `Recording in ${modeText} mode. Press ${stopKey} again to stop and process speech.`;
     } else {
-        statusBarItem.text = `$(mic) ASR Ready - Press Ctrl+Shift+A to record (${currentASRBackend})`;
+        statusBarItem.text = `$(mic) ASR Ready - Ctrl+Shift+A (Commands) / Ctrl+Shift+W (Write) (${currentASRBackend})`;
         statusBarItem.backgroundColor = undefined;
-        statusBarItem.tooltip = 'Press Ctrl+Shift+A to start voice recording. Commands will execute in the current editor context.';
+        statusBarItem.tooltip = 'Press Ctrl+Shift+A for command mode or Ctrl+Shift+W for write mode. Commands execute in current editor context.';
     }
 }
 
@@ -241,7 +252,12 @@ function initializeASRClients(): void {
  * Handle transcription result
  */
 async function handleTranscription(text: string): Promise<void> {
-    log(`[Enhanced-ASR] Transcription received: "${text}"`);
+    log(`[Enhanced-ASR] ================================================`);
+    log(`[Enhanced-ASR] Transcription received: "${text}" (Mode: ${currentASRMode})`);
+    log(`[Enhanced-ASR] Text length: ${text.length}`);
+    log(`[Enhanced-ASR] Text bytes: ${JSON.stringify([...text].map(c => c.charCodeAt(0)))}`);
+    log(`[Enhanced-ASR] Current mode: ${currentASRMode}`);
+    log(`[Enhanced-ASR] Command router available: ${!!commandRouter}`);
     
     // Update popup
     if (asrPopup) {
@@ -250,21 +266,25 @@ async function handleTranscription(text: string): Promise<void> {
     
     // Output to channel
     if (outputChannel) {
-        outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${text}`);
+        outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${text} (${currentASRMode} mode)`);
         outputChannel.show(true);
     }
     
-    // Try to process as command first
+    // Try to process as command first (only in command mode)
     let commandExecuted = false;
-    if (commandRouter) {
+    if (currentASRMode === ASRMode.Command && commandRouter) {
         try {
+            log(`[Enhanced-ASR] 🚀 Calling command router with: "${text}"`);
             commandExecuted = await commandRouter.processTranscription(text);
+            log(`[Enhanced-ASR] Command router result: ${commandExecuted}`);
         } catch (error) {
             logError(`[Enhanced-ASR] Command router processing failed: ${error}`);
         }
+    } else {
+        log(`[Enhanced-ASR] ⚪ Not calling command router - Mode: ${currentASRMode}, Router: ${!!commandRouter}`);
     }
     
-    // If no command was executed, fall back to text insertion
+    // If no command was executed (or in write mode), fall back to text insertion
     if (!commandExecuted) {
         // Try to use captured editor context first, then fall back to active editor
         let targetEditor = recordingContext?.editor;
@@ -402,6 +422,56 @@ function captureEditorContext(): EditorContext | null {
 }
 
 /**
+ * Start recording in command mode
+ */
+async function startASRCommandMode(): Promise<void> {
+    // Stop any ongoing audio/token reading immediately
+    stopAllAudio();
+    log(`[Enhanced-ASR] Stopped all audio for command mode recording`);
+    
+    currentASRMode = ASRMode.Command;
+    log(`[Enhanced-ASR] Starting ASR in COMMAND mode`);
+    await startRecording();
+}
+
+/**
+ * Stop recording in command mode  
+ */
+async function stopASRCommandMode(): Promise<void> {
+    if (currentASRMode === ASRMode.Command) {
+        log(`[Enhanced-ASR] Stopping ASR command mode`);
+        await stopRecording();
+    } else {
+        logWarning(`[Enhanced-ASR] Cannot stop command mode - current mode is ${currentASRMode}`);
+    }
+}
+
+/**
+ * Start recording in write mode
+ */
+async function startASRWriteMode(): Promise<void> {
+    // Stop any ongoing audio/token reading immediately
+    stopAllAudio();
+    log(`[Enhanced-ASR] Stopped all audio for write mode recording`);
+    
+    currentASRMode = ASRMode.Write;
+    log(`[Enhanced-ASR] Starting ASR in WRITE mode`);
+    await startRecording();
+}
+
+/**
+ * Stop recording in write mode
+ */
+async function stopASRWriteMode(): Promise<void> {
+    if (currentASRMode === ASRMode.Write) {
+        log(`[Enhanced-ASR] Stopping ASR write mode`);
+        await stopRecording();  
+    } else {
+        logWarning(`[Enhanced-ASR] Cannot stop write mode - current mode is ${currentASRMode}`);
+    }
+}
+
+/**
  * Start recording
  */
 async function startRecording(): Promise<void> {
@@ -412,6 +482,10 @@ async function startRecording(): Promise<void> {
     
     try {
         log('[Enhanced-ASR] Starting ASR recording...');
+        
+        // Stop all ongoing audio/token reading before starting recording
+        stopAllAudio();
+        log('[Enhanced-ASR] Stopped all ongoing audio before recording');
         
         // Capture editor context at the start of recording
         recordingContext = captureEditorContext();
@@ -640,6 +714,12 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
         vscode.commands.registerCommand('lipcoder.startASRRecording', startRecording),
         vscode.commands.registerCommand('lipcoder.stopASRRecording', stopRecording),
         vscode.commands.registerCommand('lipcoder.toggleASRRecording', toggleRecording),
+        
+        // New mode-specific ASR commands
+        vscode.commands.registerCommand('lipcoder.startASRCommandMode', startASRCommandMode),
+        vscode.commands.registerCommand('lipcoder.stopASRCommandMode', stopASRCommandMode),
+        vscode.commands.registerCommand('lipcoder.startASRWriteMode', startASRWriteMode),
+        vscode.commands.registerCommand('lipcoder.stopASRWriteMode', stopASRWriteMode),
         
         // Backend management
         vscode.commands.registerCommand('lipcoder.switchASRBackend', switchASRBackend),

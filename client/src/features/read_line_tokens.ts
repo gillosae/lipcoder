@@ -28,6 +28,11 @@ function calculatePanning(column: number): number {
 async function executeReadLineTokens(editor: vscode.TextEditor, client: LanguageClient): Promise<void> {
     try {
         isReadLineTokensRunning = true;
+        
+        // Set flag IMMEDIATELY to prevent interruption by inline suggestions
+        setLineTokenReadingActive(true);
+        log(`[readLineTokens] Line token reading flag set at start`);
+        
         const docLang = editor.document.languageId === 'python' ? 'python' : 'typescript';
 
         // IMMEDIATELY stop any ongoing audio and controller - no delays  
@@ -105,10 +110,6 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         log(`[readLineTokens]speak sequence: ${spokenSeq}`);
 
         try {
-            // Set flag to prevent interruption by other features (but allow cursor movement)
-            setLineTokenReadingActive(true);
-            log(`[readLineTokens] Line token reading flag set, starting token sequence`);
-            
             // Final check before starting audio
             if (lineAbortController.signal.aborted) {
                 log(`[readLineTokens] Cancelled before starting audio`);
@@ -126,12 +127,13 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
                 log(`[readLineTokens] Token sequence aborted as expected`);
             }
         } finally {
-            // Always clear the flag when done
-            setLineTokenReadingActive(false);
-            log(`[readLineTokens] Line token reading flag cleared`);
+            log(`[readLineTokens] Token reading completed`);
         }
     } finally {
         isReadLineTokensRunning = false;
+        // Always clear the line reading flag when function exits
+        setLineTokenReadingActive(false);
+        log(`[readLineTokens] Line token reading flag cleared on function exit`);
         if (currentReadLineTokensExecution === currentReadLineTokensExecution) {
             currentReadLineTokensExecution = null;
         }

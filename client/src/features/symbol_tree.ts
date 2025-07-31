@@ -22,8 +22,8 @@ function cleanupSymbolTree(): void {
 
 export function registerSymbolTree(context: ExtensionContext) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.symbolTree', async () => {
-            const editor = vscode.window.activeTextEditor;
+        vscode.commands.registerCommand('lipcoder.symbolTree', async (editorArg?: vscode.TextEditor) => {
+            const editor = editorArg || vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
                 speakTokenList([{ tokens: ['Open a File First!'], category: undefined }]);

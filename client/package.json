@@ -55,12 +55,22 @@
       },
       {
         "key": "ctrl+shift+a",
-        "command": "lipcoder.startASRRecording",
+        "command": "lipcoder.startASRCommandMode",
         "when": "!lipcoder.isRecording"
       },
       {
         "key": "ctrl+shift+a",
-        "command": "lipcoder.stopASRRecording", 
+        "command": "lipcoder.stopASRCommandMode", 
+        "when": "lipcoder.isRecording"
+      },
+      {
+        "key": "ctrl+shift+w",
+        "command": "lipcoder.startASRWriteMode",
+        "when": "!lipcoder.isRecording"
+      },
+      {
+        "key": "ctrl+shift+w",
+        "command": "lipcoder.stopASRWriteMode",
         "when": "lipcoder.isRecording"
       },
       {

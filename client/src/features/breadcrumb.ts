@@ -11,8 +11,8 @@ export function registerBreadcrumb(
     client: LanguageClient
 ) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.breadcrumb', async () => {
-            const editor = vscode.window.activeTextEditor;
+        vscode.commands.registerCommand('lipcoder.breadcrumb', async (editorArg?: vscode.TextEditor) => {
+            const editor = editorArg || vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
                 return;

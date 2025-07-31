@@ -21,8 +21,8 @@ function cleanupFunctionList(): void {
 
 export function registerFunctionList(context: vscode.ExtensionContext) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.functionList', async () => {
-            const editor = vscode.window.activeTextEditor;
+        vscode.commands.registerCommand('lipcoder.functionList', async (editorArg?: vscode.TextEditor) => {
+            const editor = editorArg || vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
                 return;

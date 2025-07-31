@@ -11,6 +11,13 @@ import { logWarning, logSuccess, logError } from './utils';
 
 let languageClient: LanguageClient | null = null;
 
+/**
+ * Get the current language client instance
+ */
+export function getLanguageClient(): LanguageClient | null {
+    return languageClient;
+}
+
 export function startLanguageClient(context: ExtensionContext) {
     const serverModule = context.asAbsolutePath(
         path.join('dist', 'server', 'server.js')
@@ -76,6 +83,30 @@ export async function stopLanguageClient(): Promise<void> {
         }
     } finally {
         languageClient = null;
+    }
+}
+
+/**
+ * Restart the language client to pick up new server changes
+ */
+export async function restartLanguageClient(context: ExtensionContext): Promise<LanguageClient | null> {
+    logWarning('[LanguageClient] Restarting language client...');
+    
+    try {
+        // Stop the current client if it exists
+        await stopLanguageClient();
+        
+        // Wait a brief moment for cleanup
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Start a new client
+        const newClient = startLanguageClient(context);
+        
+        logSuccess('[LanguageClient] Language client restarted successfully');
+        return newClient;
+    } catch (error) {
+        logError(`[LanguageClient] Error restarting language client: ${error}`);
+        return null;
     }
 }
 

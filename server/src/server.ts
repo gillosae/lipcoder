@@ -185,32 +185,51 @@ function tokenizeComplexText(text: string): Array<{ text: string; category: stri
 
 // Helper function to tokenize comment text that may contain backslash commands
 function tokenizeCommentText(text: string): Array<{ text: string; category: string }> {
-    // Check if this looks like complex LaTeX-like syntax
-    if (text.includes('\\') && (text.includes('{') || text.includes('_'))) {
-        return tokenizeComplexText(text);
-    }
-    
     const tokens: Array<{ text: string; category: string }> = [];
+    let i = 0;
     
-    // Split on backslashes while preserving the backslashes
-    const parts = text.split(/(\\\w+)/);
-    
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (!part) continue; // Skip empty parts
+    while (i < text.length) {
+        const char = text[i];
         
-        if (part.startsWith('\\')) {
-            // This is a backslash command like \emph
-            tokens.push({ text: '\\', category: 'comment_symbol' });
-            const command = part.slice(1); // Remove the backslash
-            if (command) {
-                tokens.push({ text: command, category: 'comment_text' });
+        if (char === '\\') {
+            // Backslash symbol - use 'comment_symbol' category for earcon
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
+        } else if (char === '_') {
+            // Underscore symbol - use 'comment_symbol' category so it plays as earcon
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
+        } else if (char === '.' || char === ',' || char === ';' || char === ':') {
+            // Punctuation symbols - use 'comment_symbol' category so they play as earcons
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
+        } else if (char === '(' || char === ')' || char === '[' || char === ']' || 
+                   char === '{' || char === '}') {
+            // Bracket symbols - use 'comment_symbol' category so they play as earcons
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
+        } else if (char === '"' || char === "'" || char === '`') {
+            // Quote symbols - use 'comment_symbol' category so they play as earcons
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
+        } else if (/\s/.test(char)) {
+            // Whitespace - skip it (don't tokenize spaces in comment text)
+            i++;
+        } else if (/[a-zA-Z0-9]/.test(char)) {
+            // Alphanumeric - collect as word and use 'comment_text' category for comment voice
+            let word = '';
+            while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
+                word += text[i];
+                i++;
+            }
+            if (word) {
+                // Use 'comment_text' category so words are spoken with comment voice
+                tokens.push({ text: word, category: 'comment_text' });
             }
         } else {
-            // Regular text - keep as single unit if non-empty
-            if (part.trim()) {
-                tokens.push({ text: part, category: 'comment_text' });
-            }
+            // Other characters - treat as symbols with 'comment_symbol' category
+            tokens.push({ text: char, category: 'comment_symbol' });
+            i++;
         }
     }
     

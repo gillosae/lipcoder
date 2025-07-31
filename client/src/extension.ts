@@ -12,7 +12,7 @@ import { registerReadLineTokens } from './features/read_line_tokens';
 import { loadDictionaryWord } from './features/word_logic';
 import { registerStopReading } from './features/stop_reading';
 import { registerToggleTypingSpeech } from './features/toggle_typing_speech';
-import { startLanguageClient } from './language_client';
+import { startLanguageClient, restartLanguageClient, getLanguageClient } from './language_client';
 import { registerCurrentLine } from './features/current_line';
 import { registerReadFunctionTokens } from './features/read_function_tokens';
 import { registerBreadcrumb } from './features/breadcrumb';
@@ -190,6 +190,23 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerEnhancedPushToTalkASR(context);
 	registerTogglePanning(context);
 	registerTTSBackendSwitch(context);
+
+	// Add command to restart language server
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.restartLanguageServer', async () => {
+			try {
+				vscode.window.showInformationMessage('Restarting LipCoder Language Server...');
+				const newClient = await restartLanguageClient(context);
+				if (newClient) {
+					vscode.window.showInformationMessage('LipCoder Language Server restarted successfully! Tokenization changes are now active.');
+				} else {
+					vscode.window.showErrorMessage('Failed to restart LipCoder Language Server. Check the output for details.');
+				}
+			} catch (error) {
+				vscode.window.showErrorMessage(`Error restarting language server: ${error}`);
+			}
+		})
+	);
 
 }
 

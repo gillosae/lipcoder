@@ -303,6 +303,31 @@
         "command": "lipcoder.showTTSStatus",
         "title": "LipCoder: Show TTS Backend Status",
         "category": "TTS"
+      },
+      {
+        "command": "lipcoder.restartLanguageServer",
+        "title": "LipCoder: Restart Language Server",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.startASRCommandMode",
+        "title": "Start ASR Command Mode",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRCommandMode",  
+        "title": "Stop ASR Command Mode",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.startASRWriteMode",
+        "title": "Start ASR Write Mode", 
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopASRWriteMode",
+        "title": "Stop ASR Write Mode",
+        "category": "LipCoder"
       }
     ],
     "keybindings": [
