@@ -29,8 +29,8 @@ import { registerPlaySpeed } from './features/playspeed';
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
-import { registerToggleASR } from './features/toggle_asr';
-import { registerPushToTalkASR } from './features/push_to_talk_asr';
+// import { registerToggleASR } from './features/toggle_asr';
+// import { registerPushToTalkASR } from './features/push_to_talk_asr';
 import { registerEnhancedPushToTalkASR } from './features/enhanced_push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
 import { registerTTSBackendSwitch } from './features/tts_backend_switch';
@@ -185,8 +185,8 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerSetAPIKey(context);
 	registerChatCompletions(context);
 	registerVibeCodingCommands(context);
-	registerToggleASR(context);
-	registerPushToTalkASR(context);
+	// registerToggleASR(context);  // Disabled in favor of enhanced version
+	// registerPushToTalkASR(context);  // Disabled in favor of enhanced version
 	registerEnhancedPushToTalkASR(context);
 	registerTogglePanning(context);
 	registerTTSBackendSwitch(context);

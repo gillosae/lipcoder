@@ -93,67 +93,74 @@ export let espeakConfig: EspeakConfig = {
 
 export const categoryVoiceMap: Record<string, string> = {
     // ===== CURRENT WORKING CATEGORIES =====
+    variable: 'en_3',
+    operator: 'en_15',
+    keyword: 'en_35', // def, if, for, etc.
+    literal: 'en_5',
+    comment: 'en_41',
+    type: 'en_80',
+
     // These are the categories the system actually provides:
     
-    variable: 'en_3',     // 🔵 Words: function names, variables, classes, etc. (add_talk_simple, PTC, text, font)
-    operator: 'en_15',    // 🟠 Math operators: +, -, *, /, = 
-    type: 'en_80',        // 🟡 Punctuation & symbols: (), [], {}, quotes, dots, commas
-    comment: 'en_41',     // 🟢 Comment text
+    // variable: 'en_3',     // 🔵 Words: function names, variables, classes, etc. (add_talk_simple, PTC, text, font)
+    // operator: 'en_15',    // 🟠 Math operators: +, -, *, /, = 
+    // type: 'en_80',        // 🟡 Punctuation & symbols: (), [], {}, quotes, dots, commas
+    // comment: 'en_41',     // 🟢 Comment text
     
-    // ===== FUTURE SEMANTIC TOKEN CATEGORIES =====
-    // These will work when semantic token support is added:
+    // // ===== FUTURE SEMANTIC TOKEN CATEGORIES =====
+    // // These will work when semantic token support is added:
     
-    // Keywords & Control Flow
-    keyword: 'en_35',                // def, if, for, while, class
-    'keyword.control': 'en_35',      // if, for, while, def, class  
-    'keyword.operator': 'en_15',     // and, or, not, in, is
-    'keyword.import': 'en_90',       // import, from, as
+    // // Keywords & Control Flow
+    // keyword: 'en_35',                // def, if, for, while, class
+    // 'keyword.control': 'en_35',      // if, for, while, def, class  
+    // 'keyword.operator': 'en_15',     // and, or, not, in, is
+    // 'keyword.import': 'en_90',       // import, from, as
     
-    // Functions & Methods
-    'function.name': 'en_10',        // Function definitions (add_talk_simple)
-    'function.call': 'en_12',        // Method calls (.create_clip, .size)
-    'function.builtin': 'en_20',     // Built-in functions (int, max, len)
+    // // Functions & Methods
+    // 'function.name': 'en_10',        // Function definitions (add_talk_simple)
+    // 'function.call': 'en_12',        // Method calls (.create_clip, .size)
+    // 'function.builtin': 'en_20',     // Built-in functions (int, max, len)
     
-    // Strings & Literals
-    'string': 'en_25',               // String literals ("black", "center")
-    'string.quoted': 'en_25',        // Quoted strings
-    literal: 'en_25',                // String literals (fallback)
+    // // Strings & Literals
+    // 'string': 'en_25',               // String literals ("black", "center")
+    // 'string.quoted': 'en_25',        // Quoted strings
+    // literal: 'en_25',                // String literals (fallback)
     
-    // Numbers
-    'number': 'en_30',               // Numbers (70, 100, 50)
-    'number.integer': 'en_30',       // Integer numbers
-    'number.float': 'en_32',         // Float numbers
+    // // Numbers
+    // 'number': 'en_30',               // Numbers (70, 100, 50)
+    // 'number.integer': 'en_30',       // Integer numbers
+    // 'number.float': 'en_32',         // Float numbers
     
-    // Classes & Types
-    'type.class': 'en_40',           // Class names (PTC, ImageClip)
-    'class.name': 'en_40',           // Class names
-    'class.builtin': 'en_42',        // Built-in classes
+    // // Classes & Types
+    // 'type.class': 'en_40',           // Class names (PTC, ImageClip)
+    // 'class.name': 'en_40',           // Class names
+    // 'class.builtin': 'en_42',        // Built-in classes
     
-    // Parameters & Properties
-    'parameter': 'en_50',            // Function parameters (text, font, fontsize)
-    'parameter.name': 'en_50',       // Parameter names
-    'property': 'en_60',             // Object properties (.h, .w)
-    'property.name': 'en_60',        // Property names
+    // // Parameters & Properties
+    // 'parameter': 'en_50',            // Function parameters (text, font, fontsize)
+    // 'parameter.name': 'en_50',       // Parameter names
+    // 'property': 'en_60',             // Object properties (.h, .w)
+    // 'property.name': 'en_60',        // Property names
     
-    // Punctuation (more specific)
-    'punctuation': 'en_70',          // General punctuation
-    'punctuation.bracket': 'en_70',  // (), [], {}
-    'punctuation.delimiter': 'en_72', // , : ;
+    // // Punctuation (more specific)
+    // 'punctuation': 'en_70',          // General punctuation
+    // 'punctuation.bracket': 'en_70',  // (), [], {}
+    // 'punctuation.delimiter': 'en_72', // , : ;
     
-    // Constants
-    'constant': 'en_75',             // Constants (True, False, None)
-    'constant.builtin': 'en_75',     // Built-in constants
+    // // Constants
+    // 'constant': 'en_75',             // Constants (True, False, None)
+    // 'constant.builtin': 'en_75',     // Built-in constants
     
-    // Modules & Namespaces
-    'namespace': 'en_85',            // Module names, imports
-    'module': 'en_85',               // Module references
+    // // Modules & Namespaces
+    // 'namespace': 'en_85',            // Module names, imports
+    // 'module': 'en_85',               // Module references
     
-    // Special categories
-    'special': 'en_5',               // Special characters during typing
+    // // Special categories
+    // 'special': 'en_5',               // Special characters during typing
     
-    // Default fallback
-    'text': 'en_5',                  // Plain text
-    'default': 'en_5',               // Fallback voice
+    // // Default fallback
+    // 'text': 'en_5',                  // Plain text
+    // 'default': 'en_5',               // Fallback voice
 };
 
 // Espeak voice mapping for different categories

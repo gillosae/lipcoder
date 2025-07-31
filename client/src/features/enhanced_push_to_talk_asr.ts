@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { ASRClient, ASRChunk } from '../asr';
 import { GPT4oASRClient, GPT4oASRChunk } from '../gpt4o_asr';
 import { ASRPopup } from '../asr_popup';
 import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config';
-import { CommandRouter } from '../command_router';
+import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
 
 let asrClient: ASRClient | null = null;
@@ -14,6 +15,18 @@ let statusBarItem: vscode.StatusBarItem | null = null;
 let commandRouter: CommandRouter | null = null;
 let isRecording = false;
 let context: vscode.ExtensionContext | null = null;
+
+// Track editor context when recording starts
+interface EditorContext {
+    editor: vscode.TextEditor;
+    position: vscode.Position;
+    selection: vscode.Selection;
+    documentUri: vscode.Uri;
+}
+
+let recordingContext: EditorContext | null = null;
+let autoStopTimer: NodeJS.Timeout | null = null;
+const MAX_RECORDING_DURATION = 30000; // 30 seconds max
 
 /**
  * Get the appropriate ASR client based on current backend
@@ -53,6 +66,18 @@ function cleanupASRResources(): void {
     // Reset command router
     commandRouter = null;
     
+    // Clear recording context
+    recordingContext = null;
+    
+    // Clear auto-stop timer
+    if (autoStopTimer) {
+        clearTimeout(autoStopTimer);
+        autoStopTimer = null;
+    }
+    
+    // Reset context key
+    setRecordingContextKey(false);
+    
     logSuccess('[Enhanced-ASR] ASR resources cleaned up');
 }
 
@@ -63,11 +88,13 @@ function updateStatusBar(recording: boolean): void {
     if (!statusBarItem) return;
     
     if (recording) {
-        statusBarItem.text = `$(record) Recording (${currentASRBackend})`;
+        statusBarItem.text = `$(record) Recording... Press Ctrl+Shift+A to stop (${currentASRBackend})`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        statusBarItem.tooltip = 'Recording in progress. Press Ctrl+Shift+A again to stop and process speech.';
     } else {
-        statusBarItem.text = `$(mic) ASR (${currentASRBackend})`;
+        statusBarItem.text = `$(mic) ASR Ready - Press Ctrl+Shift+A to record (${currentASRBackend})`;
         statusBarItem.backgroundColor = undefined;
+        statusBarItem.tooltip = 'Press Ctrl+Shift+A to start voice recording. Commands will execute in the current editor context.';
     }
 }
 
@@ -86,15 +113,26 @@ function initializeASRClients(): void {
             try {
                 asrClient = new ASRClient({
                     onTranscription: async (chunk: ASRChunk) => {
-                        await handleTranscription(chunk.text);
+                        if (chunk && chunk.text) {
+                            await handleTranscription(chunk.text);
+                        }
                     },
                     onError: (error: Error) => {
-                        handleError(error);
+                        if (error) {
+                            handleError(error);
+                        }
                     }
                 });
+                
+                // Verify the client was created properly
+                if (!asrClient || typeof asrClient !== 'object') {
+                    throw new Error('ASRClient constructor returned invalid object');
+                }
+                
                 log('[Enhanced-ASR] ASRClient initialized successfully');
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to initialize ASRClient: ${error}`);
+                asrClient = null; // Ensure it's explicitly null on failure
             }
         }
         
@@ -102,10 +140,14 @@ function initializeASRClients(): void {
             try {
                 gpt4oAsrClient = new GPT4oASRClient({
                     onTranscription: async (chunk: GPT4oASRChunk) => {
-                        await handleTranscription(chunk.text);
+                        if (chunk && chunk.text) {
+                            await handleTranscription(chunk.text);
+                        }
                     },
                     onError: (error: Error) => {
-                        handleError(error);
+                        if (error) {
+                            handleError(error);
+                        }
                     },
                     onRecordingStart: () => {
                         handleRecordingStart();
@@ -114,9 +156,16 @@ function initializeASRClients(): void {
                         handleRecordingStop();
                     }
                 });
+                
+                // Verify the client was created properly
+                if (!gpt4oAsrClient || typeof gpt4oAsrClient !== 'object') {
+                    throw new Error('GPT4oASRClient constructor returned invalid object');
+                }
+                
                 log('[Enhanced-ASR] GPT4oASRClient initialized successfully');
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to initialize GPT4oASRClient: ${error}`);
+                gpt4oAsrClient = null; // Ensure it's explicitly null on failure
             }
         }
         
@@ -128,9 +177,16 @@ function initializeASRClients(): void {
                     showWaveform: true,
                     showTranscription: true
                 });
+                
+                // Verify the popup was created properly
+                if (!asrPopup || typeof asrPopup !== 'object') {
+                    throw new Error('ASRPopup constructor returned invalid object');
+                }
+                
                 log('[Enhanced-ASR] ASRPopup initialized successfully');
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to initialize ASRPopup: ${error}`);
+                asrPopup = null; // Ensure it's explicitly null on failure
             }
         }
         
@@ -140,18 +196,44 @@ function initializeASRClients(): void {
                 commandRouter = new CommandRouter({
                     showNotifications: true,
                     enableLogging: true,
-                    fallbackToTextInsertion: true
+                    fallbackToTextInsertion: true,
+                    useLLMMatching: true
                 });
+                
+                // Verify the command router was created properly
+                if (!commandRouter || typeof commandRouter !== 'object') {
+                    throw new Error('CommandRouter constructor returned invalid object');
+                }
+                
                 log('[Enhanced-ASR] CommandRouter initialized successfully');
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to initialize CommandRouter: ${error}`);
+                commandRouter = null; // Ensure it's explicitly null on failure
             }
         }
         
-        logSuccess('[Enhanced-ASR] ASR clients initialized successfully');
+        // Final verification
+        const initialized = {
+            asrClient: !!asrClient,
+            gpt4oAsrClient: !!gpt4oAsrClient,
+            asrPopup: !!asrPopup,
+            commandRouter: !!commandRouter
+        };
+        
+        log(`[Enhanced-ASR] Initialization status: ${JSON.stringify(initialized)}`);
+        
+        if (!asrClient && !gpt4oAsrClient) {
+            logError('[Enhanced-ASR] Critical: No ASR clients successfully initialized!');
+        }
+        
+        if (!commandRouter) {
+            logError('[Enhanced-ASR] Critical: Command router failed to initialize!');
+        }
+        
+        logSuccess('[Enhanced-ASR] ASR client initialization completed');
     } catch (error) {
-        logError(`[Enhanced-ASR] Failed to initialize ASR clients: ${error}`);
-        // Don't throw the error, just log it
+        logError(`[Enhanced-ASR] Critical failure during ASR client initialization: ${error}`);
+        // Don't throw the error, just log it to prevent extension activation failure
     }
 }
 
@@ -184,13 +266,48 @@ async function handleTranscription(text: string): Promise<void> {
     
     // If no command was executed, fall back to text insertion
     if (!commandExecuted) {
-        // Insert at cursor if editor is active
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-            const position = editor.selection.active;
-            editor.edit(editBuilder => {
-                editBuilder.insert(position, text + ' ');
-            });
+        // Try to use captured editor context first, then fall back to active editor
+        let targetEditor = recordingContext?.editor;
+        
+        // Validate captured editor
+        if (targetEditor) {
+            try {
+                if (!targetEditor.document || targetEditor.document.isClosed) {
+                    log('[Enhanced-ASR] Captured editor context is no longer valid for text insertion, falling back to active editor');
+                    targetEditor = undefined;
+                }
+            } catch (error) {
+                logError(`[Enhanced-ASR] Error accessing captured editor for text insertion: ${error}`);
+                targetEditor = undefined;
+            }
+        }
+        
+        // Fallback to current active editor
+        if (!targetEditor) {
+            targetEditor = vscode.window.activeTextEditor;
+        }
+        
+        if (targetEditor) {
+            try {
+                // Make sure the target editor is active
+                await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                
+                // Use original cursor position if available, otherwise current position
+                const insertPosition = recordingContext?.position || targetEditor.selection.active;
+                
+                await targetEditor.edit(editBuilder => {
+                    editBuilder.insert(insertPosition, text + ' ');
+                });
+                
+                const fileName = path.basename(targetEditor.document.fileName);
+                log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
+            } catch (error) {
+                logError(`[Enhanced-ASR] Error inserting text: ${error}`);
+                vscode.window.showErrorMessage(`Failed to insert text: ${error}`);
+            }
+        } else {
+            logWarning('[Enhanced-ASR] No editor available for text insertion');
+            vscode.window.showWarningMessage('No editor available to insert transcribed text');
         }
         
         // Show notification for text insertion
@@ -199,12 +316,30 @@ async function handleTranscription(text: string): Promise<void> {
 }
 
 /**
+ * Set VS Code context key for recording state
+ */
+function setRecordingContextKey(recording: boolean): void {
+    log(`[Enhanced-ASR] Setting context key 'lipcoder.isRecording' to: ${recording}`);
+    vscode.commands.executeCommand('setContext', 'lipcoder.isRecording', recording);
+}
+
+/**
  * Handle recording start
  */
 function handleRecordingStart(): void {
     log('[Enhanced-ASR] Recording started');
     isRecording = true;
+    setRecordingContextKey(true);
     updateStatusBar(true);
+    
+    // Set up auto-stop timer
+    autoStopTimer = setTimeout(() => {
+        if (isRecording) {
+            log('[Enhanced-ASR] Auto-stopping recording after maximum duration');
+            stopRecording();
+            vscode.window.showInformationMessage('Recording stopped automatically after 30 seconds');
+        }
+    }, MAX_RECORDING_DURATION);
     
     if (asrPopup) {
         asrPopup.setRecordingStatus(true);
@@ -217,7 +352,14 @@ function handleRecordingStart(): void {
 function handleRecordingStop(): void {
     log('[Enhanced-ASR] Recording stopped');
     isRecording = false;
+    setRecordingContextKey(false);
     updateStatusBar(false);
+    
+    // Clear auto-stop timer
+    if (autoStopTimer) {
+        clearTimeout(autoStopTimer);
+        autoStopTimer = null;
+    }
     
     if (asrPopup) {
         asrPopup.setRecordingStatus(false);
@@ -243,6 +385,23 @@ function handleError(error: Error): void {
 }
 
 /**
+ * Capture current editor context for command execution
+ */
+function captureEditorContext(): EditorContext | null {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return null;
+    }
+    
+    return {
+        editor: editor,
+        position: editor.selection.active,
+        selection: editor.selection,
+        documentUri: editor.document.uri
+    };
+}
+
+/**
  * Start recording
  */
 async function startRecording(): Promise<void> {
@@ -254,8 +413,27 @@ async function startRecording(): Promise<void> {
     try {
         log('[Enhanced-ASR] Starting ASR recording...');
         
+        // Capture editor context at the start of recording
+        recordingContext = captureEditorContext();
+        if (recordingContext) {
+            log(`[Enhanced-ASR] Captured context: ${recordingContext.documentUri.fsPath} at line ${recordingContext.position.line + 1}`);
+        } else {
+            logWarning('[Enhanced-ASR] No active editor - commands may not work properly');
+        }
+        
         // Initialize clients if needed
         initializeASRClients();
+        
+        // Set editor context on command router
+        if (commandRouter && recordingContext) {
+            const routerContext: RouterEditorContext = {
+                editor: recordingContext.editor,
+                position: recordingContext.position,
+                selection: recordingContext.selection,
+                documentUri: recordingContext.documentUri
+            };
+            commandRouter.setEditorContext(routerContext);
+        }
         
         // Show popup
         if (asrPopup && context) {
@@ -263,21 +441,34 @@ async function startRecording(): Promise<void> {
         }
         
         // Start recording based on backend
-        if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient) {
+        if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient && typeof gpt4oAsrClient === 'object') {
             try {
-                await gpt4oAsrClient.startRecording();
+                if (typeof gpt4oAsrClient.startRecording === 'function') {
+                    await gpt4oAsrClient.startRecording();
+                } else {
+                    throw new Error('GPT4o ASR client startRecording method not available');
+                }
             } catch (error) {
                 throw new Error(`Failed to start GPT4o ASR recording: ${error}`);
             }
-        } else if (currentASRBackend === ASRBackend.Silero && asrClient) {
+        } else if (currentASRBackend === ASRBackend.Silero && asrClient && typeof asrClient === 'object') {
             try {
-                await asrClient.startStreaming();
-                handleRecordingStart(); // Manual call for Silero
+                if (typeof asrClient.startStreaming === 'function') {
+                    await asrClient.startStreaming();
+                    handleRecordingStart(); // Manual call for Silero
+                } else {
+                    throw new Error('Silero ASR client startStreaming method not available');
+                }
             } catch (error) {
                 throw new Error(`Failed to start Silero ASR recording: ${error}`);
             }
         } else {
-            throw new Error(`ASR backend ${currentASRBackend} not available or not initialized`);
+            const availableClients = {
+                gpt4o: !!gpt4oAsrClient,
+                silero: !!asrClient,
+                currentBackend: currentASRBackend
+            };
+            throw new Error(`ASR backend ${currentASRBackend} not available or not initialized. Status: ${JSON.stringify(availableClients)}`);
         }
         
         logSuccess('[Enhanced-ASR] Recording started successfully');
@@ -299,20 +490,30 @@ async function stopRecording(): Promise<void> {
     try {
         log('[Enhanced-ASR] Stopping ASR recording...');
         
-        // Stop recording based on backend
-        if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient) {
+        // Stop recording based on backend  
+        if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient && typeof gpt4oAsrClient === 'object') {
             try {
-                await gpt4oAsrClient.stopRecording();
+                if (typeof gpt4oAsrClient.stopRecording === 'function') {
+                    await gpt4oAsrClient.stopRecording();
+                } else {
+                    logError('[Enhanced-ASR] GPT4o ASR client stopRecording method not available');
+                }
             } catch (error) {
                 logError(`[Enhanced-ASR] Error stopping GPT4o recording: ${error}`);
             }
-        } else if (currentASRBackend === ASRBackend.Silero && asrClient) {
+        } else if (currentASRBackend === ASRBackend.Silero && asrClient && typeof asrClient === 'object') {
             try {
-                asrClient.stopStreaming();
-                handleRecordingStop(); // Manual call for Silero
+                if (typeof asrClient.stopStreaming === 'function') {
+                    asrClient.stopStreaming();
+                    handleRecordingStop(); // Manual call for Silero
+                } else {
+                    logError('[Enhanced-ASR] Silero ASR client stopStreaming method not available');
+                }
             } catch (error) {
                 logError(`[Enhanced-ASR] Error stopping Silero recording: ${error}`);
             }
+        } else {
+            logWarning(`[Enhanced-ASR] No valid ASR client available to stop for backend: ${currentASRBackend}`);
         }
         
         logSuccess('[Enhanced-ASR] Recording stopped successfully');
@@ -377,12 +578,26 @@ async function switchASRBackend(): Promise<void> {
  */
 export function registerEnhancedPushToTalkASR(extensionContext: vscode.ExtensionContext) {
     try {
+        // Validate input parameters
+        if (!extensionContext) {
+            throw new Error('Extension context is required but was not provided');
+        }
+        
+        if (!extensionContext.subscriptions) {
+            throw new Error('Extension context subscriptions array is not available');
+        }
+        
         context = extensionContext;
         log('[Enhanced-ASR] Registering enhanced push-to-talk ASR commands');
+        log(`[Enhanced-ASR] Extension context validated, subscriptions count: ${extensionContext.subscriptions.length}`);
         
         // Load configuration
         try {
+            if (typeof loadConfigFromSettings !== 'function') {
+                throw new Error('loadConfigFromSettings is not a function');
+            }
             loadConfigFromSettings();
+            log('[Enhanced-ASR] Configuration loaded successfully');
         } catch (configError) {
             logWarning(`[Enhanced-ASR] Config loading failed, using defaults: ${configError}`);
         }
@@ -398,8 +613,28 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
         updateStatusBar(false);
         statusBarItem.show();
         log('[Enhanced-ASR] Created status bar item');
+        
+        // Initialize context key
+        setRecordingContextKey(false);
+        log('[Enhanced-ASR] Initialized recording context key');
+    
+    // Validate command functions exist
+    const commandFunctions = [
+        { name: 'startRecording', func: startRecording },
+        { name: 'stopRecording', func: stopRecording },
+        { name: 'toggleRecording', func: toggleRecording },
+        { name: 'switchASRBackend', func: switchASRBackend }
+    ];
+    
+    for (const { name, func } of commandFunctions) {
+        if (typeof func !== 'function') {
+            throw new Error(`Command function ${name} is not defined or not a function`);
+        }
+    }
+    log('[Enhanced-ASR] All command functions validated');
     
     // Register commands
+    log('[Enhanced-ASR] Starting command registration...');
     context.subscriptions.push(
         // Main ASR recording commands
         vscode.commands.registerCommand('lipcoder.startASRRecording', startRecording),
@@ -531,11 +766,82 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
                     preventDefault: true
                 });
                 
-                vscode.window.showInformationMessage(`Added custom command pattern: "${pattern}" → ${command}`);
-            } catch (error) {
-                vscode.window.showErrorMessage(`Failed to add pattern: ${error}`);
-            }
-        })
+                                 vscode.window.showInformationMessage(`Added custom command pattern: "${pattern}" → ${command}`);
+             } catch (error) {
+                 vscode.window.showErrorMessage(`Failed to add pattern: ${error}`);
+             }
+         }),
+         
+         // Manual function navigation
+         vscode.commands.registerCommand('lipcoder.goToFunction', async () => {
+             const functionName = await vscode.window.showInputBox({
+                 prompt: 'Enter function name to navigate to',
+                 placeHolder: 'handleClick'
+             });
+             
+             if (!functionName) return;
+             
+             if (!commandRouter) {
+                 vscode.window.showWarningMessage('Command router not initialized');
+                 return;
+             }
+             
+             // Use the same LLM function search
+             try {
+                 const position = await findFunctionWithLLM(functionName);
+                 if (position) {
+                     const editor = vscode.window.activeTextEditor;
+                     if (editor) {
+                         const newPosition = new vscode.Position(position.line, position.character);
+                         editor.selection = new vscode.Selection(newPosition, newPosition);
+                         editor.revealRange(new vscode.Range(newPosition, newPosition));
+                         vscode.window.showInformationMessage(`Found function: ${functionName} at line ${position.line + 1}`);
+                     }
+                 } else {
+                     vscode.window.showWarningMessage(`Function "${functionName}" not found`);
+                 }
+             } catch (error) {
+                 vscode.window.showErrorMessage(`Failed to find function: ${error}`);
+             }
+         }),
+         
+         // Manual script execution
+         vscode.commands.registerCommand('lipcoder.runPackageScript', async () => {
+             const scriptName = await vscode.window.showInputBox({
+                 prompt: 'Enter npm script name to run',
+                 placeHolder: 'build'
+             });
+             
+             if (!scriptName) return;
+             
+             try {
+                 await executePackageJsonScript(scriptName);
+             } catch (error) {
+                 vscode.window.showErrorMessage(`Failed to run script: ${error}`);
+             }
+         }),
+         
+         // Debug command to check recording state
+         vscode.commands.registerCommand('lipcoder.debugASRState', () => {
+             const state = {
+                 isRecording: isRecording,
+                 hasRecordingContext: !!recordingContext,
+                 contextEditor: recordingContext?.editor?.document.fileName || 'none',
+                 contextPosition: recordingContext?.position ? `${recordingContext.position.line}:${recordingContext.position.character}` : 'none',
+                 currentBackend: currentASRBackend,
+                 hasAsrClient: !!asrClient,
+                 hasGpt4oClient: !!gpt4oAsrClient,
+                 hasCommandRouter: !!commandRouter,
+                 activeEditor: vscode.window.activeTextEditor?.document.fileName || 'none'
+             };
+             
+             vscode.window.showInformationMessage(
+                 `ASR Debug State:\n${JSON.stringify(state, null, 2)}`,
+                 { modal: true }
+             );
+             
+             log(`[Enhanced-ASR] Debug state: ${JSON.stringify(state, null, 2)}`);
+         })
     );
     
     // Register cleanup
@@ -544,11 +850,35 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
     });
     
         // Initialize clients
-        initializeASRClients();
+        log('[Enhanced-ASR] About to initialize ASR clients...');
+        try {
+            if (typeof initializeASRClients !== 'function') {
+                throw new Error('initializeASRClients is not a function');
+            }
+            initializeASRClients();
+            log('[Enhanced-ASR] ASR clients initialized successfully');
+        } catch (clientError) {
+            logError(`[Enhanced-ASR] Failed to initialize ASR clients: ${clientError}`);
+            logError(`[Enhanced-ASR] Client error type: ${typeof clientError}`);
+            if (clientError instanceof Error) {
+                logError(`[Enhanced-ASR] Client error stack: ${clientError.stack}`);
+            }
+            throw clientError; // Re-throw to be caught by outer try-catch
+        }
         
         logSuccess('[Enhanced-ASR] Enhanced push-to-talk ASR registered successfully');
     } catch (error) {
         logError(`[Enhanced-ASR] Failed to register enhanced push-to-talk ASR: ${error}`);
+        logError(`[Enhanced-ASR] Error type: ${typeof error}`);
+        logError(`[Enhanced-ASR] Error constructor: ${error?.constructor?.name}`);
+        if (error instanceof Error) {
+            logError(`[Enhanced-ASR] Error message: ${error.message}`);
+            logError(`[Enhanced-ASR] Error stack: ${error.stack}`);
+        }
+        
+        // Show error to user with more detail
+        vscode.window.showErrorMessage(`Failed to activate Enhanced ASR: ${error}. Check output panel for details.`);
+        
         // Don't throw the error to prevent extension activation failure
     }
 } 

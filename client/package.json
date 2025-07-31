@@ -55,8 +55,13 @@
       },
       {
         "key": "ctrl+shift+a",
-        "command": "lipcoder.toggleASRRecording",
-        "when": "editorTextFocus"
+        "command": "lipcoder.startASRRecording",
+        "when": "!lipcoder.isRecording"
+      },
+      {
+        "key": "ctrl+shift+a",
+        "command": "lipcoder.stopASRRecording", 
+        "when": "lipcoder.isRecording"
       },
       {
         "key": "ctrl+shift+r",
@@ -264,6 +269,21 @@
       {
         "command": "lipcoder.toggleLLMMatching",
         "title": "Toggle LLM Command Matching",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.goToFunction",
+        "title": "Go to Function (Voice)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.runPackageScript",
+        "title": "Run Package.json Script (Voice)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.debugASRState",
+        "title": "Debug ASR State",
         "category": "LipCoder"
       }
     ]

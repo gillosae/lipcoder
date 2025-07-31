@@ -226,6 +226,21 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.goToFunction",
+        "title": "Go to Function (Voice)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.runPackageScript",
+        "title": "Run Package.json Script (Voice)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.debugASRState",
+        "title": "Debug ASR State",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.openPushToTalkTestPage",
         "title": "LipCoder: Open Push-to-Talk Test Page"
       },
@@ -352,9 +367,14 @@
         "key": "ctrl+shift+t"
       },
       {
-        "command": "lipcoder.toggleASRRecording",
+        "command": "lipcoder.startASRRecording",
         "key": "ctrl+shift+a",
-        "when": "editorTextFocus"
+        "when": "!lipcoder.isRecording"
+      },
+      {
+        "command": "lipcoder.stopASRRecording", 
+        "key": "ctrl+shift+a",
+        "when": "lipcoder.isRecording"
       }
     ],
     "configuration": {

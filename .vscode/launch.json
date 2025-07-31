@@ -30,6 +30,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
+				"/Users/gillosae/Desktop/lipcoder-test",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [
