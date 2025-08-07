@@ -141,9 +141,12 @@ export async function readTextTokens(
                         playWave(audioMap[ch], { isEarcon: true, immediate: true, panning: charPanning });
                     } else if (specialCharMap[ch]) {
                         // Remove redundant stopAllAudio() call here
+                        console.log(`[read_text_tokens] DEBUG: ch="${ch}", specialCharMap[ch]="${specialCharMap[ch]}", isEarcon(ch)=${isEarcon(ch)}`);
                         if (isEarcon(ch)) {
+                            console.log(`[read_text_tokens] DEBUG: Playing earcon for "${ch}"`);
                             await playEarcon(ch, charPanning);
                         } else {
+                            console.log(`[read_text_tokens] DEBUG: Calling speakTokenList for "${ch}" with token "${specialCharMap[ch]}"`);
                             await speakTokenList([{ tokens: [specialCharMap[ch]], category: 'special', panning: charPanning }]);
                         }
                     } else if (/^[a-zA-Z]$/.test(ch)) {
@@ -169,12 +172,14 @@ export async function readTextTokens(
                 return; // Prevent further processing to avoid double audio
             } else if (specialCharMap[char]) {
                 console.log(`[read_text_tokens] Using specialCharMap path for "${char}"`);
+                console.log(`[read_text_tokens] DEBUG: char="${char}", specialCharMap[char]="${specialCharMap[char]}", isEarcon(char)=${isEarcon(char)}`);
                 // Remove redundant stopAllAudio() call here
                 if (isEarcon(char)) {
                     console.log(`[read_text_tokens] Playing earcon for "${char}"`);
                     await playEarcon(char, panning);
                 } else {
                     console.log(`[read_text_tokens] Playing special TTS for "${char}": ${specialCharMap[char]}`);
+                    console.log(`[read_text_tokens] DEBUG: About to call speakTokenList with tokens=["${specialCharMap[char]}"], category="special"`);
                     await speakTokenList([{ tokens: [specialCharMap[char]], category: 'special', panning }]);
                 }
                 return; // Prevent further processing to avoid double audio

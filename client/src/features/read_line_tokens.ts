@@ -4,7 +4,7 @@ import { log } from '../utils';
 import { specialCharMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { speakTokenList } from '../audio';
-import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive } from './stop_reading';
+import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
 import { isEditorActive } from '../ide/active';
 import { config } from '../config';
 
@@ -27,6 +27,12 @@ function calculatePanning(column: number): number {
 
 async function executeReadLineTokens(editor: vscode.TextEditor, client: LanguageClient): Promise<void> {
     try {
+        // Check if ASR is currently recording - if so, don't start token reading
+        if (getASRRecordingActive()) {
+            log(`[readLineTokens] ASR is recording - skipping token reading to avoid interference`);
+            return;
+        }
+        
         isReadLineTokensRunning = true;
         
         // Set flag IMMEDIATELY to prevent interruption by inline suggestions
@@ -99,8 +105,8 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
             return;
         }
         
-        // Additional safety: stop any residual audio right before starting new audio
-        stopAllAudio();
+        // DON'T call stopAllAudio() here - it creates a new controller and breaks the abort check
+        // The stopForNewLineReading() call at line 40 already handled stopping
 
         // Create a flattened sequence for logging
         const flatTokens = validChunks.flatMap(chunk => chunk.tokens);
@@ -145,6 +151,12 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
         vscode.commands.registerCommand('lipcoder.readLineTokens', async (editorArg?: vscode.TextEditor) => {
             const editor = isEditorActive(editorArg);
             if (!editor) return;
+
+            // Check if ASR is currently recording - if so, don't start token reading
+            if (getASRRecordingActive()) {
+                log(`[readLineTokens] Command called but ASR is recording - ignoring to avoid interference`);
+                return;
+            }
 
             // IMMEDIATELY cancel any ongoing execution
             if (currentReadLineTokensExecution) {

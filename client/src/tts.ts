@@ -211,22 +211,28 @@ async function generateEspeakTTS(
  */
 export async function playSpecial(word: string): Promise<void> {
     log(`[playSpecial] *** GENERATING FRESH TTS FOR SPECIAL WORD: "${word}" ***`);
+    console.log(`[playSpecial] DEBUG: Starting playSpecial for word="${word}"`);
     
     try {
         // Always generate audio using TTS directly, never check cache
         log(`[playSpecial] Calling genTokenAudio with word="${word}", category="special"`);
+        console.log(`[playSpecial] DEBUG: About to call genTokenAudio("${word}", "special")`);
         const audioFile = await genTokenAudio(word, 'special');
         log(`[playSpecial] Generated audio file: ${audioFile}`);
+        console.log(`[playSpecial] DEBUG: Generated audio file: ${audioFile}`);
         
         // Special characters are saved as WAV files, so they use the same playback path as regular TTS
         // This allows them to benefit from external player fallback (afplay, etc.) for correct pitch
         const { playWave } = require('./audio');
+        console.log(`[playSpecial] DEBUG: About to call playWave("${audioFile}")`);
         await playWave(audioFile);
         
         log(`[playSpecial] Finished playing special word: "${word}"`);
+        console.log(`[playSpecial] DEBUG: Finished playing special word: "${word}"`);
         
     } catch (error) {
         log(`[playSpecial] ERROR generating TTS for "${word}": ${error}`);
+        console.log(`[playSpecial] DEBUG: ERROR: ${error}`);
         return Promise.resolve();
     }
 }

@@ -10,12 +10,10 @@ const PUNCTUATION_FILES: Record<string, string> = {
     '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
     '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
     '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
-    ',': 'comma.pcm',
     ';': 'semicolon.pcm', '/': 'slash.pcm',
     '-': 'bar.pcm', ':': 'colon.pcm',
     "'": 'quote.pcm', '"': 'bigquote.pcm',
-    '_': 'underbar.pcm',
-    '.': 'dot.pcm', // Added missing dot earcon
+    // Removed: ',': 'comma.pcm', '_': 'underbar.pcm', '.': 'dot.pcm' - now handled by TTS
 };
 
 export const SPECIAL_CHAR_FILES: Record<string, string> = {
@@ -37,6 +35,10 @@ export const specialCharMap: Record<string, string> = {
     m: 'em', n: 'en', o: 'oh', p: 'pee', q: 'cue', r: 'ar',
     s: 'ess', t: 'tee', u: 'you', v: 'vee', w: 'double you',
     x: 'ex', y: 'why', z: 'zee',
+    // punctuation characters that should use TTS instead of earcons
+    '.': 'dot',
+    ',': 'comma', 
+    '_': 'underbar',
     // characters without direct PCM files (fallback TTS names)
 };
 
@@ -52,8 +54,8 @@ function numberToWords(num: number): string {
     const tens = [
         '', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'
     ];
-    if (num < 10) return ones[num];
-    if (num < 20) return teens[num - 10];
+    if (num < 10) { return ones[num]; }
+    if (num < 20) { return teens[num - 10]; }
     if (num < 100) {
         const t = Math.floor(num / 10);
         const r = num % 10;

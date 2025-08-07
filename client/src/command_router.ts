@@ -664,7 +664,8 @@ Available command categories:
 6. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
 7. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
 8. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
-9. NOT_A_COMMAND - Just regular text to type
+9. CODE_GENERATION - Generate code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x")
+10. NOT_A_COMMAND - Just regular text to type
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -675,7 +676,9 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "functionName": "myFunc",
     "variableName": "config",
     "command": "symbolTree",
-    "operation": "save"
+    "operation": "save",
+    "codeDescription": "function that gets parameter x and y and returns sum",
+    "generationType": "complete|create|test"
   },
   "reasoning": "Brief explanation"
 }
@@ -763,6 +766,9 @@ Only include parameters relevant to the category. Use null for missing parameter
                 
                 case 'NAVIGATION_OPERATION':
                     return await this.executeLLMNavigationOperation(parameters, originalText);
+                
+                case 'CODE_GENERATION':
+                    return await this.executeLLMCodeGeneration(parameters, originalText);
                 
                 case 'NOT_A_COMMAND':
                     if (this.options.enableLogging) {
@@ -1077,6 +1083,150 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         return false;
+    }
+
+    /**
+     * Execute code generation command using LLM
+     */
+    private async executeLLMCodeGeneration(parameters: any, originalText: string): Promise<boolean> {
+        const { codeDescription, generationType, functionName } = parameters;
+        
+        if (this.options.enableLogging) {
+            log(`[CommandRouter] 🤖 Code generation request:`);
+            log(`[CommandRouter] Description: ${codeDescription || originalText}`);
+            log(`[CommandRouter] Type: ${generationType}`);
+            log(`[CommandRouter] Function name: ${functionName}`);
+        }
+
+        // Get the active editor
+        let targetEditor = this.editorContext?.editor;
+        if (targetEditor) {
+            try {
+                if (!targetEditor.document || targetEditor.document.isClosed) {
+                    targetEditor = undefined;
+                }
+            } catch (error) {
+                targetEditor = undefined;
+            }
+        }
+        
+        if (!targetEditor) {
+            targetEditor = vscode.window.activeTextEditor;
+        }
+        
+        if (!targetEditor) {
+            vscode.window.showErrorMessage('No editor available for code generation');
+            return false;
+        }
+
+        try {
+            // Get context around cursor position
+            const position = targetEditor.selection.active;
+            const document = targetEditor.document;
+            const languageId = document.languageId;
+            
+            // Get surrounding context (few lines before and after cursor)
+            const contextRadius = 10;
+            const startLine = Math.max(0, position.line - contextRadius);
+            const endLine = Math.min(document.lineCount - 1, position.line + contextRadius);
+            const contextRange = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+            const contextText = document.getText(contextRange);
+            
+            // Analyze the request and generate appropriate code
+            const client = getOpenAIClient();
+            
+            let prompt = `You are an expert ${languageId} developer. Generate code based on the following request:
+
+Voice Command: "${originalText}"
+Request: ${codeDescription || originalText}
+Language: ${languageId}
+Generation Type: ${generationType || 'create'}
+
+Context (current code around cursor):
+\`\`\`${languageId}
+${contextText}
+\`\`\`
+
+Current cursor position: Line ${position.line + 1}, Column ${position.character + 1}
+
+Generate appropriate ${languageId} code that:
+1. Follows best practices and conventions for ${languageId}
+2. Is contextually appropriate for the surrounding code
+3. Is complete and functional
+4. Includes proper error handling where appropriate
+5. Uses appropriate typing (if TypeScript) or type hints (if Python)
+
+`;
+
+            // Customize prompt based on generation type
+            switch (generationType) {
+                case 'complete':
+                    prompt += `Complete the current function or code block at the cursor position.`;
+                    break;
+                case 'test':
+                    prompt += `Generate comprehensive unit tests for the function "${functionName || 'the target function'}". Include multiple test cases covering normal, edge, and error scenarios.`;
+                    break;
+                case 'create':
+                default:
+                    prompt += `Create new ${languageId} code as requested.`;
+                    break;
+            }
+
+            prompt += `\n\nRespond with ONLY the code to insert, no explanations or markdown code blocks.`;
+
+            const response = await client.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [{ role: "user", content: prompt }],
+                max_tokens: 1000,
+                temperature: 0.2
+            });
+
+            const generatedCode = response.choices[0]?.message?.content?.trim();
+            if (!generatedCode) {
+                vscode.window.showErrorMessage('Failed to generate code');
+                return false;
+            }
+
+            // Insert the generated code at the cursor position
+            const edit = new vscode.WorkspaceEdit();
+            
+            // If we have a selection, replace it; otherwise insert at cursor
+            const insertRange = targetEditor.selection.isEmpty ? 
+                new vscode.Range(targetEditor.selection.active, targetEditor.selection.active) : 
+                targetEditor.selection;
+                
+            edit.replace(document.uri, insertRange, generatedCode);
+            
+            const success = await vscode.workspace.applyEdit(edit);
+            
+            if (success) {
+                // Position cursor at the end of inserted code
+                const lines = generatedCode.split('\n');
+                const newPosition = new vscode.Position(
+                    position.line + lines.length - 1,
+                    lines[lines.length - 1].length
+                );
+                targetEditor.selection = new vscode.Selection(newPosition, newPosition);
+                
+                const message = `✨ Generated ${generationType || 'code'}: ${functionName || originalText}`;
+                vscode.window.showInformationMessage(message);
+                
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ✅ Successfully generated and inserted code`);
+                    log(`[CommandRouter] Generated code length: ${generatedCode.length} characters`);
+                }
+                
+                return true;
+            } else {
+                vscode.window.showErrorMessage('Failed to insert generated code');
+                return false;
+            }
+            
+        } catch (error) {
+            logError(`[CommandRouter] Code generation error: ${error}`);
+            vscode.window.showErrorMessage(`Code generation failed: ${error}`);
+            return false;
+        }
     }
 
     /**
@@ -1498,6 +1648,67 @@ Only include parameters relevant to the category. Use null for missing parameter
                 command: 'lipcoder.switchPanel',
                 description: 'Switch between panels',
                 preventDefault: true
+            },
+
+            // Code Generation Commands
+            {
+                pattern: /^(complete function|complete)\s*(.*)$/i,
+                command: '',
+                description: 'Complete function using AI',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    const functionName = match[2]?.trim();
+                    return await this.executeLLMCodeGeneration({
+                        codeDescription: originalText,
+                        generationType: 'complete',
+                        functionName: functionName
+                    }, originalText);
+                }
+            },
+            {
+                pattern: /^(make test function for|create test for|test function for)\s+(.+)$/i,
+                command: '',
+                description: 'Generate test function using AI',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    const functionName = match[2]?.trim();
+                    return await this.executeLLMCodeGeneration({
+                        codeDescription: originalText,
+                        generationType: 'test',
+                        functionName: functionName
+                    }, originalText);
+                }
+            },
+            {
+                pattern: /^(make function|create function)\s+(.+)$/i,
+                command: '',
+                description: 'Create function using AI',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    const functionDescription = match[2]?.trim();
+                    return await this.executeLLMCodeGeneration({
+                        codeDescription: functionDescription,
+                        generationType: 'create',
+                        functionName: functionDescription
+                    }, originalText);
+                }
+            },
+            {
+                pattern: /^(generate|create|make)\s+(.+)$/i,
+                command: '',
+                description: 'Generate code using AI',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    const codeDescription = match[2]?.trim();
+                    return await this.executeLLMCodeGeneration({
+                        codeDescription: codeDescription,
+                        generationType: 'create'
+                    }, originalText);
+                }
             }
         ];
 

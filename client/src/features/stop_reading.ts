@@ -9,12 +9,23 @@ import * as vscode from 'vscode';
 // Track if line token reading is currently active
 let lineTokenReadingActive = false;
 
+// Track if ASR is currently recording (to prevent token reading from starting)
+let asrRecordingActive = false;
+
 export function setLineTokenReadingActive(active: boolean): void {
 	lineTokenReadingActive = active;
 }
 
 export function getLineTokenReadingActive(): boolean {
 	return lineTokenReadingActive;
+}
+
+export function setASRRecordingActive(active: boolean): void {
+	asrRecordingActive = active;
+}
+
+export function getASRRecordingActive(): boolean {
+	return asrRecordingActive;
 }
 
 export function stopAllAudio(): void {

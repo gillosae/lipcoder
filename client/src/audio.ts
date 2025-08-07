@@ -1398,7 +1398,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         for (const { tokens, category } of chunks) {
             for (const token of tokens) {
                 // Priority 1: Check if this is a special character token (regardless of category)
-                const isSpecialChar = specialCharMap[token] !== undefined;
+                const isSpecialChar = Object.values(specialCharMap).includes(token);
                 if (isSpecialChar) {
                     continue; // Special characters use direct TTS generation
                 } else if (isEarconToken(token)) {
@@ -1453,10 +1453,12 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     
                     // Route tokens to appropriate playback method
                     // Priority 1: Check if this is a special character token
-                    const isSpecialChar = specialCharMap[token] !== undefined;
+                    const isSpecialChar = Object.values(specialCharMap).includes(token);
+                    console.log(`[speakTokenList] DEBUG: token="${token}", category="${category}", isSpecialChar=${isSpecialChar}, specialCharMapValues=[${Object.values(specialCharMap).join(', ')}]`);
                     if (isSpecialChar && category === 'special') {
                         // Only use the old playSpecial for 'special' category
                         log(`[speakTokenList] Using SPECIAL TTS for: "${token}"`);
+                        console.log(`[speakTokenList] DEBUG: About to call playSpecial("${token}")`);
                         await playSpecial(token);
                     } else if (isEarcon(token)) {
                         // Priority 2: True earcons (punctuation/special chars) always use earcons

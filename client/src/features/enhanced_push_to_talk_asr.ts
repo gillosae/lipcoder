@@ -6,7 +6,7 @@ import { ASRPopup } from '../asr_popup';
 import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config';
 import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
-import { stopAllAudio } from './stop_reading';
+import { stopAllAudio, setASRRecordingActive } from './stop_reading';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -54,6 +54,10 @@ function cleanupASRResources(): void {
     if (isRecording) {
         stopRecording();
     }
+    
+    // Clear ASR recording flag to allow token reading again
+    setASRRecordingActive(false);
+    log('[Enhanced-ASR] Cleared ASR recording flag during cleanup');
     
     // Dispose clients
     if (asrClient) {
@@ -429,6 +433,10 @@ async function startASRCommandMode(): Promise<void> {
     stopAllAudio();
     log(`[Enhanced-ASR] Stopped all audio for command mode recording`);
     
+    // Set ASR recording flag to prevent token reading from starting
+    setASRRecordingActive(true);
+    log(`[Enhanced-ASR] Set ASR recording flag to prevent token reading`);
+    
     currentASRMode = ASRMode.Command;
     log(`[Enhanced-ASR] Starting ASR in COMMAND mode`);
     await startRecording();
@@ -441,6 +449,10 @@ async function stopASRCommandMode(): Promise<void> {
     if (currentASRMode === ASRMode.Command) {
         log(`[Enhanced-ASR] Stopping ASR command mode`);
         await stopRecording();
+        
+        // Clear ASR recording flag to allow token reading again
+        setASRRecordingActive(false);
+        log(`[Enhanced-ASR] Cleared ASR recording flag - token reading can resume`);
     } else {
         logWarning(`[Enhanced-ASR] Cannot stop command mode - current mode is ${currentASRMode}`);
     }
@@ -454,6 +466,10 @@ async function startASRWriteMode(): Promise<void> {
     stopAllAudio();
     log(`[Enhanced-ASR] Stopped all audio for write mode recording`);
     
+    // Set ASR recording flag to prevent token reading from starting
+    setASRRecordingActive(true);
+    log(`[Enhanced-ASR] Set ASR recording flag to prevent token reading`);
+    
     currentASRMode = ASRMode.Write;
     log(`[Enhanced-ASR] Starting ASR in WRITE mode`);
     await startRecording();
@@ -465,7 +481,11 @@ async function startASRWriteMode(): Promise<void> {
 async function stopASRWriteMode(): Promise<void> {
     if (currentASRMode === ASRMode.Write) {
         log(`[Enhanced-ASR] Stopping ASR write mode`);
-        await stopRecording();  
+        await stopRecording();
+        
+        // Clear ASR recording flag to allow token reading again
+        setASRRecordingActive(false);  
+        log(`[Enhanced-ASR] Cleared ASR recording flag - token reading can resume`);
     } else {
         logWarning(`[Enhanced-ASR] Cannot stop write mode - current mode is ${currentASRMode}`);
     }
