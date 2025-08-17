@@ -242,7 +242,11 @@ export class GPT4oASRClient {
             contentType: 'audio/wav'
         });
         formData.append('model', 'whisper-1');
-        formData.append('language', gpt4oASRConfig.language || 'en');
+        
+        // Only add language parameter if specified (null enables auto-detection)
+        if (gpt4oASRConfig.language) {
+            formData.append('language', gpt4oASRConfig.language);
+        }
 
         const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',

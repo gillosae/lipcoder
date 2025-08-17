@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { log, logError, logSuccess, logWarning } from './utils';
 import { getOpenAIClient } from './llm';
+import { analyzeCodeWithQuestion } from './features/code_analysis';
+import { startThinkingAudio, stopThinkingAudio } from './audio';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -649,6 +651,9 @@ export class CommandRouter {
     private async classifyAndExecuteWithLLM(text: string): Promise<boolean> {
         let result: string | undefined;
         try {
+            // Start thinking audio during LLM processing
+            await startThinkingAudio();
+            
             const client = getOpenAIClient();
             
             const prompt = `You are a voice command classifier for a code editor. Analyze the following voice command and determine the intent and parameters.
@@ -665,7 +670,8 @@ Available command categories:
 7. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
 8. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
 9. CODE_GENERATION - Generate code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x")
-10. NOT_A_COMMAND - Just regular text to type
+10. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
+11. NOT_A_COMMAND - Just regular text to type
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -678,7 +684,8 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "command": "symbolTree",
     "operation": "save",
     "codeDescription": "function that gets parameter x and y and returns sum",
-    "generationType": "complete|create|test"
+    "generationType": "complete|create|test",
+    "question": "what does this function do?"
   },
   "reasoning": "Brief explanation"
 }
@@ -693,6 +700,10 @@ Only include parameters relevant to the category. Use null for missing parameter
             });
 
             result = response.choices[0]?.message?.content?.trim();
+            
+            // Stop thinking audio after LLM processing
+            await stopThinkingAudio();
+            
             if (!result) {
                 return false;
             }
@@ -727,6 +738,9 @@ Only include parameters relevant to the category. Use null for missing parameter
             return await this.executeLLMCommand(commandInfo, text);
 
         } catch (error) {
+            // Make sure to stop thinking audio even if LLM fails
+            await stopThinkingAudio();
+            
             if (this.options.enableLogging) {
                 logError(`[CommandRouter] LLM classification failed: ${error}`);
                 log(`[CommandRouter] LLM raw response: ${result || 'no response'}`);
@@ -768,7 +782,15 @@ Only include parameters relevant to the category. Use null for missing parameter
                     return await this.executeLLMNavigationOperation(parameters, originalText);
                 
                 case 'CODE_GENERATION':
-                    return await this.executeLLMCodeGeneration(parameters, originalText);
+                    // Route all code generation to vibe coding with original text
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] 🎨 Routing code generation to vibe coding with instruction: "${originalText}"`);
+                    }
+                    await vscode.commands.executeCommand('lipcoder.vibeCoding', originalText);
+                    return true;
+                
+                case 'CODE_ANALYSIS':
+                    return await this.executeLLMCodeAnalysis(parameters, originalText);
                 
                 case 'NOT_A_COMMAND':
                     if (this.options.enableLogging) {
@@ -967,13 +989,15 @@ Only include parameters relevant to the category. Use null for missing parameter
             'breadcrumb': 'lipcoder.breadcrumb',
             'whereAmI': 'lipcoder.breadcrumb',
             'fileTree': 'lipcoder.fileTree',
-            'explorer': 'lipcoder.fileTree',
+            'explorer': 'lipcoder.goToExplorer',
+            'editor': 'lipcoder.goToEditor',
             'readLine': 'lipcoder.readLineTokens',
             'lineTokens': 'lipcoder.readLineTokens',
             'readFunction': 'lipcoder.readFunctionTokens',
             'functionTokens': 'lipcoder.readFunctionTokens',
             'stopReading': 'lipcoder.stopReadLineTokens',
             'stopSpeech': 'lipcoder.stopReadLineTokens',
+            'toggleCursorReading': 'lipcoder.toggleCursorLineReading',
             'currentLine': 'lipcoder.readCurrentLine',
             'lineNumber': 'lipcoder.readCurrentLine',
             'switchPanel': 'lipcoder.switchPanel',
@@ -1083,6 +1107,34 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         return false;
+    }
+
+    /**
+     * Execute code analysis command using LLM
+     */
+    private async executeLLMCodeAnalysis(parameters: any, originalText: string): Promise<boolean> {
+        try {
+            // Extract question from parameters or use original text
+            const question = parameters?.question || originalText;
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🔍 Executing code analysis with question: "${question}"`);
+            }
+            
+            // Call the code analysis function
+            await analyzeCodeWithQuestion(question);
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ✅ Code analysis completed successfully`);
+            }
+            
+            return true;
+            
+        } catch (error) {
+            logError(`[CommandRouter] Code analysis error: ${error}`);
+            vscode.window.showErrorMessage(`Code analysis failed: ${error}`);
+            return false;
+        }
     }
 
     /**
@@ -1425,9 +1477,87 @@ Generate appropriate ${languageId} code that:
 
             // Terminal commands
             {
-                pattern: /^(open terminal|terminal)$/i,
-                command: 'workbench.action.terminal.new',
-                description: 'Open new terminal',
+                pattern: /^(open terminal|terminal|go to terminal)$/i,
+                command: 'lipcoder.openTerminal',
+                description: 'Open LipCoder terminal',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal up|up line|previous line)$/i,
+                command: 'lipcoder.terminalPrevLine',
+                description: 'Navigate to previous terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal down|down line|next line)$/i,
+                command: 'lipcoder.terminalNextLine',
+                description: 'Navigate to next terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal left|left char|previous char)$/i,
+                command: 'lipcoder.terminalCharLeft',
+                description: 'Navigate to previous character in terminal',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal right|right char|next char)$/i,
+                command: 'lipcoder.terminalCharRight',
+                description: 'Navigate to next character in terminal',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal word left|previous word|word left)$/i,
+                command: 'lipcoder.terminalWordLeft',
+                description: 'Navigate to previous word in terminal',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal word right|next word|word right)$/i,
+                command: 'lipcoder.terminalWordRight',
+                description: 'Navigate to next word in terminal',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal line start|line start|home)$/i,
+                command: 'lipcoder.terminalLineStart',
+                description: 'Move to beginning of current terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal line end|line end|end)$/i,
+                command: 'lipcoder.terminalLineEnd',
+                description: 'Move to end of current terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal read line|read line|read current line)$/i,
+                command: 'lipcoder.terminalReadLine',
+                description: 'Read current terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal first line|first line|top)$/i,
+                command: 'lipcoder.terminalFirstLine',
+                description: 'Jump to first line in terminal buffer',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal last line|last line|bottom)$/i,
+                command: 'lipcoder.terminalLastLine',
+                description: 'Jump to last line in terminal buffer',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal search|search terminal|find in terminal)$/i,
+                command: 'lipcoder.terminalSearch',
+                description: 'Search within terminal output',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal status|terminal info|where am i)$/i,
+                command: 'lipcoder.terminalStatus',
+                description: 'Get current terminal position and status',
                 preventDefault: true
             },
 
@@ -1614,10 +1744,53 @@ Generate appropriate ${languageId} code that:
                 preventDefault: true
             },
             {
-                pattern: /^(file tree|explorer)$/i,
+                pattern: /^(file tree)$/i,
                 command: 'lipcoder.fileTree',
-                description: 'Speak file tree',
+                description: 'Build file tree',
                 preventDefault: true
+            },
+            {
+                pattern: /^(syntax errors|syntax error list|error list|errors)$/i,
+                command: 'lipcoder.syntaxErrorList',
+                description: 'Show syntax error list',
+                preventDefault: true
+            },
+            {
+                pattern: /^(next error|next syntax error)$/i,
+                command: 'lipcoder.nextSyntaxError',
+                description: 'Navigate to next syntax error',
+                preventDefault: true
+            },
+            {
+                pattern: /^(previous error|prev error|previous syntax error)$/i,
+                command: 'lipcoder.previousSyntaxError',
+                description: 'Navigate to previous syntax error',
+                preventDefault: true
+            },
+            {
+                pattern: /^(first error|first syntax error)$/i,
+                command: 'lipcoder.firstSyntaxError',
+                description: 'Navigate to first syntax error',
+                preventDefault: true
+            },
+            {
+                pattern: /^(go to explorer|explorer)$/i,
+                command: 'lipcoder.goToExplorer',
+                description: 'Go to explorer panel',
+                preventDefault: true
+            },
+            {
+                pattern: /^(go to editor|editor)$/i,
+                command: 'lipcoder.goToEditor',
+                description: 'Go to editor panel',
+                preventDefault: true
+            },
+            {
+                pattern: /^open\s+(.+)$/i,
+                command: 'lipcoder.openFile',
+                description: 'Open file by name',
+                preventDefault: true,
+                parameterExtractor: (match: RegExpMatchArray | string[], originalText: string) => [match[1].trim()]
             },
             {
                 pattern: /^(read line|line tokens)$/i,
@@ -1635,6 +1808,12 @@ Generate appropriate ${languageId} code that:
                 pattern: /^(stop reading|stop speech)$/i,
                 command: 'lipcoder.stopReadLineTokens',
                 description: 'Stop LipCoder speech',
+                preventDefault: true
+            },
+            {
+                pattern: /^(toggle cursor reading|cursor reading)$/i,
+                command: 'lipcoder.toggleCursorLineReading',
+                description: 'Toggle cursor-based line reading',
                 preventDefault: true
             },
             {

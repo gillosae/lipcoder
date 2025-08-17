@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
-import { getOpenAIClient, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
+import { callLLMForCompletion, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
 import { playWave, speakTokenList, TokenChunk, playEarcon } from '../audio';
 import { stopAllAudio, getLineTokenReadingActive } from './stop_reading';
 import { log } from '../utils';
@@ -28,7 +28,27 @@ function cleanupInlineSuggestions(): void {
  * Register inline suggestion provider and related commands.
  */
 export function registerInlineSuggestions(context: vscode.ExtensionContext) {
-    const client = getOpenAIClient();
+
+    // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading
+    const periodicCheck = setInterval(() => {
+        if (getLineTokenReadingActive()) {
+            // Hide suggestions
+            vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            
+            // Disable at context level
+            Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', false)).catch(() => {});
+            
+            // Disable editor inline suggestions setting temporarily
+            const config = vscode.workspace.getConfiguration('editor');
+            if (config.get('inlineSuggest.enabled') !== false) {
+                config.update('inlineSuggest.enabled', false, vscode.ConfigurationTarget.Global);
+            }
+        }
+    }, 50); // Check every 50ms for more aggressive blocking
+    
+    context.subscriptions.push({
+        dispose: () => clearInterval(periodicCheck)
+    });
 
     // Trigger inline suggest after 5s of cursor idle
     const selectionListener = vscode.window.onDidChangeTextEditorSelection(event => {
@@ -36,6 +56,13 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
         if (idleTimer) {
             clearTimeout(idleTimer);
         }
+        
+        // Clear any existing inline suggestions if line reading becomes active
+        if (getLineTokenReadingActive()) {
+            vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            return;
+        }
+        
         idleTimer = setTimeout(() => {
             // Don't trigger suggestions if line token reading is active
             if (getLineTokenReadingActive()) {
@@ -54,14 +81,19 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
     const provider: InlineCompletionItemProvider = {
         async provideInlineCompletionItems(document, position, context: InlineCompletionContext) {
-            // Don't run inline suggestions during line token reading
+            // AGGRESSIVE: Don't run inline suggestions during line token reading
             if (getLineTokenReadingActive()) {
-                log(`[InlineSuggestions] Skipping suggestion generation during line token reading`);
+                log(`[InlineSuggestions] BLOCKING suggestion generation during line token reading (trigger: ${context.triggerKind})`);
+                
+                // Also try to hide any existing suggestions
+                vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+                
                 return { items: [] };
             }
             
             // Only allow after manual invoke or our idle trigger
             if (!suggestionInvoked && context.triggerKind !== InlineCompletionTriggerKind.Invoke) {
+                log(`[InlineSuggestions] Blocking non-invoked suggestion (trigger: ${context.triggerKind}, suggestionInvoked: ${suggestionInvoked})`);
                 return { items: [] };
             }
             // Skip suppressed lines
@@ -81,17 +113,8 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
             // log(`Inline prompt: ${userPrompt}`);
 
-            const resp = await client.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                    { role: "system", content: "You are a code autocomplete assistant. Only output the code snippet without explanation." },
-                    { role: "user", content: userPrompt }
-                ],
-                max_tokens: 64,
-                temperature: 0.2
-            });
-
-            let suggestion = resp.choices[0]?.message?.content || '';
+            const systemPrompt = "You are a code autocomplete assistant. Only output the code snippet without explanation.";
+            let suggestion = await callLLMForCompletion(systemPrompt, userPrompt, 64, 0.2);
             suggestion = stripFences(suggestion).trim();
             if (!suggestion || /^(sure|please|here|okay|ok)[,\s]/i.test(suggestion)) {
                 return { items: [] };

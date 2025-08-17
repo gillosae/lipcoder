@@ -1,6 +1,6 @@
 # Vibe Coding Feature
 
-The Vibe Coding feature allows you to modify code using natural language instructions. It integrates with OpenAI's GPT-4 to understand your requests and apply changes to your code.
+The Vibe Coding feature allows you to modify code using natural language instructions. It integrates with your choice of LLM backend (Claude or ChatGPT) to understand your requests and apply changes to your code.
 
 ## How to Use
 
@@ -29,7 +29,7 @@ Here are some example instructions you can try:
 ## How It Works
 
 1. **Input**: You provide a natural language description of what you want to change
-2. **Processing**: The system sends your code and instruction to OpenAI's GPT-4
+2. **Processing**: The system sends your code and instruction to your configured LLM backend (Claude or ChatGPT)
 3. **Analysis**: The AI analyzes your request and generates modified code
 4. **Review**: You see a summary of the changes with line counts (+15, -21, etc.)
 5. **Apply**: You can choose to apply the changes or cancel
@@ -44,8 +44,28 @@ Here are some example instructions you can try:
 
 ## Requirements
 
-- OpenAI API key configured in settings (`lipcoder.openaiApiKey`)
+- LLM backend configured (Claude is the default):
+  - **For Claude**: API key in settings (`lipcoder.claudeApiKey`)
+  - **For ChatGPT**: API key in settings (`lipcoder.openaiApiKey`)
 - Active text editor with code to modify
+
+## LLM Backend Configuration
+
+### Setting up Claude (Default)
+1. Get an API key from [Anthropic Console](https://console.anthropic.com/)
+2. Run command: **LipCoder: Set Claude API Key**
+3. Or set `lipcoder.claudeApiKey` in VS Code settings
+
+### Setting up ChatGPT
+1. Get an API key from [OpenAI](https://platform.openai.com/api-keys)
+2. Run command: **LipCoder: Set OpenAI API Key**
+3. Or set `lipcoder.openaiApiKey` in VS Code settings
+
+### Switching Between Backends
+- **LipCoder: Select LLM Backend** - Choose between Claude and ChatGPT
+- **LipCoder: Switch to Claude** - Quick switch to Claude
+- **LipCoder: Switch to ChatGPT** - Quick switch to ChatGPT
+- **LipCoder: Show LLM Backend Status** - Check current configuration
 
 ## Tips
 

@@ -14,6 +14,44 @@ let asrRecordingActive = false;
 
 export function setLineTokenReadingActive(active: boolean): void {
 	lineTokenReadingActive = active;
+	
+	// AGGRESSIVE: Disable ALL inline suggestions during line reading
+	if (active) {
+		// Hide any existing inline suggestions
+		vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+		
+		// Cancel any pending inline suggestions
+		Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.cancel')).catch(() => {
+			// Ignore if command doesn't exist
+		});
+		
+		// CRITICAL: Disable VSCode's built-in inline suggestions completely
+		Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', false)).catch(() => {
+			// Ignore if command doesn't exist
+		});
+		
+		// Also disable GitHub Copilot if present
+		Promise.resolve(vscode.commands.executeCommand('github.copilot.toggleInlineSuggestion', false)).catch(() => {
+			// Ignore if Copilot not installed
+		});
+		
+	} else {
+		// Re-enable inline suggestions when line reading stops
+		Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', true)).catch(() => {
+			// Ignore if command doesn't exist
+		});
+		
+		// Re-enable GitHub Copilot if present
+		Promise.resolve(vscode.commands.executeCommand('github.copilot.toggleInlineSuggestion', true)).catch(() => {
+			// Ignore if Copilot not installed
+		});
+		
+		// Re-enable editor inline suggestions setting
+		const config = vscode.workspace.getConfiguration('editor');
+		if (config.get('inlineSuggest.enabled') !== true) {
+			config.update('inlineSuggest.enabled', true, vscode.ConfigurationTarget.Global);
+		}
+	}
 }
 
 export function getLineTokenReadingActive(): boolean {

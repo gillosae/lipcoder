@@ -82,6 +82,34 @@
         "title": "LipCoder: File Tree"
       },
       {
+        "command": "lipcoder.goToExplorer",
+        "title": "LipCoder: Go To Explorer"
+      },
+      {
+        "command": "lipcoder.goToEditor",
+        "title": "LipCoder: Go To Editor"
+      },
+      {
+        "command": "lipcoder.openFile",
+        "title": "LipCoder: Open File"
+      },
+      {
+        "command": "lipcoder.syntaxErrorList",
+        "title": "LipCoder: Show Syntax Error List"
+      },
+      {
+        "command": "lipcoder.nextSyntaxError",
+        "title": "LipCoder: Next Syntax Error"
+      },
+      {
+        "command": "lipcoder.previousSyntaxError",
+        "title": "LipCoder: Previous Syntax Error"
+      },
+      {
+        "command": "lipcoder.firstSyntaxError",
+        "title": "LipCoder: First Syntax Error"
+      },
+      {
         "command": "lipcoder.explorerUp",
         "title": "LipCoder: Explorer Up"
       },
@@ -122,8 +150,67 @@
         "title": "LipCoder: Set OpenAI API Key"
       },
       {
+        "command": "lipcoder.setClaudeAPIKey",
+        "title": "LipCoder: Set Claude API Key"
+      },
+      {
+        "command": "lipcoder.selectLLMBackend",
+        "title": "LipCoder: Select LLM Backend (ChatGPT/Claude)",
+        "category": "LLM"
+      },
+      {
+        "command": "lipcoder.switchToChatGPT",
+        "title": "LipCoder: Switch to ChatGPT",
+        "category": "LLM"
+      },
+      {
+        "command": "lipcoder.switchToClaude",
+        "title": "LipCoder: Switch to Claude",
+        "category": "LLM"
+      },
+      {
+        "command": "lipcoder.showLLMStatus",
+        "title": "LipCoder: Show LLM Backend Status",
+        "category": "LLM"
+      },
+      {
         "command": "lipcoder.vibeCoding",
         "title": "LipCoder: Vibe Coding - Modify Code with Natural Language"
+      },
+      {
+        "command": "lipcoder.applyCurrentChange",
+        "title": "LipCoder: Apply Current Vibe Coding Changes",
+        "category": "Vibe Coding"
+      },
+      {
+        "command": "lipcoder.rejectCurrentChange",
+        "title": "LipCoder: Reject Current Vibe Coding Changes",
+        "category": "Vibe Coding"
+      },
+      {
+        "command": "lipcoder.showCurrentChangeDetails",
+        "title": "LipCoder: Show Current Change Details",
+        "category": "Vibe Coding"
+      },
+      {
+        "command": "lipcoder.handleVibeCodingVoiceCommand",
+        "title": "LipCoder: Handle Vibe Coding Voice Command",
+        "category": "Vibe Coding"
+      },
+      {
+        "command": "lipcoder.analyzeCode",
+        "title": "LipCoder: Analyze Code - Ask Questions About Your Code",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.acceptDiff",
+        "title": "LipCoder: Accept Diff Changes",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.rejectDiff",
+        "title": "LipCoder: Reject Diff Changes",
+        "category": "LipCoder"
       },
       {
         "command": "lipcoder.startASRStreaming",
@@ -277,6 +364,10 @@
         "title": "LipCoder: Toggle Read Mode (Token/Word)"
       },
       {
+        "command": "lipcoder.toggleCursorLineReading",
+        "title": "LipCoder: Toggle Cursor Line Reading"
+      },
+      {
         "command": "lipcoder.toggleAudioMinimap",
         "title": "LipCoder: Toggle Audio Minimap"
       },
@@ -310,18 +401,33 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.testThinkingAudio",
+        "title": "LipCoder: Test Thinking Audio",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testCommentVoice",
+        "title": "LipCoder: Test Comment Voice",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testCommentTokenization",
+        "title": "LipCoder: Test Comment Tokenization",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.startASRCommandMode",
         "title": "Start ASR Command Mode",
         "category": "LipCoder"
       },
       {
-        "command": "lipcoder.stopASRCommandMode",  
+        "command": "lipcoder.stopASRCommandMode",
         "title": "Stop ASR Command Mode",
         "category": "LipCoder"
       },
       {
         "command": "lipcoder.startASRWriteMode",
-        "title": "Start ASR Write Mode", 
+        "title": "Start ASR Write Mode",
         "category": "LipCoder"
       },
       {
@@ -363,6 +469,26 @@
         "when": "explorerViewletVisible && explorerViewletFocus"
       },
       {
+        "key": "up",
+        "command": "lipcoder.terminalPrevLine",
+        "when": "terminalFocus"
+      },
+      {
+        "key": "down",
+        "command": "lipcoder.terminalNextLine",
+        "when": "terminalFocus"
+      },
+      {
+        "key": "left",
+        "command": "lipcoder.terminalCharLeft",
+        "when": "terminalFocus"
+      },
+      {
+        "key": "right",
+        "command": "lipcoder.terminalCharRight",
+        "when": "terminalFocus"
+      },
+      {
         "command": "lipcoder.formatCode",
         "key": "shift+alt+f",
         "when": "editorTextFocus && !editorReadonly"
@@ -376,6 +502,16 @@
         "command": "lipcoder.rejectSuggestion",
         "key": "escape",
         "when": "editorTextFocus && inlineSuggestionVisible"
+      },
+      {
+        "command": "lipcoder.applyCurrentChange",
+        "key": "shift+enter",
+        "when": "editorTextFocus && vibeCodingDiffVisible"
+      },
+      {
+        "command": "lipcoder.rejectCurrentChange",
+        "key": "shift+escape",
+        "when": "editorTextFocus && vibeCodingDiffVisible"
       },
       {
         "command": "lipcoder.rejectSuggestion",
@@ -397,9 +533,19 @@
         "when": "!lipcoder.isRecording"
       },
       {
-        "command": "lipcoder.stopASRRecording", 
+        "command": "lipcoder.stopASRRecording",
         "key": "ctrl+shift+a",
         "when": "lipcoder.isRecording"
+      },
+      {
+        "command": "lipcoder.acceptDiff",
+        "key": "ctrl+shift+y",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.rejectDiff",
+        "key": "ctrl+shift+n",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -409,6 +555,53 @@
           "type": "string",
           "default": "",
           "description": "Your OpenAI API key for ChatGPT completions."
+        },
+        "lipcoder.claudeApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Anthropic API key for Claude completions."
+        },
+        "lipcoder.llmBackend": {
+          "type": "string",
+          "enum": ["chatgpt", "claude"],
+          "default": "claude",
+          "description": "Choose the LLM backend for vibe coding and chat completions."
+        },
+        "lipcoder.claudeModel": {
+          "type": "string",
+          "enum": ["claude-opus-4-1-20250805", "claude-sonnet-4-20250514",  "claude-3-5-haiku-20241022"],
+          "default": "claude-sonnet-4-20250514",
+          "description": "Claude model to use for completions."
+        },
+        "lipcoder.claudeMaxTokens": {
+          "type": "number",
+          "default": 2000,
+          "description": "Maximum tokens for Claude responses."
+        },
+        "lipcoder.claudeTemperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Temperature for Claude responses (0.0 = deterministic, 1.0 = creative)."
+        },
+        "lipcoder.asrBackend": {
+          "type": "string",
+          "enum": ["gpt4o-transcribe", "silero"],
+          "default": "gpt4o-transcribe",
+          "description": "Choose the ASR backend for voice recognition. GPT-4o Transcribe supports multilingual recognition including Korean and English."
+        },
+        "lipcoder.asrLanguage": {
+          "type": ["string", "null"],
+          "enum": [null, "en", "ko", "ja", "zh", "es", "fr", "de", "it", "pt", "ru"],
+          "default": null,
+          "description": "Language for ASR recognition. Set to null for automatic language detection (supports Korean, English, and many others). Only works with GPT-4o Transcribe backend."
+        },
+        "lipcoder.diffPreviewMode": {
+          "type": "string",
+          "enum": ["native", "inline", "popup"],
+          "default": "native",
+          "description": "Choose how to preview code changes: 'native' uses VS Code's built-in diff viewer, 'inline' shows diff in a separate editor, 'popup' shows simple confirmation dialog."
         }
       }
     }
@@ -447,6 +640,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
     "node-fetch": "^3.3.2",
     "node-pty": "^1.0.0",
     "speaker": "^0.5.5",

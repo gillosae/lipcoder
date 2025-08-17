@@ -71,33 +71,12 @@ export function registerFileTree(context: ExtensionContext) {
             }
             printTree(tree);
 
-            // 2) Speak file tree
-            await speakTokenList([{ tokens: ['file tree'], category: undefined }]);
-            const MAX_INDENT_UNITS = 5;
-            async function walkSpeak(nodes: FileNode[], depth = 0) {
-                for (const node of nodes) {
-                    if (controller.signal.aborted) {
-                        return;  // bail out immediately
-                    }
-                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const file = path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`);
-                    await playWave(file, { isEarcon: true, immediate: true });
-                    
-                    // Speak the file/folder name using speakTokenList
-                    if (node.isDirectory) {
-                        await speakTokenList([{ tokens: [node.name], category: 'folder' }], controller.signal);
-                        if (node.children) {
-                            await walkSpeak(node.children, depth + 1);
-                        }
-                    } else {
-                        await speakTokenList([{ tokens: [node.name], category: undefined }], controller.signal);
-                    }
-                }
-            }
-
-            await walkSpeak(tree);
-            fileTreeAbortController = null; // Done speaking
-            vscode.window.showInformationMessage('Spoken file tree');
+            // 2) File tree built but automatic reading disabled
+            await speakTokenList([{ tokens: ['File tree built. Use explorer navigation to browse files.'], category: undefined }]);
+            
+            // Removed automatic file tree reading - users can navigate manually
+            fileTreeAbortController = null; // Done
+            vscode.window.showInformationMessage('File tree built - use explorer navigation to browse');
         })
     );
 }

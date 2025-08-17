@@ -35,9 +35,63 @@ export function registerSwitchPanel(context: ExtensionContext) {
                 { tokens: [choice.toLowerCase()], category: undefined }
             ]);
 
-            // 👉 When switching into the editor, trigger a readCurrentLine
-            if (choice === 'Editor') {
-                await vscode.commands.executeCommand('lipcoder.readCurrentLine');
+            // Removed automatic file content reading when switching to editor
+        }),
+        
+        // Direct command to go to explorer with audio feedback
+        vscode.commands.registerCommand('lipcoder.goToExplorer', async () => {
+            await vscode.commands.executeCommand('workbench.view.explorer');
+            
+            // Audio feedback
+            await speakTokenList([
+                { tokens: ['in explorer'], category: undefined }
+            ]);
+        }),
+        
+        // Direct command to go to editor with audio feedback
+        vscode.commands.registerCommand('lipcoder.goToEditor', async () => {
+            try {
+                // Check if there's an active editor first
+                const activeEditor = vscode.window.activeTextEditor;
+                
+                if (!activeEditor) {
+                    // No active editor, try to open the most recent file or show welcome tab
+                    await vscode.commands.executeCommand('workbench.action.showAllEditors');
+                    
+                    // Wait a bit and check again
+                    setTimeout(async () => {
+                        const newActiveEditor = vscode.window.activeTextEditor;
+                        if (newActiveEditor) {
+                            await speakTokenList([{ tokens: ['in editor'], category: undefined }]);
+                        } else {
+                            await speakTokenList([{ tokens: ['No files open in editor'], category: undefined }]);
+                        }
+                    }, 200);
+                    return;
+                }
+                
+                // There is an active editor, focus it using multiple methods
+                await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+                
+                // Also try alternative focus commands
+                await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+                
+                // Ensure the document is shown and focused
+                await vscode.window.showTextDocument(activeEditor.document, {
+                    viewColumn: activeEditor.viewColumn,
+                    preserveFocus: false
+                });
+                
+                // Audio feedback
+                await speakTokenList([
+                    { tokens: ['in editor'], category: undefined }
+                ]);
+                
+            } catch (error) {
+                console.error('Error switching to editor:', error);
+                await speakTokenList([
+                    { tokens: ['Error switching to editor'], category: undefined }
+                ]);
             }
         })
     );

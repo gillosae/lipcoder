@@ -12,7 +12,9 @@ import { shouldUseAudioMinimap, updateContinuousTone, resetSpeedTracking, cleanu
 let readyForCursor = false;
 let cursorTimeout: NodeJS.Timeout | null = null;
 let lastCursorMoveTime = 0;
+let suppressAutomaticReading = false; // Flag to suppress automatic text reading
 let cursorIdleTimeout: NodeJS.Timeout | null = null;
+let pendingLineReadTimeout: NodeJS.Timeout | null = null;
 
 /**
  * Clean up nav editor resources
@@ -26,10 +28,30 @@ function cleanupNavEditor(): void {
         clearTimeout(cursorIdleTimeout);
         cursorIdleTimeout = null;
     }
+    if (pendingLineReadTimeout) {
+        clearTimeout(pendingLineReadTimeout);
+        pendingLineReadTimeout = null;
+    }
     readyForCursor = false;
     resetSpeedTracking(); // Reset audio minimap tracking
-    cleanupAudioMinimap(); // Cleanup continuous tone generator
+    cleanupAudioMinimap();     // Cleanup continuous tone generator
     log('[NavEditor] Cleaned up resources');
+}
+
+/**
+ * Suppress automatic text reading (e.g., during vibe coding operations)
+ */
+export function suppressAutomaticTextReading(): void {
+    suppressAutomaticReading = true;
+    log('[NavEditor] Automatic text reading suppressed');
+}
+
+/**
+ * Resume automatic text reading
+ */
+export function resumeAutomaticTextReading(): void {
+    suppressAutomaticReading = false;
+    log('[NavEditor] Automatic text reading resumed');
 }
 
 export function registerNavEditor(context: vscode.ExtensionContext, audioMap: any) {
@@ -67,6 +89,12 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
     // Audio minimap configuration commands
     context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.toggleCursorLineReading', () => {
+            config.cursorLineReadingEnabled = !config.cursorLineReadingEnabled;
+            vscode.window.showInformationMessage(
+                `LipCoder Cursor Line Reading: ${config.cursorLineReadingEnabled ? 'Enabled' : 'Disabled'}`
+            );
+        }),
         vscode.commands.registerCommand('lipcoder.toggleAudioMinimap', () => {
             config.audioMinimapEnabled = !config.audioMinimapEnabled;
             resetSpeedTracking(); // Reset tracking when toggling
@@ -107,6 +135,9 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
         vscode.workspace.onDidChangeTextDocument((e) => {
             // Track typing time to prevent double audio
             lastTypingTime = Date.now();
+            
+            // Skip automatic reading if suppressed (e.g., during vibe coding)
+            if (suppressAutomaticReading) return;
             
             if (!config.typingSpeechEnabled) return;
             const editor = vscode.window.activeTextEditor;
@@ -153,6 +184,14 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 if (!isTypingRelated) {
                     // IMMEDIATELY stop all audio when cursor moves to new line (only for navigation)
                     stopForCursorMovement();
+                    // Additional aggressive stop to prevent audio bleeding
+                    stopAllAudio();
+                    
+                    // Cancel any pending line read from previous cursor movement
+                    if (pendingLineReadTimeout) {
+                        clearTimeout(pendingLineReadTimeout);
+                        pendingLineReadTimeout = null;
+                    }
                 }
 
                 currentLineNum = lineNum;
@@ -175,11 +214,19 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                         log('[NavEditor] Cursor idle detected - stopping continuous tone');
                         resetSpeedTracking(lineNum, e.textEditor); // Pass current line and editor
                     }, 75);
-                } else if (!isTypingRelated) {
+                } else if (!isTypingRelated && config.cursorLineReadingEnabled) {
                     // Only use regular line token reading if continuous tone is NOT playing and not typing
                     if (!isContinuousTonePlaying()) {
-                        vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
-                            .then(undefined, err => console.error('readLineTokens failed:', err));
+                        // Add a delay to ensure previous audio is fully stopped and cleaned up
+                        pendingLineReadTimeout = setTimeout(() => {
+                            pendingLineReadTimeout = null;
+                            // Double-check that we're still on the same line and should read
+                            if (e.textEditor === vscode.window.activeTextEditor && 
+                                e.textEditor.selection.active.line === lineNum) {
+                                vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
+                                    .then(undefined, err => console.error('readLineTokens failed:', err));
+                            }
+                        }, 100); // 100ms delay to prevent audio bleeding
                     } else {
                         log('[NavEditor] Skipping readLineTokens - continuous tone is playing');
                     }

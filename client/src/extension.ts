@@ -29,11 +29,15 @@ import { registerPlaySpeed } from './features/playspeed';
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
+import { registerCodeAnalysis } from './features/code_analysis';
 // import { registerToggleASR } from './features/toggle_asr';
 // import { registerPushToTalkASR } from './features/push_to_talk_asr';
 import { registerEnhancedPushToTalkASR } from './features/enhanced_push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
 import { registerTTSBackendSwitch } from './features/tts_backend_switch';
+import { registerLLMBackendSwitch } from './features/llm_backend_switch';
+import { registerOpenFile } from './features/open_file';
+import { registerSyntaxErrors } from './features/syntax_errors';
 import { serverManager } from './server_manager';
 
 // Memory monitoring
@@ -103,7 +107,8 @@ export async function activate(context: vscode.ExtensionContext) {
 	initConfig(context);
 	
 	// 1.2) Load configuration from VS Code settings ─────────────────────────────────────
-	// Note: Configuration loading moved to individual features to avoid initialization issues
+	const { loadConfigFromSettings } = require('./config');
+	loadConfigFromSettings();
 
 	// 1.5) Clean old corrupted cache files on startup ───────────────────────────────────
 	try {
@@ -185,11 +190,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerSetAPIKey(context);
 	registerChatCompletions(context);
 	registerVibeCodingCommands(context);
+	registerCodeAnalysis(context);
 	// registerToggleASR(context);  // Disabled in favor of enhanced version
 	// registerPushToTalkASR(context);  // Disabled in favor of enhanced version
 	registerEnhancedPushToTalkASR(context);
 	registerTogglePanning(context);
 	registerTTSBackendSwitch(context);
+	registerLLMBackendSwitch(context);
+	registerOpenFile(context);
+	registerSyntaxErrors(context);
 
 	// Add command to restart language server
 	context.subscriptions.push(
@@ -204,6 +213,82 @@ export async function activate(context: vscode.ExtensionContext) {
 				}
 			} catch (error) {
 				vscode.window.showErrorMessage(`Error restarting language server: ${error}`);
+			}
+		})
+	);
+
+	// Add command to test thinking audio
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.testThinkingAudio', async () => {
+			try {
+				const { testThinkingAudio } = await import('./audio.js');
+				await testThinkingAudio();
+				vscode.window.showInformationMessage('Thinking audio test completed!');
+			} catch (error) {
+				vscode.window.showErrorMessage(`Thinking audio test failed: ${error}`);
+			}
+		})
+	);
+
+	// Add command to test comment voice
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.testCommentVoice', async () => {
+			try {
+				const { speakTokenList } = await import('./audio.js');
+				const { getSpeakerForCategory } = await import('./tts.js');
+				const { currentBackend } = await import('./config.js');
+				
+				// Log current backend and voice mappings
+				console.log(`[CommentVoiceTest] Current TTS backend: ${currentBackend}`);
+				console.log(`[CommentVoiceTest] Variable voice: ${getSpeakerForCategory('variable')}`);
+				console.log(`[CommentVoiceTest] Comment voice: ${getSpeakerForCategory('comment_text')}`);
+				console.log(`[CommentVoiceTest] Comment symbol voice: ${getSpeakerForCategory('comment_symbol')}`);
+				
+				await speakTokenList([
+					{ tokens: ['Variable token'], category: 'variable' },
+					{ tokens: ['Comment text'], category: 'comment_text' },
+					{ tokens: ['#'], category: 'comment_symbol' }
+				]);
+				vscode.window.showInformationMessage('Comment voice test completed! Check console for voice mappings.');
+			} catch (error) {
+				vscode.window.showErrorMessage(`Comment voice test failed: ${error}`);
+			}
+		})
+	);
+
+	// Add command to test comment line tokenization
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.testCommentTokenization', async () => {
+			try {
+				const client = (await import('./language_client.js')).getLanguageClient();
+				if (!client) {
+					vscode.window.showErrorMessage('Language server not available');
+					return;
+				}
+
+				// Test tokenization of a comment line
+				const testUri = 'file:///test.py';
+				const testLine = 0;
+				
+				// Request tokens from server
+				const tokens = await client.sendRequest('lipcoder/readLineTokens', {
+					uri: testUri,
+					line: testLine
+				}) as Array<{ text: string; category: string }>;
+				
+				console.log(`[CommentTokenizationTest] Tokens for "# This is a comment":`, tokens);
+				
+				// Test with the actual tokens from server
+				const { speakTokenList } = await import('./audio.js');
+				const chunks = tokens.map(token => ({
+					tokens: [token.text],
+					category: token.category
+				}));
+				
+				await speakTokenList(chunks);
+				vscode.window.showInformationMessage(`Comment tokenization test completed! Found ${tokens.length} tokens. Check console.`);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Comment tokenization test failed: ${error}`);
 			}
 		})
 	);

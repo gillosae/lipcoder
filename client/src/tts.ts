@@ -4,9 +4,10 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { fetch, Agent } from 'undici';
 import { log } from './utils';
-import { config, categoryVoiceMap, sileroConfig, espeakConfig, espeakCategoryVoiceMap, currentBackend, TTSBackend } from './config';
+import { config, categoryVoiceMap, sileroConfig, espeakConfig, espeakCategoryVoiceMap, openaiTTSConfig, openaiCategoryVoiceMap, currentBackend, TTSBackend } from './config';
 import { isAlphabet, isNumber } from './mapping';
 import { serverManager } from './server_manager';
+import { detectLanguage, DetectedLanguage, shouldUseKoreanTTS, shouldUseEnglishTTS } from './language_detection';
 
 // Keep-alive agent for HTTP fetch to reuse connections
 const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
@@ -43,10 +44,12 @@ export async function genTokenAudio(
     const isSpecialChar = category === 'special';
     
     if (token.length > 1 && !isSpecialChar) {
-        // Only cache non-special characters - include backend in cache key
+        // Only cache non-special characters - include backend and language in cache key
         const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        const cachedFile = path.join(cacheDir, `${currentBackend}_${category || 'text'}_${sanitized}.wav`);
-        log(`[genTokenAudio] cache check for "${token}" → ${cachedFile}`);
+        const detectedLang = detectLanguage(token);
+        const effectiveBackend = shouldUseKoreanTTS(token) ? 'openai_ko' : currentBackend;
+        const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
+        log(`[genTokenAudio] cache check for "${token}" (${detectedLang}) → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
             log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
             return cachedFile;
@@ -56,13 +59,19 @@ export async function genTokenAudio(
         log(`[genTokenAudio] *** SPECIAL CHARACTER "${token}" - SKIPPING ALL CACHE CHECKS, USING DIRECT TTS INFERENCE ***`);
     }
     
-    // Generate TTS based on current backend
+    // Generate TTS based on language detection and current backend
     let wavBuffer: Buffer;
     
-    if (currentBackend === TTSBackend.Silero) {
+    // Language-based TTS routing: Korean text always uses OpenAI TTS
+    if (shouldUseKoreanTTS(token)) {
+        log(`[genTokenAudio] Korean text detected, using OpenAI TTS: "${token}"`);
+        wavBuffer = await generateOpenAITTS(token, category, opts);
+    } else if (currentBackend === TTSBackend.Silero) {
         wavBuffer = await generateSileroTTS(token, category, opts);
     } else if (currentBackend === TTSBackend.Espeak) {
         wavBuffer = await generateEspeakTTS(token, category, opts);
+    } else if (currentBackend === TTSBackend.OpenAI) {
+        wavBuffer = await generateOpenAITTS(token, category, opts);
     } else {
         throw new Error(`Unsupported TTS backend: ${currentBackend}`);
     }
@@ -79,7 +88,9 @@ export async function genTokenAudio(
         } else if (token.length > 1) {
             // Regular multi-character tokens: save to cache with .wav extension (for regular playWave handling)
             const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-            const cachedFile = path.join(cacheDir, `${currentBackend}_${category || 'text'}_${sanitized}.wav`);
+            const detectedLang = detectLanguage(token);
+            const effectiveBackend = shouldUseKoreanTTS(token) ? 'openai_ko' : currentBackend;
+            const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
             fs.writeFileSync(cachedFile, wavBuffer);
             log(`[genTokenAudio] cached token saved: ${cachedFile}`);
             return cachedFile;
@@ -207,32 +218,90 @@ async function generateEspeakTTS(
 }
 
 /**
+ * Generate TTS using OpenAI backend
+ */
+async function generateOpenAITTS(
+    token: string,
+    category?: string,
+    opts?: { speaker?: string }
+): Promise<Buffer> {
+    const baseCategory = category?.split('_')[0];
+    
+    // Get OpenAI settings for this category
+    const categorySettings = (baseCategory && openaiCategoryVoiceMap[baseCategory]) || {};
+    const openaiSettings = { ...openaiTTSConfig, ...categorySettings };
+    
+    // Allow override via opts (using speaker as voice for compatibility)
+    if (opts?.speaker) {
+        openaiSettings.voice = opts.speaker;
+    }
+    
+    // Detect language and adjust settings accordingly
+    const detectedLang = detectLanguage(token);
+    if (detectedLang === DetectedLanguage.Korean) {
+        // Use Korean-optimized settings
+        openaiSettings.language = 'ko';
+        log(`[generateOpenAITTS] Korean text detected, using Korean language setting`);
+    } else {
+        // Use English settings for non-Korean text
+        openaiSettings.language = 'en';
+    }
+    
+    // Check if API key is available
+    if (!openaiSettings.apiKey) {
+        throw new Error('OpenAI API key not configured. Please set lipcoder.openaiApiKey in VS Code settings.');
+    }
+    
+    log(`[generateOpenAITTS] Using OpenAI TTS for token "${token}" with voice "${openaiSettings.voice}" and language "${openaiSettings.language}"`);
+    
+    try {
+        // Import OpenAI client
+        const { getOpenAIClient } = await import('./llm.js');
+        const client = getOpenAIClient();
+        
+        // Create TTS request
+        const response = await client.audio.speech.create({
+            model: openaiSettings.model,
+            voice: openaiSettings.voice as any, // OpenAI voice type
+            input: token,
+            response_format: 'wav', // Always use WAV for consistency
+            speed: openaiSettings.speed,
+        });
+        
+        // Convert response to buffer
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        log(`[generateOpenAITTS] Successfully generated ${buffer.length} bytes of audio for token "${token}" (${openaiSettings.language})`);
+        return buffer;
+        
+    } catch (error) {
+        log(`[generateOpenAITTS] Error generating TTS for token "${token}": ${error}`);
+        throw new Error(`OpenAI TTS error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+/**
  * Play special character audio using direct TTS inference
  */
 export async function playSpecial(word: string): Promise<void> {
     log(`[playSpecial] *** GENERATING FRESH TTS FOR SPECIAL WORD: "${word}" ***`);
-    console.log(`[playSpecial] DEBUG: Starting playSpecial for word="${word}"`);
     
     try {
         // Always generate audio using TTS directly, never check cache
         log(`[playSpecial] Calling genTokenAudio with word="${word}", category="special"`);
-        console.log(`[playSpecial] DEBUG: About to call genTokenAudio("${word}", "special")`);
         const audioFile = await genTokenAudio(word, 'special');
         log(`[playSpecial] Generated audio file: ${audioFile}`);
-        console.log(`[playSpecial] DEBUG: Generated audio file: ${audioFile}`);
         
         // Special characters are saved as WAV files, so they use the same playback path as regular TTS
         // This allows them to benefit from external player fallback (afplay, etc.) for correct pitch
         const { playWave } = require('./audio');
-        console.log(`[playSpecial] DEBUG: About to call playWave("${audioFile}")`);
         await playWave(audioFile);
         
         log(`[playSpecial] Finished playing special word: "${word}"`);
-        console.log(`[playSpecial] DEBUG: Finished playing special word: "${word}"`);
         
     } catch (error) {
         log(`[playSpecial] ERROR generating TTS for "${word}": ${error}`);
-        console.log(`[playSpecial] DEBUG: ERROR: ${error}`);
         return Promise.resolve();
     }
 }
@@ -250,6 +319,14 @@ export function isTTSRequired(token: string): boolean {
 export function getSpeakerForCategory(category?: string, opts?: { speaker?: string }): string {
     const baseCategory = category?.split('_')[0];
     
+    // Debug logging for comment categories
+    if (category?.includes('comment')) {
+        log(`[getSpeakerForCategory] Comment category debug: "${category}" → baseCategory: "${baseCategory}", backend: ${currentBackend}`);
+        if (currentBackend === TTSBackend.Silero) {
+            log(`[getSpeakerForCategory] Silero voice map for "${baseCategory}": ${categoryVoiceMap[baseCategory || '']}, default: ${sileroConfig.defaultSpeaker}`);
+        }
+    }
+    
     // If speaker is explicitly provided, use it
     if (opts?.speaker) {
         return opts.speaker;
@@ -257,14 +334,35 @@ export function getSpeakerForCategory(category?: string, opts?: { speaker?: stri
     
     // Return voice based on current backend
     if (currentBackend === TTSBackend.Silero) {
-        return (baseCategory && categoryVoiceMap[baseCategory]) ?? sileroConfig.defaultSpeaker!;
+        const voice = (baseCategory && categoryVoiceMap[baseCategory]) ?? sileroConfig.defaultSpeaker!;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning Silero voice for comment: ${voice}`);
+        }
+        return voice;
     } else if (currentBackend === TTSBackend.Espeak) {
         // For espeak, we return the defaultVoice from the category-specific config
         const categorySettings = (baseCategory && espeakCategoryVoiceMap[baseCategory]) || {};
         const espeakSettings = { ...espeakConfig, ...categorySettings };
-        return espeakSettings.defaultVoice;
+        const voice = espeakSettings.defaultVoice;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning Espeak voice for comment: ${voice}`);
+        }
+        return voice;
+    } else if (currentBackend === TTSBackend.OpenAI) {
+        // For OpenAI, we return the voice from the category-specific config
+        const categorySettings = (baseCategory && openaiCategoryVoiceMap[baseCategory]) || {};
+        const openaiSettings = { ...openaiTTSConfig, ...categorySettings };
+        const voice = openaiSettings.voice;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning OpenAI voice for comment: ${voice}`);
+        }
+        return voice;
     } else {
         // Fallback to Silero for unknown backends
-        return (baseCategory && categoryVoiceMap[baseCategory]) ?? sileroConfig.defaultSpeaker!;
+        const voice = (baseCategory && categoryVoiceMap[baseCategory]) ?? sileroConfig.defaultSpeaker!;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning fallback Silero voice for comment: ${voice}`);
+        }
+        return voice;
     }
 }

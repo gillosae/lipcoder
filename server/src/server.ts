@@ -103,79 +103,31 @@ connection.onDocumentSymbol(params => {
     return syms.map(sym => ({ ...sym, location: { ...sym.location, uri: params.textDocument.uri } }));
 });
 
-// Helper function to tokenize complex text with LaTeX-like syntax
+// Simplified tokenization - just return characters/words without complex categorization
+// Let the client handle categorization based on its own logic
 function tokenizeComplexText(text: string): Array<{ text: string; category: string }> {
-    // TODO: ENHANCE FOR SEMANTIC TOKENS
-    // To get granular voice mapping (function names, strings, numbers, etc.),
-    // this function needs to be enhanced to use VS Code's semantic token information.
-    // Current limitation: only provides 'variable', 'operator', 'type', 'comment' categories.
-    // 
-    // Enhancement approach:
-    // 1. Accept document position/range information
-    // 2. Use VS Code's semantic token provider API
-    // 3. Map semantic token types to detailed categories like:
-    //    - 'function.name', 'string', 'number', 'class.name', etc.
-    
     const tokens: Array<{ text: string; category: string }> = [];
     let i = 0;
     
     while (i < text.length) {
         const char = text[i];
         
-        if (char === '\\') {
-            // Backslash symbol - use 'type' category for structural punctuation
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '_') {
-            // Underscore symbol - use 'type' category so it plays as earcon
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '{' || char === '}') {
-            // Brace symbols - use 'type' category so they play as earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === ',' || char === ';' || char === '.' || char === ':') {
-            // Punctuation symbols - use 'type' category so they play as earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '"' || char === "'" || char === '`') {
-            // Quote symbols - use 'type' category so they play as earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '(' || char === ')') {
-            // Parenthesis symbols - use 'type' category so they play as earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '[' || char === ']') {
-            // Square bracket symbols - use 'type' category so they play as earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (char === '=' || char === '+' || char === '-' || char === '*' || char === '/') {
-            // Operator symbols - use 'operator' category
-            tokens.push({ text: char, category: 'operator' });
-            i++;
-        } else if (char === '@' || char === '#' || char === '$' || char === '%' || char === '^' || 
-                   char === '&' || char === '!' || char === '?' || char === '~' || char === '|') {
-            // Special characters - use 'type' category for earcons
-            tokens.push({ text: char, category: 'type' });
-            i++;
-        } else if (/\s/.test(char)) {
+        if (/\s/.test(char)) {
             // Whitespace - skip it (don't tokenize spaces in complex text)
             i++;
         } else if (/[a-zA-Z0-9]/.test(char)) {
-            // Alphanumeric - collect as word and use 'variable' category for TTS
+            // Alphanumeric - collect as word
             let word = '';
             while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
                 word += text[i];
                 i++;
             }
             if (word) {
-                // Use 'variable' category so words are spoken with TTS
                 tokens.push({ text: word, category: 'variable' });
             }
         } else {
-            // Other characters - treat as symbols with 'type' category
-            tokens.push({ text: char, category: 'type' });
+            // All other characters - let client decide categorization
+            tokens.push({ text: char, category: 'unknown' });
             i++;
         }
     }
@@ -405,12 +357,12 @@ function scanCodeTokens(codeText: string): Array<{ text: string; category: strin
         if (kind === ts.SyntaxKind.Identifier) {
             category = 'variable';
         } else if (kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
-            // Separate quotes from string content so quotes can be read as earcons
+            // Separate quotes from string content 
             const stringContent = tokenText;
             
-            // Add opening quote
+            // Add opening quote - let client decide categorization
             if (stringContent.startsWith('"') || stringContent.startsWith("'") || stringContent.startsWith('`')) {
-                tokens.push({ text: stringContent[0], category: 'type' }); // Quote is punctuation
+                tokens.push({ text: stringContent[0], category: 'unknown' });
             }
             
             // Add string content (without quotes) - check if it needs complex tokenization
@@ -425,9 +377,9 @@ function scanCodeTokens(codeText: string): Array<{ text: string; category: strin
                 }
             }
             
-            // Add closing quote
+            // Add closing quote - let client decide categorization
             if (stringContent.endsWith('"') || stringContent.endsWith("'") || stringContent.endsWith('`')) {
-                tokens.push({ text: stringContent[stringContent.length - 1], category: 'type' }); // Quote is punctuation
+                tokens.push({ text: stringContent[stringContent.length - 1], category: 'unknown' });
             }
             
             // Skip to next token since we've already processed this string literal
@@ -444,7 +396,7 @@ function scanCodeTokens(codeText: string): Array<{ text: string; category: strin
         } else if (isOperatorToken(kind)) {
             category = 'operator';
         } else if (isPunctuationToken(kind)) {
-            category = 'type'; // Structural punctuation gets 'type' category
+            category = 'unknown'; // Let client handle punctuation categorization
         }
         
         tokens.push({ text: tokenText, category });

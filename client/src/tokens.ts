@@ -9,8 +9,10 @@ import { SPECIAL_CHAR_FILES } from './mapping';
 export const earconTokens = [
     ' ', "'", '"',
     '{', '}', '<', '>', '[', ']', '(', ')',
-    ';', '/', '-', ':', '\\'
-    // Removed: ',', '.', '_' - now handled by TTS
+    ';', '\\',
+    // Characters that have earcon files in special directory (user prefers earcons for these)
+    '+', '&', '*', '@', '`', '^', '$', '!', '%', '?', '#', '~', '₩'
+    // Removed from earcons (user prefers TTS): ',', '.', '_', ':', '-', '=', '/'
 ];
 
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
@@ -42,9 +44,8 @@ export function getTokenSound(token: string): string | null {
         '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
         '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
         // Punctuation
-        ';': 'semicolon.pcm', '/': 'slash.pcm',
-        ':': 'colon.pcm', '-': 'bar.pcm',
-        // Removed: ',': 'comma.pcm', '_': 'underbar.pcm', '.': 'dot.pcm' - now handled by TTS
+        ';': 'semicolon.pcm',
+        // Removed characters that user prefers as TTS: ',', '_', '.', ':', '-', '/'
     };
     
     // Check earcon folder first

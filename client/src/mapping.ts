@@ -10,17 +10,29 @@ const PUNCTUATION_FILES: Record<string, string> = {
     '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
     '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
     '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
-    ';': 'semicolon.pcm', '/': 'slash.pcm',
-    '-': 'bar.pcm', ':': 'colon.pcm',
     "'": 'quote.pcm', '"': 'bigquote.pcm',
-    // Removed: ',': 'comma.pcm', '_': 'underbar.pcm', '.': 'dot.pcm' - now handled by TTS
+    // Characters with existing earcon files should use earcons, not TTS
+    ';': 'semicolon.pcm',
+    // Removed: ',', '_', '.', ':', '=', '/' - user prefers TTS for these
+    // Removed characters now handled by TTS: '-', '!', '?', '~', '|', '=', '+', '`', '\\', '%', '^', '&', '*', '@', '#', '$', '₩'
 };
 
 export const SPECIAL_CHAR_FILES: Record<string, string> = {
-    '!': 'excitation.pcm', '@': 'at.pcm', '#': 'sharp.pcm', '$': 'dollar.pcm',
-    '%': 'percent.pcm', '^': 'caret.pcm', '&': 'ampersand.pcm', '*': 'asterisk.pcm',
-    '+': 'plus.pcm', '~': 'tilde.pcm', '|': 'bar.pcm', '?': 'question.pcm',
-    '₩': 'won.pcm', '=': 'equals.pcm', '`': 'backtick.pcm', '\\': 'backslash.pcm',
+    // Characters that have PCM files in the special directory and should use earcons
+    // Removed: '=' - user prefers TTS
+    '+': 'plus.pcm',
+    '&': 'ampersand.pcm',
+    '*': 'asterisk.pcm',
+    '@': 'at.pcm',
+    '`': 'backtick.pcm',
+    '^': 'caret.pcm',
+    '$': 'dollar.pcm',
+    '!': 'excitation.pcm',
+    '%': 'percent.pcm',
+    '?': 'question.pcm',
+    '#': 'sharp.pcm',
+    '~': 'tilde.pcm',
+    '₩': 'won.pcm'
 };
 
 
@@ -35,11 +47,35 @@ export const specialCharMap: Record<string, string> = {
     m: 'em', n: 'en', o: 'oh', p: 'pee', q: 'cue', r: 'ar',
     s: 'ess', t: 'tee', u: 'you', v: 'vee', w: 'double you',
     x: 'ex', y: 'why', z: 'zee',
-    // punctuation characters that should use TTS instead of earcons
+    // punctuation characters that should use TTS
+    // User-requested TTS characters (even though PCM files exist)
     '.': 'dot',
-    ',': 'comma', 
+    ',': 'comma',
+    ':': 'colon',
+    '-': 'dash',
     '_': 'underbar',
-    // characters without direct PCM files (fallback TTS names)
+    '=': 'equals',
+    '/': 'slash',
+    // Special multi-character sequences
+    '//': 'slash slash',
+    '<=': 'less than or equal',
+    '>=': 'greater than or equal',
+    '==': 'equals equals',
+    '!=': 'not equal',
+    '===': 'triple equals',
+    '!==': 'not triple equals',
+    '&&': 'and and',
+    '||': 'or or',
+    '++': 'plus plus',
+    '--': 'minus minus',
+    '+=': 'plus equals',
+    '-=': 'minus equals',
+    '*=': 'times equals',
+    '/=': 'divide equals',
+    '=>': 'arrow',
+    // Other TTS characters
+    '|': 'bar',
+    '\\': 'backslash',
 };
 
 // Converts numbers 0–3000 to English words

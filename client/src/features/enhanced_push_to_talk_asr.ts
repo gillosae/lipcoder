@@ -7,6 +7,7 @@ import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config
 import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
 import { stopAllAudio, setASRRecordingActive } from './stop_reading';
+import { speakTokenList, TokenChunk } from '../audio';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -26,6 +27,7 @@ interface EditorContext {
 }
 
 let recordingContext: EditorContext | null = null;
+let lastKnownEditorContext: EditorContext | null = null; // Remember last valid editor
 let autoStopTimer: NodeJS.Timeout | null = null;
 const MAX_RECORDING_DURATION = 30000; // 30 seconds max
 
@@ -42,6 +44,31 @@ let currentASRMode: ASRMode = ASRMode.Command;
  */
 function getCurrentASRClient(): ASRClient | GPT4oASRClient | null {
     return currentASRBackend === ASRBackend.GPT4o ? gpt4oAsrClient : asrClient;
+}
+
+/**
+ * Speak an error message using the TTS system
+ */
+async function speakErrorMessage(message: string): Promise<void> {
+    try {
+        log(`[Enhanced-ASR] Speaking error message: "${message}"`);
+        
+        // Use pure TTS without any special token processing
+        const chunks: TokenChunk[] = [{
+            tokens: [message],
+            category: undefined  // No category = pure TTS without earcons
+        }];
+        
+        // Stop any ongoing audio first
+        stopAllAudio();
+        
+        // Speak the error message
+        await speakTokenList(chunks);
+        
+        log(`[Enhanced-ASR] Successfully spoke error message`);
+    } catch (error) {
+        logError(`[Enhanced-ASR] Failed to speak error message: ${error}`);
+    }
 }
 
 /**
@@ -98,7 +125,9 @@ function cleanupASRResources(): void {
  * Update status bar item
  */
 function updateStatusBar(recording: boolean): void {
-    if (!statusBarItem) return;
+    if (!statusBarItem) {
+        return;
+    }
     
     if (recording) {
         const modeText = currentASRMode === ASRMode.Command ? 'Command' : 'Write';
@@ -288,54 +317,73 @@ async function handleTranscription(text: string): Promise<void> {
         log(`[Enhanced-ASR] ⚪ Not calling command router - Mode: ${currentASRMode}, Router: ${!!commandRouter}`);
     }
     
-    // If no command was executed (or in write mode), fall back to text insertion
-    if (!commandExecuted) {
-        // Try to use captured editor context first, then fall back to active editor
-        let targetEditor = recordingContext?.editor;
-        
-        // Validate captured editor
-        if (targetEditor) {
+    // Handle different modes
+    if (currentASRMode === ASRMode.Command) {
+        // In command mode, if no command was executed, show error
+        if (!commandExecuted) {
+            const errorMessage = 'Command not recognized. Please say again.';
+            log(`[Enhanced-ASR] Command not recognized: "${text}"`);
+            
+            // Show popup error message
+            vscode.window.showWarningMessage(errorMessage);
+            
+            // Speak the error message
             try {
-                if (!targetEditor.document || targetEditor.document.isClosed) {
-                    log('[Enhanced-ASR] Captured editor context is no longer valid for text insertion, falling back to active editor');
+                await speakErrorMessage(errorMessage);
+            } catch (error) {
+                logError(`[Enhanced-ASR] Failed to speak error message: ${error}`);
+            }
+        }
+    } else if (currentASRMode === ASRMode.Write) {
+        // In write mode, if no command was executed, fall back to text insertion
+        if (!commandExecuted) {
+            // Try to use captured editor context first, then fall back to active editor
+            let targetEditor = recordingContext?.editor;
+            
+            // Validate captured editor
+            if (targetEditor) {
+                try {
+                    if (!targetEditor.document || targetEditor.document.isClosed) {
+                        log('[Enhanced-ASR] Captured editor context is no longer valid for text insertion, falling back to active editor');
+                        targetEditor = undefined;
+                    }
+                } catch (error) {
+                    logError(`[Enhanced-ASR] Error accessing captured editor for text insertion: ${error}`);
                     targetEditor = undefined;
                 }
-            } catch (error) {
-                logError(`[Enhanced-ASR] Error accessing captured editor for text insertion: ${error}`);
-                targetEditor = undefined;
             }
-        }
-        
-        // Fallback to current active editor
-        if (!targetEditor) {
-            targetEditor = vscode.window.activeTextEditor;
-        }
-        
-        if (targetEditor) {
-            try {
-                // Make sure the target editor is active
-                await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
-                
-                // Use original cursor position if available, otherwise current position
-                const insertPosition = recordingContext?.position || targetEditor.selection.active;
-                
-                await targetEditor.edit(editBuilder => {
-                    editBuilder.insert(insertPosition, text + ' ');
-                });
-                
-                const fileName = path.basename(targetEditor.document.fileName);
-                log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
-            } catch (error) {
-                logError(`[Enhanced-ASR] Error inserting text: ${error}`);
-                vscode.window.showErrorMessage(`Failed to insert text: ${error}`);
+            
+            // Fallback to current active editor
+            if (!targetEditor) {
+                targetEditor = vscode.window.activeTextEditor;
             }
-        } else {
-            logWarning('[Enhanced-ASR] No editor available for text insertion');
-            vscode.window.showWarningMessage('No editor available to insert transcribed text');
+            
+            if (targetEditor) {
+                try {
+                    // Make sure the target editor is active
+                    await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+                    
+                    // Use original cursor position if available, otherwise current position
+                    const insertPosition = recordingContext?.position || targetEditor.selection.active;
+                    
+                    await targetEditor.edit(editBuilder => {
+                        editBuilder.insert(insertPosition, text + ' ');
+                    });
+                    
+                    const fileName = path.basename(targetEditor.document.fileName);
+                    log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
+                } catch (error) {
+                    logError(`[Enhanced-ASR] Error inserting text: ${error}`);
+                    vscode.window.showErrorMessage(`Failed to insert text: ${error}`);
+                }
+            } else {
+                logWarning('[Enhanced-ASR] No editor available for text insertion');
+                vscode.window.showWarningMessage('No editor available to insert transcribed text');
+            }
+            
+            // Show notification for text insertion
+            vscode.window.showInformationMessage(`ASR: ${text}`);
         }
-        
-        // Show notification for text insertion
-        vscode.window.showInformationMessage(`ASR: ${text}`);
     }
 }
 
@@ -417,12 +465,44 @@ function captureEditorContext(): EditorContext | null {
         return null;
     }
     
-    return {
+    const context = {
         editor: editor,
         position: editor.selection.active,
         selection: editor.selection,
         documentUri: editor.document.uri
     };
+    
+    // Always update the last known context when we have a valid editor
+    lastKnownEditorContext = context;
+    
+    return context;
+}
+
+/**
+ * Get editor context with fallback to last known editor
+ */
+function getEditorContextWithFallback(): EditorContext | null {
+    // Try to get current active editor first
+    const currentContext = captureEditorContext();
+    if (currentContext) {
+        return currentContext;
+    }
+    
+    // Fallback to last known editor if it's still valid
+    if (lastKnownEditorContext) {
+        try {
+            // Check if the document is still open and valid
+            if (!lastKnownEditorContext.editor.document.isClosed) {
+                log('[Enhanced-ASR] Using last known editor context as fallback');
+                return lastKnownEditorContext;
+            }
+        } catch (error) {
+            log(`[Enhanced-ASR] Last known editor context is no longer valid: ${error}`);
+            lastKnownEditorContext = null;
+        }
+    }
+    
+    return null;
 }
 
 /**
@@ -507,12 +587,12 @@ async function startRecording(): Promise<void> {
         stopAllAudio();
         log('[Enhanced-ASR] Stopped all ongoing audio before recording');
         
-        // Capture editor context at the start of recording
-        recordingContext = captureEditorContext();
+        // Capture editor context at the start of recording with fallback
+        recordingContext = getEditorContextWithFallback();
         if (recordingContext) {
             log(`[Enhanced-ASR] Captured context: ${recordingContext.documentUri.fsPath} at line ${recordingContext.position.line + 1}`);
         } else {
-            logWarning('[Enhanced-ASR] No active editor - commands may not work properly');
+            logWarning('[Enhanced-ASR] No active editor context available (no fallback available)');
         }
         
         // Initialize clients if needed
@@ -685,6 +765,17 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
         log('[Enhanced-ASR] Registering enhanced push-to-talk ASR commands');
         log(`[Enhanced-ASR] Extension context validated, subscriptions count: ${extensionContext.subscriptions.length}`);
         
+        // Listen for active editor changes to keep track of last known editor
+        context.subscriptions.push(
+            vscode.window.onDidChangeActiveTextEditor((editor) => {
+                if (editor) {
+                    // Update last known editor context whenever editor changes
+                    captureEditorContext();
+                    log(`[Enhanced-ASR] Updated last known editor context: ${editor.document.fileName}`);
+                }
+            })
+        );
+        
         // Load configuration
         try {
             if (typeof loadConfigFromSettings !== 'function') {
@@ -844,14 +935,18 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
                 placeHolder: 'Speech pattern...'
             });
             
-            if (!pattern) return;
+            if (!pattern) {
+                return;
+            }
             
             const command = await vscode.window.showInputBox({
                 prompt: 'Enter VS Code command to execute',
                 placeHolder: 'workbench.action.closeActiveEditor'
             });
             
-            if (!command) return;
+            if (!command) {
+                return;
+            }
             
             const description = await vscode.window.showInputBox({
                 prompt: 'Enter description (optional)',
@@ -879,7 +974,9 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
                  placeHolder: 'handleClick'
              });
              
-             if (!functionName) return;
+             if (!functionName) {
+                 return;
+             }
              
              if (!commandRouter) {
                  vscode.window.showWarningMessage('Command router not initialized');
@@ -912,7 +1009,9 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
                  placeHolder: 'build'
              });
              
-             if (!scriptName) return;
+             if (!scriptName) {
+                 return;
+             }
              
              try {
                  await executePackageJsonScript(scriptName);

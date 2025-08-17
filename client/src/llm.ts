@@ -4,6 +4,8 @@ import { log, logWarning, logSuccess } from './utils';
 import * as vscode from 'vscode';
 import { registerInlineSuggestions } from './features/inline_suggestions';
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { currentLLMBackend, LLMBackend, claudeConfig } from './config';
 
 export interface SuggestionState {
     line: number;
@@ -15,6 +17,9 @@ export let lastSuggestion: SuggestionState | null = null;
 
 // Cache OpenAI client to prevent memory leaks from multiple instances
 let cachedOpenAIClient: OpenAI | null = null;
+
+// Cache Claude client to prevent memory leaks from multiple instances
+let cachedClaudeClient: Anthropic | null = null;
 
 /**
  * Clears the stored suggestion.
@@ -29,6 +34,7 @@ export function clearLastSuggestion(): void {
 export function cleanupLLMResources(): void {
     lastSuggestion = null;
     cachedOpenAIClient = null;
+    cachedClaudeClient = null;
     suppressedLines.clear();
     logSuccess('[LLM] Cleaned up resources');
 }
@@ -88,6 +94,24 @@ export function getOpenAIClient(): OpenAI {
     return cachedOpenAIClient;
 }
 
+// Initialize Claude client using the user's API key from settings or env
+export function getClaudeClient(): Anthropic {
+    // Return cached client if available and config hasn't changed
+    if (cachedClaudeClient) {
+        return cachedClaudeClient;
+    }
+    
+    const config = vscode.workspace.getConfiguration('lipcoder');
+    let apiKey = config.get<string>('claudeApiKey') || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+        vscode.window.showErrorMessage('Claude API key not set. Please set lipcoder.claudeApiKey in settings or ANTHROPIC_API_KEY env var.');
+        throw new Error('Missing Claude API key');
+    }
+    
+    cachedClaudeClient = new Anthropic({ apiKey });
+    return cachedClaudeClient;
+}
+
 
 /**
  * Delegate chat completions to the inline suggestions module.
@@ -98,23 +122,78 @@ export function registerChatCompletions(context: vscode.ExtensionContext) {
 
 
 /**
- * Suggests code continuation for the given line via OpenAI.
+ * Generic LLM completion function that uses the configured backend
+ */
+export async function callLLMForCompletion(
+    systemPrompt: string, 
+    userPrompt: string, 
+    maxTokens: number = 64, 
+    temperature: number = 0.2
+): Promise<string> {
+    // CRITICAL: Block ALL LLM completion requests during line reading
+    const { getLineTokenReadingActive } = await import('./features/stop_reading.js');
+    if (getLineTokenReadingActive()) {
+        log(`[LLM] BLOCKING completion request during line token reading`);
+        return ''; // Return empty string to prevent any suggestions
+    }
+    
+    try {
+        if (currentLLMBackend === LLMBackend.Claude) {
+            const client = getClaudeClient();
+            log(`[LLM] Claude Sent: ${userPrompt.substring(0, 200)}...`);
+            
+            const response = await client.messages.create({
+                model: claudeConfig.model,
+                max_tokens: maxTokens,
+                temperature: temperature,
+                messages: [
+                    { role: "user", content: `${systemPrompt}\n\n${userPrompt}` }
+                ]
+            });
+            
+            const content = response.content[0];
+            let result = '';
+            if (content.type === 'text') {
+                result = content.text.trim();
+            }
+            
+            log(`[LLM] Claude Received: ${result.substring(0, 200)}...`);
+            return result;
+        } else {
+            // Default to ChatGPT
+            const client = getOpenAIClient();
+            log(`[LLM] OpenAI Sent: ${userPrompt.substring(0, 200)}...`);
+            
+            const response = await client.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ],
+                max_tokens: maxTokens,
+                temperature: temperature
+            });
+            
+            const result = response.choices[0]?.message?.content?.trim() || '';
+            log(`[LLM] OpenAI Received: ${result.substring(0, 200)}...`);
+            return result;
+        }
+    } catch (error) {
+        log(`[LLM] Error with ${currentLLMBackend}: ${error}`);
+        throw new Error(`Failed to get completion from ${currentLLMBackend}: ${error}`);
+    }
+}
+
+/**
+ * Suggests code continuation for the given line via configured LLM.
  */
 export async function suggestCodeContinuation(line: string): Promise<string> {
-    const client = getOpenAIClient();
-    // Log what is being sent
-    log(`OpenAI Continuation Sent: ${line}`);
-    const resp = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-            { role: "system", content: "You are a code autocomplete assistant. Only output the code completion snippet without any explanation or commentary." },
-            { role: "user", content: `Complete this code line:\n${line}` }
-        ],
-        max_tokens: 64,
-        temperature: 0.2
-    });
-    let suggestion = resp.choices[0]?.message?.content?.trim() || "";
+    const systemPrompt = "You are a code autocomplete assistant. Only output the code completion snippet without any explanation or commentary.";
+    const userPrompt = `Complete this code line:\n${line}`;
+    
+    let suggestion = await callLLMForCompletion(systemPrompt, userPrompt, 64, 0.2);
     suggestion = stripFences(suggestion);
+    
     // Remove duplicate prefix if the suggestion repeats the existing code, ignoring indent
     const indentMatch = line.match(/^[ \t]*/);
     const indent = indentMatch ? indentMatch[0] : '';
@@ -125,8 +204,7 @@ export async function suggestCodeContinuation(line: string): Promise<string> {
         suggestion = suggestion.slice(startIdx + trimmedLine.length);
     }
     suggestion = suggestion.trimStart();
-    // Log what was received
-    log(`OpenAI Continuation Received: ${suggestion}`);
+    
     return suggestion;
 }
 

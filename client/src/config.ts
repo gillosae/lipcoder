@@ -12,12 +12,19 @@ export function initConfig(context: ExtensionContext) {
 export enum TTSBackend {
     Silero = 'silero',
     Espeak = 'espeak',
+    OpenAI = 'openai',
 }
 
 // ASR Backends & Config ─────────────────────────────────────────────────────
 export enum ASRBackend {
     Silero = 'silero',
     GPT4o = 'gpt4o-transcribe',
+}
+
+// LLM Backends & Config ─────────────────────────────────────────────────────
+export enum LLMBackend {
+    ChatGPT = 'chatgpt',
+    Claude = 'claude',
 }
 
 export interface SileroASRConfig {
@@ -29,7 +36,7 @@ export interface SileroASRConfig {
 export interface GPT4oASRConfig {
     apiKey: string;
     model: string; // Whisper model (whisper-1)
-    language?: string;
+    language?: string | null; // null for auto-detection, string for specific language
     sampleRate: number;
     temperature?: number;
 }
@@ -53,10 +60,29 @@ export interface EspeakConfig {
     sampleRate: number;   // output sample rate
 }
 
+export interface OpenAITTSConfig {
+    apiKey: string;
+    model: string;        // tts-1 or tts-1-hd
+    voice: string;        // alloy, echo, fable, onyx, nova, shimmer
+    language: string;     // ko for Korean, en for English, etc.
+    speed: number;        // 0.25 to 4.0 (default: 1.0)
+    responseFormat: string; // mp3, opus, aac, flac, wav, pcm
+}
+
+export interface ClaudeConfig {
+    apiKey: string;
+    model: string;        // claude-3-5-sonnet-20241022, claude-3-haiku-20240307, etc.
+    maxTokens: number;    // maximum tokens for response
+    temperature: number;  // 0.0 to 1.0 (default: 0.1 for code)
+}
+
 export let currentBackend = TTSBackend.Silero;
 
 // ASR Configuration ─────────────────────────────────────────────────────
 export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
+
+// LLM Configuration ─────────────────────────────────────────────────────
+export let currentLLMBackend = LLMBackend.Claude; // Default to Claude as requested
 
 export let sileroASRConfig: SileroASRConfig = {
     serverUrl: 'http://localhost:5004/asr',
@@ -67,7 +93,7 @@ export let sileroASRConfig: SileroASRConfig = {
 export let gpt4oASRConfig: GPT4oASRConfig = {
     apiKey: '', // Will be loaded from VS Code settings
     model: 'whisper-1', // Using Whisper for reliable transcription
-    language: 'en',
+    language: null, // null for automatic language detection (supports Korean, English, etc.)
     sampleRate: 16000, // Whisper prefers 16kHz
     temperature: 0.0, // For accurate transcription
 };
@@ -89,6 +115,22 @@ export let espeakConfig: EspeakConfig = {
     amplitude: 100,
     gap: 0,
     sampleRate: 24000,
+};
+
+export let openaiTTSConfig: OpenAITTSConfig = {
+    apiKey: '', // Will be loaded from VS Code settings
+    model: 'tts-1', // Use standard model by default
+    voice: 'alloy', // Default voice
+    language: 'ko', // Korean language
+    speed: 1.0, // Normal speed
+    responseFormat: 'wav', // WAV format for compatibility
+};
+
+export let claudeConfig: ClaudeConfig = {
+    apiKey: '', // Will be loaded from VS Code settings
+    model: 'claude-sonnet-4-20250514', // Latest Sonnet model
+    maxTokens: 2000, // Max tokens for code modifications
+    temperature: 0.1, // Low temperature for consistent code generation
 };
 
 export const categoryVoiceMap: Record<string, string> = {
@@ -217,13 +259,68 @@ export const espeakCategoryVoiceMap: Record<string, Partial<EspeakConfig>> = {
     'default': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
 };
 
+// OpenAI TTS voice mapping for different categories (Korean voices)
+export const openaiCategoryVoiceMap: Record<string, Partial<OpenAITTSConfig>> = {
+    // Different voices and settings for semantic categories using OpenAI TTS
+    // OpenAI TTS voices: alloy, echo, fable, onyx, nova, shimmer
+    
+    variable: { voice: 'alloy', speed: 1.0 },       // Variables, function names - clear neutral voice
+    operator: { voice: 'echo', speed: 1.1 },        // Math operators - slightly faster, distinct voice
+    type: { voice: 'fable', speed: 0.9 },           // Punctuation & symbols - slower, softer voice
+    comment: { voice: 'nova', speed: 0.8 },         // Comments - slower, gentle voice
+    
+    // Future semantic categories
+    keyword: { voice: 'onyx', speed: 1.0 },                        // Keywords - strong voice
+    'keyword.control': { voice: 'onyx', speed: 1.0 },
+    'keyword.operator': { voice: 'echo', speed: 1.1 },
+    'keyword.import': { voice: 'shimmer', speed: 0.9 },
+    
+    'function.name': { voice: 'alloy', speed: 1.0 },
+    'function.call': { voice: 'alloy', speed: 1.0 },
+    'function.builtin': { voice: 'echo', speed: 1.1 },
+    
+    'string': { voice: 'nova', speed: 0.8 },
+    'string.quoted': { voice: 'nova', speed: 0.8 },
+    literal: { voice: 'nova', speed: 0.8 },
+    
+    'number': { voice: 'fable', speed: 1.2 },
+    'number.integer': { voice: 'fable', speed: 1.2 },
+    'number.float': { voice: 'fable', speed: 1.1 },
+    
+    'type.class': { voice: 'shimmer', speed: 0.9 },
+    'class.name': { voice: 'shimmer', speed: 0.9 },
+    'class.builtin': { voice: 'onyx', speed: 1.0 },
+    
+    'parameter': { voice: 'alloy', speed: 1.0 },
+    'parameter.name': { voice: 'alloy', speed: 1.0 },
+    'property': { voice: 'alloy', speed: 1.0 },
+    'property.name': { voice: 'alloy', speed: 1.0 },
+    
+    'punctuation': { voice: 'fable', speed: 1.5 },
+    'punctuation.bracket': { voice: 'fable', speed: 1.5 },
+    'punctuation.delimiter': { voice: 'fable', speed: 1.6 },
+    
+    'constant': { voice: 'onyx', speed: 1.0 },
+    'constant.builtin': { voice: 'onyx', speed: 1.0 },
+    
+    'namespace': { voice: 'shimmer', speed: 0.9 },
+    'module': { voice: 'shimmer', speed: 0.9 },
+    
+    'special': { voice: 'echo', speed: 1.3 },   // Special characters - faster, more energetic
+    
+    'text': { voice: 'alloy', speed: 1.0 },
+    'default': { voice: 'alloy', speed: 1.0 },
+};
+
 // Allow runtime switching of TTS backend & config
-export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>) {
+export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>, openaiPartial?: Partial<OpenAITTSConfig>) {
     currentBackend = backend;
     if (backend === TTSBackend.Silero && sileroPartial) {
         sileroConfig = { ...sileroConfig, ...sileroPartial };
     } else if (backend === TTSBackend.Espeak && espeakPartial) {
         espeakConfig = { ...espeakConfig, ...espeakPartial };
+    } else if (backend === TTSBackend.OpenAI && openaiPartial) {
+        openaiTTSConfig = { ...openaiTTSConfig, ...openaiPartial };
     }
 }
 
@@ -237,9 +334,18 @@ export function setASRBackend(backend: ASRBackend, sileroASRPartial?: Partial<Si
     }
 }
 
+// Allow runtime switching of LLM backend & config
+export function setLLMBackend(backend: LLMBackend, claudePartial?: Partial<ClaudeConfig>) {
+    currentLLMBackend = backend;
+    if (backend === LLMBackend.Claude && claudePartial) {
+        claudeConfig = { ...claudeConfig, ...claudePartial };
+    }
+}
+
 // Path and Etc Config ─────────────────────────────────────────────────────
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
+    cursorLineReadingEnabled: true,  // enable automatic line reading when cursor moves
     playSpeed: 2.0,              // playback speed multiplier - now supports pitch preservation!
     preservePitch: true,         // use pitch-preserving time stretching (requires FFmpeg)
     panningEnabled: true,        // enable positional panning for tokens (legacy)
@@ -262,6 +368,7 @@ export const config = {
 
 } as {
     typingSpeechEnabled: boolean;
+    cursorLineReadingEnabled: boolean;
     playSpeed: number;
     preservePitch: boolean;
     panningEnabled: boolean;
@@ -311,6 +418,50 @@ export function loadConfigFromSettings() {
         // Load Whisper model
         const whisperModel = config.get('gpt4oModel', 'whisper-1') as string;
         gpt4oASRConfig.model = whisperModel;
+        
+        // Load ASR language (null for auto-detection, 'en' for English, 'ko' for Korean, etc.)
+        const asrLanguage = config.get('asrLanguage', null) as string | null;
+        gpt4oASRConfig.language = asrLanguage;
+        
+        // Load OpenAI TTS configuration
+        if (apiKey) {
+            openaiTTSConfig.apiKey = apiKey; // Reuse OpenAI API key for TTS
+        }
+        
+        const ttsModel = config.get('openaiTTSModel', 'tts-1') as string;
+        openaiTTSConfig.model = ttsModel;
+        
+        const ttsVoice = config.get('openaiTTSVoice', 'alloy') as string;
+        openaiTTSConfig.voice = ttsVoice;
+        
+        const ttsLanguage = config.get('openaiTTSLanguage', 'ko') as string;
+        openaiTTSConfig.language = ttsLanguage;
+        
+        const ttsSpeed = config.get('openaiTTSSpeed', 1.0) as number;
+        openaiTTSConfig.speed = ttsSpeed;
+        
+        // Load LLM backend selection
+        const llmBackend = config.get('llmBackend', 'claude') as string;
+        if (llmBackend === 'chatgpt') {
+            currentLLMBackend = LLMBackend.ChatGPT;
+        } else if (llmBackend === 'claude') {
+            currentLLMBackend = LLMBackend.Claude;
+        }
+        
+        // Load Claude configuration
+        const claudeApiKey = config.get('claudeApiKey', '') as string;
+        if (claudeApiKey) {
+            claudeConfig.apiKey = claudeApiKey;
+        }
+        
+        const claudeModel = config.get('claudeModel', 'claude-sonnet-4-20250514') as string;
+        claudeConfig.model = claudeModel;
+        
+        const claudeMaxTokens = config.get('claudeMaxTokens', 2000) as number;
+        claudeConfig.maxTokens = claudeMaxTokens;
+        
+        const claudeTemperature = config.get('claudeTemperature', 0.1) as number;
+        claudeConfig.temperature = claudeTemperature;
         
         console.log('[Config] Configuration loaded successfully');
     } catch (error) {

@@ -1265,52 +1265,60 @@ export async function speakToken(
 ): Promise<void> {
     try {
         log(`[speakToken] token="${token}" category="${category}"`);
-        let playPromise: Promise<void>;
         
-        if (isEarcon(token)) {
-            // Priority 1: True earcons (punctuation/special chars) always use earcons
-            log(`[speakToken] Playing EARCON for: "${token}" (punctuation, category: ${category})`);
-            playPromise = playEarcon(token, opts?.panning);
-        } else if (category && category !== 'other' && isTTSRequired(token)) {
-            // Priority 2: Category-based TTS for non-earcon tokens
+        // New simplified logic: category determines behavior, not token type
+        if (category && category !== 'default' && category !== 'other') {
+            // If we have a meaningful category, always use TTS with category-specific voice
+            log(`[speakToken] Using category-based TTS for: "${token}" (category: ${category})`);
             const categoryVoice = getSpeakerForCategory(category);
-            log(`[speakToken] Using TTS with ${category} voice (${categoryVoice}) for: "${token}"`);
             const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? categoryVoice });
-            playPromise = audioPlayer.playTtsAsPcm(filePath, opts?.panning);
-        } else if (isAlphabet(token)) {
-            log(`[speakToken] Playing ALPHABET PCM for: "${token}" (no meaningful category)`);
-            const lower = token.toLowerCase();
-            const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
-            if (fs.existsSync(alphaPath)) {
-                playPromise = audioPlayer.playPcmCached(alphaPath, opts?.panning);
-            } else {
-                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
-                playPromise = playWave(filePath, { panning: opts?.panning });
-            }
-        } else if (isNumber(token)) {
-            log(`[speakToken] Playing NUMBER PCM for: "${token}" (no meaningful category)`);
-            const numPath = path.join(config.numberPath(), `${token}.pcm`);
-            if (fs.existsSync(numPath)) {
-                playPromise = audioPlayer.playPcmCached(numPath, opts?.panning);
-            } else {
-                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
-                playPromise = playWave(filePath, { panning: opts?.panning });
-            }
-        } else if (isEarconToken(token)) {
-            // Fallback earcons (alphabet, etc.) for tokens without meaningful categories
-            log(`[speakToken] Playing EARCON for: "${token}" (fallback, no meaningful category)`);
-            playPromise = playEarcon(token, opts?.panning);
-        } else if (isTTSRequired(token)) {
-            log(`[speakToken] Using TTS for: "${token}" (no category)`);
-            const speakerName = opts?.speaker ?? getSpeakerForCategory(category);
-            const filePath = await genTokenAudio(token, category, { speaker: speakerName });
-            // Use ultra-fast PCM caching for regular speakToken too
-            playPromise = audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+            await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
         } else {
-            return Promise.resolve();
+            // No meaningful category - determine by token characteristics
+            if (isEarcon(token)) {
+                // Earcons (brackets, quotes, etc.) use PCM files
+                log(`[speakToken] Playing EARCON for: "${token}" (no category)`);
+                await playEarcon(token, opts?.panning);
+            } else if (isAlphabet(token)) {
+                // Single letters use alphabet PCM files
+                log(`[speakToken] Playing ALPHABET PCM for: "${token}" (no category)`);
+                const lower = token.toLowerCase();
+                const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
+                if (fs.existsSync(alphaPath)) {
+                    await audioPlayer.playPcmCached(alphaPath, opts?.panning);
+                } else {
+                    // Fallback to TTS if PCM file missing
+                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
+                    await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+                }
+            } else if (isNumber(token)) {
+                // Single digits use number PCM files
+                log(`[speakToken] Playing NUMBER PCM for: "${token}" (no category)`);
+                const numPath = path.join(config.numberPath(), `${token}.pcm`);
+                if (fs.existsSync(numPath)) {
+                    await audioPlayer.playPcmCached(numPath, opts?.panning);
+                } else {
+                    // Fallback to TTS if PCM file missing
+                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
+                    await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+                }
+            } else if (specialCharMap[token]) {
+                // Special characters (like underbar, dot) that should be spoken
+                log(`[speakToken] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (no category)`);
+                const spokenForm = specialCharMap[token];
+                const filePath = await genTokenAudio(spokenForm, 'special', { speaker: opts?.speaker ?? getSpeakerForCategory('special') });
+                await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+            } else if (isTTSRequired(token)) {
+                // Everything else that needs TTS
+                log(`[speakToken] Using TTS for: "${token}" (no category)`);
+                const speakerName = opts?.speaker ?? getSpeakerForCategory(category);
+                const filePath = await genTokenAudio(token, category, { speaker: speakerName });
+                await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+            } else {
+                log(`[speakToken] Skipping empty or whitespace token: "${token}"`);
+                return Promise.resolve();
+            }
         }
-        
-        await playPromise;
     } catch (err: any) {
         log(`[speakToken] Error handling token "${token}": ${err.stack || err}`);
         throw err;
@@ -1397,23 +1405,32 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         
         for (const { tokens, category } of chunks) {
             for (const token of tokens) {
-                // Priority 1: Check if this is a special character token (regardless of category)
-                const isSpecialChar = Object.values(specialCharMap).includes(token);
-                if (isSpecialChar) {
-                    continue; // Special characters use direct TTS generation
-                } else if (isEarconToken(token)) {
-                    continue; // Earcons don't need TTS pre-generation
-                } else if (isAlphabet(token) || isNumber(token)) {
-                    continue; // Alphabet and numbers use PCM files, not TTS
-                } else if (category && category !== 'other' && isTTSRequired(token)) {
-                    // Pre-generate TTS for all tokens with meaningful categories
+                // Skip tokens that don't need pre-generation
+                if (isEarcon(token) || isAlphabet(token) || isNumber(token)) {
+                    continue; // These use PCM files, not TTS
+                }
+                
+                // Pre-generate TTS for tokens that will use it
+                if (category && category !== 'default' && category !== 'other') {
+                    // Tokens with meaningful categories
                     if (!ttsPregenPromises.has(token)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}"`);
                         ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
                     }
-                } else if (isTTSRequired(token) && !ttsPregenPromises.has(token)) {
-                    log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
-                    ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                } else if (specialCharMap[token]) {
+                    // Special characters need their spoken form pre-generated
+                    const spokenForm = specialCharMap[token];
+                    const specialKey = `special_${token}`;
+                    if (!ttsPregenPromises.has(specialKey)) {
+                        log(`[speakTokenList] Queuing TTS pre-generation for special character: "${token}" -> "${spokenForm}"`);
+                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') }));
+                    }
+                } else if (isTTSRequired(token)) {
+                    // Other tokens that need TTS
+                    if (!ttsPregenPromises.has(token)) {
+                        log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
+                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                    }
                 }
             }
         }
@@ -1451,68 +1468,90 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     // Clear stopping state immediately before each token to prevent false aborts
                     audioPlayer.clearStoppingState();
                     
-                    // Route tokens to appropriate playback method
-                    // Priority 1: Check if this is a special character token
-                    const isSpecialChar = Object.values(specialCharMap).includes(token);
-                    console.log(`[speakTokenList] DEBUG: token="${token}", category="${category}", isSpecialChar=${isSpecialChar}, specialCharMapValues=[${Object.values(specialCharMap).join(', ')}]`);
-                    if (isSpecialChar && category === 'special') {
-                        // Only use the old playSpecial for 'special' category
-                        log(`[speakTokenList] Using SPECIAL TTS for: "${token}"`);
-                        console.log(`[speakTokenList] DEBUG: About to call playSpecial("${token}")`);
-                        await playSpecial(token);
-                    } else if (isEarcon(token)) {
-                        // Priority 2: True earcons (punctuation/special chars) always use earcons
-                        log(`[speakTokenList] Playing EARCON for: "${token}" (punctuation, category: ${category})`);
+                    // New simplified token processing logic - check earcons first, regardless of category
+                    if (isEarcon(token)) {
+                        // Earcons (brackets, quotes, etc.) use PCM files - highest priority
+                        log(`[speakTokenList] Playing EARCON for: "${token}" (category: ${category})`);
                         await playEarcon(token, panning);
-                    } else if (category && category !== 'other' && isTTSRequired(token)) {
-                        // Priority 3: Category-based TTS for non-earcon tokens
-                        const categoryVoice = getSpeakerForCategory(category);
-                        if (categoryVoice !== sileroConfig.defaultSpeaker) {
-                            log(`[speakTokenList] Using TTS with ${category} voice (${categoryVoice}) for: "${token}"`);
-                            const ttsFilePath = await genTokenAudio(token, category, { speaker: categoryVoice });
+                    } else if (specialCharMap[token]) {
+                        // Special characters that should be spoken (even with categories)
+                        log(`[speakTokenList] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (category: ${category})`);
+                        const specialKey = `special_${token}`;
+                        if (ttsPregenPromises.has(specialKey)) {
+                            log(`[speakTokenList] Using PRE-GENERATED TTS for special character: "${token}"`);
+                            const ttsFilePath = await ttsPregenPromises.get(specialKey)!;
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
-                        } else if (ttsPregenPromises.has(token)) {
+                        } else {
+                            // Fallback to immediate generation
+                            const spokenForm = specialCharMap[token];
+                            const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
+                            await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                        }
+                    } else if (category && category !== 'default' && category !== 'other') {
+                        // If we have a meaningful category, use TTS with category-specific voice
+                        log(`[speakTokenList] Using category-based TTS for: "${token}" (category: ${category})`);
+                        const categoryVoice = getSpeakerForCategory(category);
+                        
+                        // Check if we have a pre-generated TTS file
+                        if (ttsPregenPromises.has(token)) {
                             log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (${category})`);
                             const ttsFilePath = await ttsPregenPromises.get(token)!;
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                         } else {
-                            log(`[speakTokenList] Using DEFAULT TTS voice for: "${token}" (${category})`);
+                            // Generate new TTS with category voice
                             const ttsFilePath = await genTokenAudio(token, category, { speaker: categoryVoice });
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                         }
-                    } else if (isAlphabet(token)) {
-                        log(`[speakTokenList] Playing ALPHABET PCM for: "${token}" (no meaningful category)`);
-                        const lower = token.toLowerCase();
-                        const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
-                        if (fs.existsSync(alphaPath)) {
-                            await audioPlayer.playPcmCached(alphaPath, panning);
-                        } else {
-                            // Fallback to TTS for missing alphabet
-                            await speakTokenImmediate(token, category, { panning });
-                        }
-                    } else if (isNumber(token)) {
-                        log(`[speakTokenList] Playing NUMBER PCM for: "${token}" (no meaningful category)`);
-                        const numPath = path.join(config.numberPath(), `${token}.pcm`);
-                        if (fs.existsSync(numPath)) {
-                            await audioPlayer.playPcmCached(numPath, panning);
-                        } else {
-                            // Fallback to TTS for missing number
-                            await speakTokenImmediate(token, category, { panning });
-                        }
-                    } else if (isEarconToken(token)) {
-                        // Fallback earcons (alphabet, etc.) for tokens without meaningful categories
-                        log(`[speakTokenList] Playing EARCON for: "${token}" (fallback, no meaningful category)`);
-                        await playEarcon(token, panning);
-                    } else if (isTTSRequired(token) && ttsPregenPromises.has(token)) {
-                        log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (no category)`);
-                        const ttsFilePath = await ttsPregenPromises.get(token)!;
-                        await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
-                    } else if (isTTSRequired(token)) {
-                        log(`[speakTokenList] Generating NEW TTS for: "${token}" (no category)`);
-                        // This shouldn't happen often since we pre-generate, but fallback
-                        await speakTokenImmediate(token, category, { panning });
                     } else {
-                        log(`[speakTokenList] Skipping token (no handler): "${token}"`);
+                        // No meaningful category - determine by token characteristics
+                        if (isAlphabet(token)) {
+                            // Single letters use alphabet PCM files
+                            log(`[speakTokenList] Playing ALPHABET PCM for: "${token}" (no category)`);
+                            const lower = token.toLowerCase();
+                            const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
+                            if (fs.existsSync(alphaPath)) {
+                                await audioPlayer.playPcmCached(alphaPath, panning);
+                            } else {
+                                // Fallback to TTS if PCM file missing
+                                await speakTokenImmediate(token, category, { panning });
+                            }
+                        } else if (isNumber(token)) {
+                            // Single digits use number PCM files
+                            log(`[speakTokenList] Playing NUMBER PCM for: "${token}" (no category)`);
+                            const numPath = path.join(config.numberPath(), `${token}.pcm`);
+                            if (fs.existsSync(numPath)) {
+                                await audioPlayer.playPcmCached(numPath, panning);
+                            } else {
+                                // Fallback to TTS if PCM file missing
+                                await speakTokenImmediate(token, category, { panning });
+                            }
+                        } else if (specialCharMap[token]) {
+                            // Special characters (like underbar, dot) that should be spoken
+                            log(`[speakTokenList] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (no category)`);
+                            const specialKey = `special_${token}`;
+                            if (ttsPregenPromises.has(specialKey)) {
+                                log(`[speakTokenList] Using PRE-GENERATED TTS for special character: "${token}"`);
+                                const ttsFilePath = await ttsPregenPromises.get(specialKey)!;
+                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                            } else {
+                                // Fallback to immediate generation
+                                const spokenForm = specialCharMap[token];
+                                const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
+                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                            }
+                        } else if (isTTSRequired(token)) {
+                            // Everything else that needs TTS
+                            if (ttsPregenPromises.has(token)) {
+                                log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (no category)`);
+                                const ttsFilePath = await ttsPregenPromises.get(token)!;
+                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                            } else {
+                                log(`[speakTokenList] Generating NEW TTS for: "${token}" (no category)`);
+                                await speakTokenImmediate(token, category, { panning });
+                            }
+                        } else {
+                            log(`[speakTokenList] Skipping empty or whitespace token: "${token}"`);
+                        }
                     }
                     log(`[speakTokenList] Successfully completed token: "${token}"`);
                 } catch (err) {
@@ -1543,7 +1582,19 @@ async function speakTokenImmediate(
     try {
         log(`[speakTokenImmediate] token="${token}" category="${category}"`);
         
-        if (isAlphabet(token)) {
+        // Use the same simplified logic as speakToken and speakTokenList
+        if (category && category !== 'default' && category !== 'other') {
+            // Category-based TTS
+            log(`[speakTokenImmediate] Using category-based TTS for: "${token}" (category: ${category})`);
+            const categoryVoice = getSpeakerForCategory(category);
+            const filePath = await genTokenAudio(token, category, { speaker: categoryVoice });
+            await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
+        } else if (isEarcon(token)) {
+            // Earcons
+            log(`[speakTokenImmediate] Playing EARCON for: "${token}"`);
+            await playEarcon(token, opts?.panning);
+        } else if (isAlphabet(token)) {
+            // Alphabet PCM files
             log(`[speakTokenImmediate] Processing alphabet token: ${token}`);
             const lower = token.toLowerCase();
             const alphaPath = path.join(config.alphabetPath(), `${lower}.pcm`);
@@ -1553,9 +1604,10 @@ async function speakTokenImmediate(
             } else {
                 log(`[speakTokenImmediate] Generating TTS for alphabet: ${token}`);
                 const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
-                await audioPlayer.playWavFile(filePath, { immediate: true, panning: opts?.panning });
+                await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             }
         } else if (isNumber(token)) {
+            // Number PCM files
             log(`[speakTokenImmediate] Processing number token: ${token}`);
             const numPath = path.join(config.numberPath(), `${token}.pcm`);
             if (fs.existsSync(numPath)) {
@@ -1564,18 +1616,19 @@ async function speakTokenImmediate(
             } else {
                 log(`[speakTokenImmediate] Generating TTS for number: ${token}`);
                 const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
-                await audioPlayer.playWavFile(filePath, { immediate: true, panning: opts?.panning });
+                await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             }
-        } else if (isEarconToken(token)) {
-            log(`[speakTokenImmediate] Processing earcon token: ${token}`);
-            log(`[speakTokenImmediate] About to call playEarcon for: ${token}`);
-            await playEarcon(token, opts?.panning);
-            log(`[speakTokenImmediate] Completed playEarcon for: ${token}`);
+        } else if (specialCharMap[token]) {
+            // Special characters
+            log(`[speakTokenImmediate] Using TTS for special character: "${token}" -> "${specialCharMap[token]}"`);
+            const spokenForm = specialCharMap[token];
+            const filePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
+            await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
         } else if (isTTSRequired(token)) {
+            // General TTS
             log(`[speakTokenImmediate] Processing TTS token: ${token}`);
             try {
                 const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
-                // ULTRA FAST PATH: Convert TTS WAV to cached PCM for instant playback
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } catch (ttsError) {
                 log(`[speakTokenImmediate] TTS failed for "${token}", trying fallback playback: ${ttsError}`);
@@ -1682,6 +1735,170 @@ export function clearAudioStoppingState(): void {
 
 export function cleanupAudioResources(): void {
     audioPlayer.cleanup();
+}
+
+// ===============================
+// THINKING AUDIO SYSTEM
+// ===============================
+
+class ThinkingAudioPlayer {
+    private speaker: any = null;
+    private isPlaying = false;
+    private thinkingInterval: NodeJS.Timeout | null = null;
+    
+    constructor() {
+        log('[ThinkingAudio] Thinking audio player initialized');
+    }
+    
+    private get thinkingPcmPath(): string {
+        return path.join(config.audioPath(), 'alert', 'thinking.pcm');
+    }
+    
+    private get thinkingFinishedPcmPath(): string {
+        return path.join(config.audioPath(), 'alert', 'thinking_finished.pcm');
+    }
+    
+    async startThinking(): Promise<void> {
+        if (this.isPlaying) {
+            log('[ThinkingAudio] Thinking audio already playing');
+            return;
+        }
+        
+        try {
+            // Log paths for debugging
+            log(`[ThinkingAudio] Thinking PCM path: ${this.thinkingPcmPath}`);
+            log(`[ThinkingAudio] Thinking finished PCM path: ${this.thinkingFinishedPcmPath}`);
+            log(`[ThinkingAudio] Thinking PCM exists: ${fs.existsSync(this.thinkingPcmPath)}`);
+            log(`[ThinkingAudio] Thinking finished PCM exists: ${fs.existsSync(this.thinkingFinishedPcmPath)}`);
+            
+            // Stop any current audio to avoid conflicts
+            audioPlayer.stopCurrentPlayback();
+            
+            this.isPlaying = true;
+            log('[ThinkingAudio] Starting continuous thinking audio loop');
+            
+            // Play thinking.pcm in a loop
+            await this.playThinkingLoop();
+            
+        } catch (error) {
+            logError(`[ThinkingAudio] Error starting thinking audio: ${error}`);
+            this.isPlaying = false;
+        }
+    }
+    
+    async stopThinking(): Promise<void> {
+        if (!this.isPlaying) {
+            return;
+        }
+        
+        log('[ThinkingAudio] Stopping thinking audio');
+        this.isPlaying = false;
+        
+        // Clear the interval
+        if (this.thinkingInterval) {
+            clearTimeout(this.thinkingInterval);
+            this.thinkingInterval = null;
+        }
+        
+        // Stop current speaker
+        if (this.speaker) {
+            try {
+                this.speaker.end();
+            } catch (error) {
+                log(`[ThinkingAudio] Error stopping speaker: ${error}`);
+            }
+            this.speaker = null;
+        }
+    }
+    
+    async playThinkingFinished(): Promise<void> {
+        try {
+            log('[ThinkingAudio] Playing thinking finished sound');
+            
+            // Stop thinking loop first
+            await this.stopThinking();
+            
+            // Play thinking_finished.pcm once
+            if (fs.existsSync(this.thinkingFinishedPcmPath)) {
+                await audioPlayer.playPcmCached(this.thinkingFinishedPcmPath);
+            } else {
+                log('[ThinkingAudio] thinking_finished.pcm not found');
+            }
+            
+        } catch (error) {
+            logError(`[ThinkingAudio] Error playing thinking finished: ${error}`);
+        }
+    }
+    
+    private async playThinkingLoop(): Promise<void> {
+        if (!this.isPlaying) {
+            log('[ThinkingAudio] Stopping loop - not playing');
+            return;
+        }
+        
+        if (!fs.existsSync(this.thinkingPcmPath)) {
+            logError(`[ThinkingAudio] Thinking PCM file not found: ${this.thinkingPcmPath}`);
+            return;
+        }
+        
+        try {
+            log('[ThinkingAudio] Playing thinking.pcm');
+            // Play thinking.pcm
+            await audioPlayer.playPcmCached(this.thinkingPcmPath);
+            log('[ThinkingAudio] Finished playing thinking.pcm');
+            
+            // Schedule next iteration if still thinking
+            if (this.isPlaying) {
+                log('[ThinkingAudio] Scheduling next thinking loop iteration');
+                this.thinkingInterval = setTimeout(() => {
+                    this.playThinkingLoop();
+                }, 100); // Small gap between loops
+            }
+            
+        } catch (error) {
+            if (this.isPlaying) {
+                logError(`[ThinkingAudio] Error in thinking loop: ${error}`);
+                // Try to continue the loop despite error
+                this.thinkingInterval = setTimeout(() => {
+                    this.playThinkingLoop();
+                }, 500);
+            }
+        }
+    }
+    
+    isThinking(): boolean {
+        return this.isPlaying;
+    }
+}
+
+const thinkingAudioPlayer = new ThinkingAudioPlayer();
+
+export async function startThinkingAudio(): Promise<void> {
+    await thinkingAudioPlayer.startThinking();
+}
+
+export async function stopThinkingAudio(): Promise<void> {
+    await thinkingAudioPlayer.stopThinking();
+}
+
+export async function playThinkingFinished(): Promise<void> {
+    await thinkingAudioPlayer.playThinkingFinished();
+}
+
+export function isThinkingAudioPlaying(): boolean {
+    return thinkingAudioPlayer.isThinking();
+}
+
+export async function testThinkingAudio(): Promise<void> {
+    log('[ThinkingAudio] Testing thinking audio system...');
+    try {
+        await startThinkingAudio();
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Play for 3 seconds
+        await playThinkingFinished();
+        log('[ThinkingAudio] Test completed successfully');
+    } catch (error) {
+        logError(`[ThinkingAudio] Test failed: ${error}`);
+    }
 }
 
 export async function playSequence(filePaths: string[], opts?: { rate?: number }): Promise<void> {

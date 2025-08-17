@@ -30,7 +30,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"/Users/gillosae/Desktop/lipcoder-test",
+				"/Users/gillosae/Desktop/lipcoder-test-py",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

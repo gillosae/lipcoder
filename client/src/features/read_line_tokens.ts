@@ -92,8 +92,23 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         for (const { text, category } of tokenData) {
             const tokenPanning = calculatePanning(currentColumn);
             
-            // Keep all tokens as single tokens - word logic is now applied universally in speakTokenList
-            validChunks.push({ tokens: [text], category, panning: tokenPanning });
+            // Apply client-side categorization logic for unknown tokens
+            let finalCategory = category;
+            if (category === 'unknown') {
+                // Single character - check if it should use specialCharMap (TTS) or earcons
+                if (text.length === 1) {
+                    if (specialCharMap[text]) {
+                        finalCategory = 'special'; // Will trigger TTS with specialCharMap
+                    } else {
+                        finalCategory = 'type'; // Will trigger earcon logic
+                    }
+                } else {
+                    // Multi-character unknown tokens default to variable
+                    finalCategory = 'variable';
+                }
+            }
+            
+            validChunks.push({ tokens: [text], category: finalCategory, panning: tokenPanning });
             
             // Update column position (simplified - assumes each character is one column)
             currentColumn += text.length;
