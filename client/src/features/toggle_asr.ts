@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ASRClient, ASRChunk } from '../asr';
 import { log } from '../utils';
+import { stopAllAudio } from './stop_reading';
+import { logASRStart, logASRStop, logASRCommand } from '../activity_logger';
 
 let asrClient: ASRClient | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
@@ -36,6 +38,10 @@ export function registerToggleASR(context: vscode.ExtensionContext) {
             if (!asrClient || !asrClient.getRecordingStatus()) {
                 // Start ASR streaming
                 log('[Toggle ASR] Starting ASR streaming...');
+                
+                // Stop all ongoing TTS before starting ASR
+                stopAllAudio();
+                log('[Toggle ASR] Stopped all TTS before starting ASR');
                 
                 asrClient = new ASRClient({
                     chunkDuration: 2000,

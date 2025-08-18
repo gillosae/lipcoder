@@ -6,8 +6,9 @@ import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
 import { log, logWarning, logInfo, logError, logSuccess } from './utils';
-import { config, sileroConfig } from './config';
+import { config, sileroConfig, openaiTTSConfig } from './config';
 import { isAlphabet, isNumber, specialCharMap, isEarcon } from './mapping';
+import { logTTSStart, logAudioEvent } from './activity_logger';
 
 // Import from the new modules
 import { playEarcon, stopEarconPlayback, isEarconToken, findTokenSound, earconRaw } from './earcon';
@@ -63,20 +64,20 @@ async function validateCachedAudioFile(filePath: string): Promise<boolean> {
 }
 
 /**
- * Apply pitch-preserving time stretching to an audio file using FFmpeg
+ * Apply volume boost to an audio file using FFmpeg
  * Returns path to the processed file (cached for efficiency)
  */
-async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed: number): Promise<string> {
-    // Skip processing if playspeed is 1.0 (no change needed)
-    if (Math.abs(playSpeed - 1.0) < 0.01) {
+async function applyVolumeBoost(inputFilePath: string, volumeBoost: number): Promise<string> {
+    // Skip processing if volume boost is 1.0 (no change needed)
+    if (Math.abs(volumeBoost - 1.0) < 0.01) {
         return inputFilePath;
     }
     
-    // Generate cache key based on file and playspeed
+    // Generate cache key based on file and volume boost
     const inputBasename = path.basename(inputFilePath, path.extname(inputFilePath));
-    const speedKey = playSpeed.toFixed(3).replace('.', '_');
-    const outputFileName = `${inputBasename}_speed${speedKey}.wav`;
-    const outputFilePath = path.join(os.tmpdir(), 'lipcoder_timestretch', outputFileName);
+    const volumeKey = volumeBoost.toFixed(3).replace('.', '_');
+    const outputFileName = `${inputBasename}_vol${volumeKey}.wav`;
+    const outputFilePath = path.join(os.tmpdir(), 'lipcoder_volume', outputFileName);
     
     // Create cache directory if it doesn't exist
     const cacheDir = path.dirname(outputFilePath);
@@ -91,10 +92,10 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         if (outputStat.mtime > inputStat.mtime) {
             // Validate the cached file before using it
             if (await validateCachedAudioFile(outputFilePath)) {
-                log(`[timeStretch] Using cached time-stretched file: ${outputFileName}`);
+                log(`[volumeBoost] Using cached volume-boosted file: ${outputFileName}`);
                 return outputFilePath;
             } else {
-                log(`[timeStretch] Cached file is corrupted, regenerating: ${outputFileName}`);
+                log(`[volumeBoost] Cached file is corrupted, regenerating: ${outputFileName}`);
                 // Delete the corrupted file and continue to regenerate
                 try {
                     fs.unlinkSync(outputFilePath);
@@ -105,37 +106,18 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         }
     }
     
-    log(`[timeStretch] Applying ${playSpeed}x time stretch with pitch preservation to: ${path.basename(inputFilePath)}`);
+    log(`[volumeBoost] Applying ${volumeBoost}x volume boost to: ${path.basename(inputFilePath)}`);
     
     // Check if input file exists
     if (!fs.existsSync(inputFilePath)) {
         const error = new Error(`Input file does not exist: ${inputFilePath}`);
-        logError(`[timeStretch] ${error.message}`);
+        logError(`[volumeBoost] ${error.message}`);
         return Promise.reject(error);
     }
     
     return new Promise((resolve, reject) => {
-        // FFmpeg command: -af "atempo=speed" preserves pitch while changing tempo
-        // atempo filter has limits (0.5-100.0), so we may need to chain multiple filters for extreme speeds
-        let atempoFilters: string[] = [];
-        let remainingSpeed = playSpeed;
-        
-        // Chain atempo filters if speed is outside single filter range
-        while (remainingSpeed > 2.0) {
-            atempoFilters.push('atempo=2.0');
-            remainingSpeed /= 2.0;
-        }
-        while (remainingSpeed < 0.5) {
-            atempoFilters.push('atempo=0.5');
-            remainingSpeed /= 0.5;
-        }
-        
-        // Add final adjustment
-        if (Math.abs(remainingSpeed - 1.0) > 0.01) {
-            atempoFilters.push(`atempo=${remainingSpeed.toFixed(6)}`);
-        }
-        
-        const filterChain = atempoFilters.join(',');
+        // FFmpeg command: -af "volume=boost" to adjust volume
+        const volumeFilter = `volume=${volumeBoost.toFixed(6)}`;
         
         // Check if input is a PCM file and add format specifications
         const isPcmFile = inputFilePath.toLowerCase().endsWith('.pcm');
@@ -143,7 +125,156 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         
         if (isPcmFile) {
             // For PCM files, specify the format explicitly using standard PCM format
-            log(`[timeStretch] PCM file detected, using format: ${STANDARD_PCM_FORMAT.channels}ch, ${STANDARD_PCM_FORMAT.sampleRate}Hz, 16-bit`);
+            log(`[volumeBoost] PCM file detected, using format: ${STANDARD_PCM_FORMAT.channels}ch, ${STANDARD_PCM_FORMAT.sampleRate}Hz, 16-bit`);
+            ffmpegArgs = [
+                '-f', 's16le',                                    // 16-bit signed little-endian
+                '-ar', STANDARD_PCM_FORMAT.sampleRate.toString(), // Sample rate from constant
+                '-ac', STANDARD_PCM_FORMAT.channels.toString(),   // Channels from constant
+                '-i', inputFilePath,
+                '-af', volumeFilter,
+                '-y', // Overwrite output file
+                outputFilePath
+            ];
+        } else {
+            // For other audio files (WAV, MP3, etc.), use standard approach
+            ffmpegArgs = [
+                '-i', inputFilePath,
+                '-af', volumeFilter,
+                '-y', // Overwrite output file
+                outputFilePath
+            ];
+        }
+        
+        log(`[volumeBoost] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
+        
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs, { 
+            stdio: ['ignore', 'pipe', 'pipe'] // Capture stdout and stderr
+        });
+        
+        let stderr = '';
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+        
+        ffmpeg.on('close', (code) => {
+            if (code === 0) {
+                log(`[volumeBoost] Successfully created volume-boosted file: ${outputFileName}`);
+                resolve(outputFilePath);
+            } else {
+                logError(`[volumeBoost] FFmpeg failed with code ${code}. stderr: ${stderr}`);
+                reject(new Error(`FFmpeg volume boost failed: ${stderr}`));
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            logError(`[volumeBoost] FFmpeg spawn error: ${err}`);
+            reject(err);
+        });
+    });
+}
+
+/**
+ * Apply pitch-preserving time stretching and/or volume boost to an audio file using FFmpeg
+ * Returns path to the processed file (cached for efficiency)
+ */
+async function applyAudioProcessing(inputFilePath: string, playSpeed: number, volumeBoost?: number): Promise<string> {
+    // Skip processing if no changes needed
+    const needsSpeedChange = Math.abs(playSpeed - 1.0) > 0.01;
+    const needsVolumeChange = volumeBoost && Math.abs(volumeBoost - 1.0) > 0.01;
+    
+    if (!needsSpeedChange && !needsVolumeChange) {
+        return inputFilePath;
+    }
+    
+    // Generate cache key based on file, playspeed, and volume boost
+    const inputBasename = path.basename(inputFilePath, path.extname(inputFilePath));
+    const speedKey = playSpeed.toFixed(3).replace('.', '_');
+    const volumeKey = volumeBoost ? volumeBoost.toFixed(3).replace('.', '_') : '1_000';
+    const outputFileName = `${inputBasename}_speed${speedKey}_vol${volumeKey}.wav`;
+    const outputFilePath = path.join(os.tmpdir(), 'lipcoder_audio_processing', outputFileName);
+    
+    // Create cache directory if it doesn't exist
+    const cacheDir = path.dirname(outputFilePath);
+    if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    
+    // Return cached file if it exists, is newer than input, and is valid
+    if (fs.existsSync(outputFilePath)) {
+        const inputStat = fs.statSync(inputFilePath);
+        const outputStat = fs.statSync(outputFilePath);
+        if (outputStat.mtime > inputStat.mtime) {
+            // Validate the cached file before using it
+            if (await validateCachedAudioFile(outputFilePath)) {
+                log(`[audioProcessing] Using cached processed file: ${outputFileName}`);
+                return outputFilePath;
+            } else {
+                log(`[audioProcessing] Cached file is corrupted, regenerating: ${outputFileName}`);
+                // Delete the corrupted file and continue to regenerate
+                try {
+                    fs.unlinkSync(outputFilePath);
+                } catch (e) {
+                    // Ignore deletion errors
+                }
+            }
+        }
+    }
+    
+    const processingDesc = [];
+    if (needsSpeedChange) processingDesc.push(`${playSpeed}x speed`);
+    if (needsVolumeChange) processingDesc.push(`${volumeBoost}x volume`);
+    log(`[audioProcessing] Applying ${processingDesc.join(' + ')} to: ${path.basename(inputFilePath)}`);
+    
+    // Check if input file exists
+    if (!fs.existsSync(inputFilePath)) {
+        const error = new Error(`Input file does not exist: ${inputFilePath}`);
+        logError(`[audioProcessing] ${error.message}`);
+        return Promise.reject(error);
+    }
+    
+    return new Promise((resolve, reject) => {
+        // Build filter chain
+        let filters: string[] = [];
+        
+        // Add time stretching filters if needed
+        if (needsSpeedChange) {
+            // FFmpeg command: -af "atempo=speed" preserves pitch while changing tempo
+            // atempo filter has limits (0.5-100.0), so we may need to chain multiple filters for extreme speeds
+            let atempoFilters: string[] = [];
+            let remainingSpeed = playSpeed;
+            
+            // Chain atempo filters if speed is outside single filter range
+            while (remainingSpeed > 2.0) {
+                atempoFilters.push('atempo=2.0');
+                remainingSpeed /= 2.0;
+            }
+            while (remainingSpeed < 0.5) {
+                atempoFilters.push('atempo=0.5');
+                remainingSpeed /= 0.5;
+            }
+            
+            // Add final adjustment
+            if (Math.abs(remainingSpeed - 1.0) > 0.01) {
+                atempoFilters.push(`atempo=${remainingSpeed.toFixed(6)}`);
+            }
+            
+            filters.push(...atempoFilters);
+        }
+        
+        // Add volume filter if needed
+        if (needsVolumeChange) {
+            filters.push(`volume=${volumeBoost!.toFixed(6)}`);
+        }
+        
+        const filterChain = filters.join(',');
+        
+        // Check if input is a PCM file and add format specifications
+        const isPcmFile = inputFilePath.toLowerCase().endsWith('.pcm');
+        let ffmpegArgs: string[];
+        
+        if (isPcmFile) {
+            // For PCM files, specify the format explicitly using standard PCM format
+            log(`[audioProcessing] PCM file detected, using format: ${STANDARD_PCM_FORMAT.channels}ch, ${STANDARD_PCM_FORMAT.sampleRate}Hz, 16-bit`);
             ffmpegArgs = [
                 '-f', 's16le',                                    // 16-bit signed little-endian
                 '-ar', STANDARD_PCM_FORMAT.sampleRate.toString(), // Sample rate from constant
@@ -163,7 +294,7 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
             ];
         }
         
-        log(`[timeStretch] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
+        log(`[audioProcessing] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
         
         const ffmpeg = spawn('ffmpeg', ffmpegArgs, { 
             stdio: ['ignore', 'pipe', 'pipe'] // Capture stdout and stderr
@@ -176,19 +307,26 @@ async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed:
         
         ffmpeg.on('close', (code) => {
             if (code === 0) {
-                log(`[timeStretch] Successfully created time-stretched file: ${outputFileName}`);
+                log(`[audioProcessing] Successfully created processed file: ${outputFileName}`);
                 resolve(outputFilePath);
             } else {
-                logError(`[timeStretch] FFmpeg failed with code ${code}. stderr: ${stderr}`);
-                reject(new Error(`FFmpeg time stretch failed: ${stderr}`));
+                logError(`[audioProcessing] FFmpeg failed with code ${code}. stderr: ${stderr}`);
+                reject(new Error(`FFmpeg audio processing failed: ${stderr}`));
             }
         });
         
         ffmpeg.on('error', (err) => {
-            logError(`[timeStretch] FFmpeg spawn error: ${err}`);
+            logError(`[audioProcessing] FFmpeg spawn error: ${err}`);
             reject(err);
         });
     });
+}
+
+/**
+ * Backward compatibility function for pitch-preserving time stretching
+ */
+async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed: number): Promise<string> {
+    return applyAudioProcessing(inputFilePath, playSpeed);
 }
 
 // ===============================
@@ -1186,6 +1324,13 @@ class AudioPlayer {
         logWarning('🧹 Audio resources cleaned up - ready for new audio');
     }
 
+    /**
+     * Check if audio is currently playing
+     */
+    isPlaying(): boolean {
+        return this.currentSpeaker !== null || this.currentFallback !== null || this.isStopping;
+    }
+
     async playSequence(filePaths: string[], opts?: { rate?: number }): Promise<void> {
         const existingFiles = filePaths.filter(fp => {
             if (!fs.existsSync(fp)) {
@@ -1338,6 +1483,10 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
     // Clear stopping state at the start of legitimate audio sequence
     audioPlayer.clearStoppingState();
     
+    // Log TTS start for metrics
+    const fullText = chunks.map(chunk => chunk.tokens.join(' ')).join(' ');
+    logTTSStart(fullText);
+    
     log(`[speakTokenList] Starting with ${chunks.length} chunks, signal aborted: ${signal?.aborted}`);
     
     if (signal) {
@@ -1367,17 +1516,31 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
             const expandedTokens: string[] = [];
             
             for (const token of tokens) {
+                // Import language detection to check if token is Korean
+                const { containsKorean } = require('./language_detection');
+                
                 if (category === 'variable' || category === 'literal') {
-                    // Apply word chunking to variables and literals (handles CamelCase, underscores, 2/3-letter rules)
-                    const wordChunks = splitWordChunks(token);
-                    expandedTokens.push(...wordChunks);
-                    const categoryVoice = getSpeakerForCategory(category);
-                    log(`[speakTokenList] ${category} "${token}" → [${wordChunks.join(', ')}] (voice: ${categoryVoice})`);
-                } else if (category === 'comment_text' || category === 'comment_symbol') {
-                    // Apply comment chunking for comment-related tokens
-                    const commentChunks = splitCommentChunks(token, category);
-                    expandedTokens.push(...commentChunks);
-                    log(`[speakTokenList] Comment "${token}" → [${commentChunks.join(', ')}]`);
+                    // Skip client-side word chunking for Korean text since server already tokenized it properly
+                    if (containsKorean(token)) {
+                        // Korean text is already properly tokenized by the server, don't re-process
+                        expandedTokens.push(token);
+                        log(`[speakTokenList] Korean ${category} "${token}" → keeping as-is (already tokenized by server)`);
+                    } else {
+                        // Apply word chunking to English variables and literals (handles CamelCase, underscores, 2/3-letter rules)
+                        const wordChunks = splitWordChunks(token);
+                        expandedTokens.push(...wordChunks);
+                        const categoryVoice = getSpeakerForCategory(category);
+                        log(`[speakTokenList] ${category} "${token}" → [${wordChunks.join(', ')}] (voice: ${categoryVoice})`);
+                    }
+                } else if (category === 'comment_text') {
+                    // For comment text, keep as single token for direct TTS processing
+                    // This allows the entire comment to be processed as one unit with language detection
+                    expandedTokens.push(token);
+                    log(`[speakTokenList] Comment text "${token}" → keeping as single unit for direct TTS`);
+                } else if (category === 'comment_symbol' || category === 'comment_number') {
+                    // Comment symbols and numbers should be processed individually (earcons/TTS)
+                    expandedTokens.push(token);
+                    log(`[speakTokenList] Comment ${category} "${token}" → keeping as individual token`);
                 } else {
                     // Keep other tokens as-is
                     expandedTokens.push(token);
@@ -1674,18 +1837,25 @@ export function playWave(
     // Apply global playspeed if no specific rate is provided
     const effectiveRate = opts?.rate ?? config.playSpeed;
     
-    // Use pitch-preserving time stretching if enabled and rate != 1.0
-    if (config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) {
-        return applyPitchPreservingTimeStretch(filePath, effectiveRate)
+    // Check if this is a Korean TTS file (contains 'openai_ko' in filename)
+    const isKoreanTTS = path.basename(filePath).includes('openai_ko');
+    const volumeBoost = isKoreanTTS ? openaiTTSConfig.volumeBoost : undefined;
+    
+    // Use audio processing if pitch preservation is enabled, rate != 1.0, or volume boost is needed
+    const needsProcessing = (config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) || 
+                           (volumeBoost && Math.abs(volumeBoost - 1.0) > 0.01);
+    
+    if (needsProcessing) {
+        return applyAudioProcessing(filePath, effectiveRate, volumeBoost)
             .then(processedFilePath => {
-                // Play the time-stretched file at normal rate (1.0) since tempo is already adjusted
+                // Play the processed file at normal rate (1.0) since tempo and volume are already adjusted
                 return audioPlayer.playWavFile(processedFilePath, {
                     ...opts,
                     rate: 1.0 // Don't apply rate again - it's already in the processed file
                 });
             })
             .catch(error => {
-                log(`[playWave] Pitch-preserving time stretch failed: ${error}, falling back to sample rate adjustment`);
+                log(`[playWave] Audio processing failed: ${error}, falling back to sample rate adjustment`);
                 // Fallback to original method if FFmpeg fails
                 return audioPlayer.playWavFile(filePath, { ...opts, rate: effectiveRate });
             });
@@ -1726,6 +1896,7 @@ export function generateTone(duration = 200, freq = 440): Promise<void> {
 }
 
 export function stopPlayback(): void {
+    logAudioEvent('cancel', { reason: 'manual_stop' });
     audioPlayer.stopAll();
 }
 
@@ -1747,7 +1918,7 @@ class ThinkingAudioPlayer {
     private thinkingInterval: NodeJS.Timeout | null = null;
     
     constructor() {
-        log('[ThinkingAudio] Thinking audio player initialized');
+        log('[ThinkingAudio] Thinking audio player initialized'); 
     }
     
     private get thinkingPcmPath(): string {
@@ -1903,4 +2074,11 @@ export async function testThinkingAudio(): Promise<void> {
 
 export async function playSequence(filePaths: string[], opts?: { rate?: number }): Promise<void> {
     return audioPlayer.playSequence(filePaths, opts);
+}
+
+/**
+ * Check if audio is currently playing (TTS, PCM, WAV, etc.)
+ */
+export function isAudioPlaying(): boolean {
+    return audioPlayer.isPlaying() || thinkingAudioPlayer.isThinking();
 }

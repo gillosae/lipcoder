@@ -104,6 +104,13 @@ export function stopForCursorMovement(): void {
 	// Stop all current audio
 	stopAllAudio();
 	
+	// Stop vibe coding TTS if active
+	import('./vibe_coding.js').then(({ stopVibeCodingTTS }) => {
+		stopVibeCodingTTS();
+	}).catch(() => {
+		// Ignore import errors - vibe coding might not be available
+	});
+	
 	// Clear stopping state immediately since cursor movement should start new audio right away
 	clearAudioStoppingState();
 }

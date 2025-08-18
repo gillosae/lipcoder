@@ -122,24 +122,40 @@
         "title": "LipCoder: Open Pseudo Terminal"
       },
       {
-        "command": "lipcoder.terminalNextLine",
-        "title": "LipCoder: Terminal Next Line"
+        "command": "lipcoder.killTerminalAndOpenLipCoder",
+        "title": "LipCoder: Kill Terminal and Open LipCoder Terminal"
       },
       {
-        "command": "lipcoder.terminalPrevLine",
-        "title": "LipCoder: Terminal Previous Line"
+        "command": "lipcoder.terminalReadHistory",
+        "title": "LipCoder: Read Terminal History"
       },
       {
-        "command": "lipcoder.terminalCharLeft",
-        "title": "LipCoder: Terminal Character Left"
+        "command": "lipcoder.terminalReadLast",
+        "title": "LipCoder: Read Last Terminal Output"
       },
       {
-        "command": "lipcoder.terminalCharRight",
-        "title": "LipCoder: Terminal Character Right"
+        "command": "lipcoder.terminalHistoryUp",
+        "title": "LipCoder: Terminal History Up"
+      },
+      {
+        "command": "lipcoder.terminalHistoryDown",
+        "title": "LipCoder: Terminal History Down"
+      },
+      {
+        "command": "lipcoder.terminalClearHistory",
+        "title": "LipCoder: Clear Terminal History"
       },
       {
         "command": "lipcoder.addTerminalOutput",
         "title": "LipCoder: Add Terminal Output for Navigation"
+      },
+      {
+        "command": "lipcoder.debugTerminalState",
+        "title": "LipCoder: Debug Terminal State"
+      },
+      {
+        "command": "lipcoder.setupTerminalDemo",
+        "title": "LipCoder: Setup Terminal Demo Content"
       },
       {
         "command": "lipcoder.formatCode",
@@ -416,6 +432,21 @@
         "category": "LipCoder"
       },
       {
+        "command": "lipcoder.testActivityLogging",
+        "title": "LipCoder: Test Activity Logging",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.openActivityLogs",
+        "title": "LipCoder: Open Activity Logs",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.analyzeMetrics",
+        "title": "LipCoder: Analyze Session Metrics",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.startASRCommandMode",
         "title": "Start ASR Command Mode",
         "category": "LipCoder"
@@ -433,6 +464,11 @@
       {
         "command": "lipcoder.stopASRWriteMode",
         "title": "Stop ASR Write Mode",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testKoreanTTS",
+        "title": "Test Korean TTS",
         "category": "LipCoder"
       }
     ],
@@ -469,23 +505,24 @@
         "when": "explorerViewletVisible && explorerViewletFocus"
       },
       {
-        "key": "up",
-        "command": "lipcoder.terminalPrevLine",
+        "key": "ctrl+h",
+        "command": "lipcoder.terminalReadHistory",
         "when": "terminalFocus"
       },
       {
-        "key": "down",
-        "command": "lipcoder.terminalNextLine",
+        "key": "ctrl+l",
+        "command": "lipcoder.terminalReadLast",
+        "when": "terminalFocus"
+      },
+
+      {
+        "key": "ctrl+shift+c",
+        "command": "lipcoder.terminalClearHistory",
         "when": "terminalFocus"
       },
       {
-        "key": "left",
-        "command": "lipcoder.terminalCharLeft",
-        "when": "terminalFocus"
-      },
-      {
-        "key": "right",
-        "command": "lipcoder.terminalCharRight",
+        "key": "ctrl+d",
+        "command": "lipcoder.debugTerminalState",
         "when": "terminalFocus"
       },
       {
@@ -525,7 +562,12 @@
       },
       {
         "command": "lipcoder.openTerminal",
-        "key": "ctrl+shift+t"
+        "key": "ctrl+`"
+      },
+      {
+        "command": "lipcoder.killTerminalAndOpenLipCoder",
+        "key": "ctrl+shift+k",
+        "when": "terminalFocus"
       },
       {
         "command": "lipcoder.startASRRecording",
@@ -602,6 +644,13 @@
           "enum": ["native", "inline", "popup"],
           "default": "native",
           "description": "Choose how to preview code changes: 'native' uses VS Code's built-in diff viewer, 'inline' shows diff in a separate editor, 'popup' shows simple confirmation dialog."
+        },
+        "lipcoder.openaiTTSVolumeBoost": {
+          "type": "number",
+          "default": 1.3,
+          "minimum": 0.1,
+          "maximum": 3.0,
+          "description": "Volume boost multiplier for Korean TTS (1.0 = no change, 1.3 = 30% louder). Only affects Korean text when using OpenAI TTS."
         }
       }
     }

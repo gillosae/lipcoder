@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { log } from '../utils';
 import { twoLenExceptions, threeLenExceptions } from '../mapping';
+import { containsKorean, detectLanguage, DetectedLanguage } from '../language_detection';
 
 // Dictionary loading
 let dictWords: Set<string> = new Set();
@@ -17,6 +18,54 @@ export function isDictionaryWord(token: string): boolean {
     return dictWords.has(token.toLowerCase());
 }
 
+/**
+ * Check if text contains Korean characters
+ */
+function isKoreanText(text: string): boolean {
+    return containsKorean(text);
+}
+
+/**
+ * Split Korean text into meaningful chunks
+ * Korean text should generally be kept as whole words/phrases
+ */
+function splitKoreanText(text: string): string[] {
+    // For Korean text, we want to keep words together
+    // Split on whitespace and punctuation, but keep Korean characters together
+    const result: string[] = [];
+    let currentKoreanWord = '';
+    
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        
+        if (containsKorean(char)) {
+            // Korean character - add to current word
+            currentKoreanWord += char;
+        } else if (/\s/.test(char)) {
+            // Whitespace - end current Korean word if any
+            if (currentKoreanWord) {
+                result.push(currentKoreanWord);
+                currentKoreanWord = '';
+            }
+            // Skip whitespace
+        } else {
+            // Non-Korean, non-whitespace character (punctuation, numbers, etc.)
+            if (currentKoreanWord) {
+                result.push(currentKoreanWord);
+                currentKoreanWord = '';
+            }
+            result.push(char);
+        }
+    }
+    
+    // Add final Korean word if any
+    if (currentKoreanWord) {
+        result.push(currentKoreanWord);
+    }
+    
+    return result.filter(Boolean);
+}
+
 // Helper to split a CamelCase identifier
 export function isCamelCase(id: string) {
     return /[a-z][A-Z]/.test(id);
@@ -28,20 +77,34 @@ export function splitCamel(id: string): string[] {
 
 /**
  * Split input text into tokens:
- * 1. Split on whitespace.
- * 2. Further split on runs of letters, digits, or non-alphanumerics, or camelCase.
+ * 1. Check if text contains Korean - if so, use Korean-specific splitting
+ * 2. For English text: Split on whitespace and handle English word logic
  * 3. For letter runs of length 2, if in exceptions, keep whole;
  *    For letter runs of length 3, if in dictionary and not in exceptions, keep whole;
  *    otherwise split into individual letters.
  * 4. Digit runs and special runs are split into individual characters.
  */
 export function splitWordChunks(text: string): string[] {
+    // Check if text contains Korean characters
+    if (isKoreanText(text)) {
+        log(`[splitWordChunks] Korean text detected, using Korean tokenization: "${text}"`);
+        return splitKoreanText(text);
+    }
+    
     const result: string[] = [];
     // 1. Split on whitespace
     const chunks = text.split(/\s+/).filter(Boolean);
 
     for (const chunk of chunks) {
-        // 2. Handle camelCase by splitting first
+        // Check if this chunk contains Korean
+        if (isKoreanText(chunk)) {
+            // Handle Korean chunk
+            const koreanTokens = splitKoreanText(chunk);
+            result.push(...koreanTokens);
+            continue;
+        }
+        
+        // 2. Handle camelCase by splitting first (English text)
         const subChunks = isCamelCase(chunk) ? splitCamel(chunk) : [chunk];
 
         for (const sub of subChunks) {
@@ -85,17 +148,13 @@ export function splitWordChunks(text: string): string[] {
 }
 
 /**
- * Handle comment text specially - keep descriptive text as single units
- * but split symbols individually
+ * Handle comment text specially - now simplified to keep entire comment as single unit
+ * for direct TTS processing with language detection and special character handling.
  */
 export function splitCommentChunks(text: string, category: string): string[] {
-    // For comment text (descriptive part), keep as single unit
+    // For comment text, keep the entire text as a single unit for direct TTS
+    // The TTS system will handle language detection and special characters internally
     if (category === 'comment_text') {
-        return [text];
-    }
-    
-    // For comment symbols and numbers, treat as individual tokens
-    if (category === 'comment_symbol' || category === 'comment_number') {
         return [text];
     }
     
@@ -104,6 +163,6 @@ export function splitCommentChunks(text: string, category: string): string[] {
         return [text];
     }
     
-    // For other comment parts, use regular word splitting
-    return splitWordChunks(text);
+    // For other categories, keep as single token
+    return [text];
 }

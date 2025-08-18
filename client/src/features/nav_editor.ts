@@ -12,9 +12,53 @@ import { shouldUseAudioMinimap, updateContinuousTone, resetSpeedTracking, cleanu
 let readyForCursor = false;
 let cursorTimeout: NodeJS.Timeout | null = null;
 let lastCursorMoveTime = 0;
+
+// Undo detection system to prevent TTS flooding
+let undoDetectionTimeout: NodeJS.Timeout | null = null;
+let isUndoOperation = false;
+let lastUndoTime = 0;
+const UNDO_DETECTION_WINDOW_MS = 500; // 500ms window to detect undo operations
 let suppressAutomaticReading = false; // Flag to suppress automatic text reading
 let cursorIdleTimeout: NodeJS.Timeout | null = null;
 let pendingLineReadTimeout: NodeJS.Timeout | null = null;
+
+/**
+ * Detect if the current text changes are likely from an undo operation
+ * Undo operations typically have specific patterns:
+ * - Multiple large changes in a single event
+ * - Changes that span multiple lines
+ * - Large deletions followed by insertions
+ */
+function detectUndoOperation(changes: readonly vscode.TextDocumentContentChangeEvent[]): boolean {
+    if (changes.length === 0) return false;
+    
+    // Pattern 1: Multiple changes in single event (common in undo)
+    if (changes.length > 3) {
+        log(`[UndoDetection] Multiple changes detected (${changes.length}) - likely undo`);
+        return true;
+    }
+    
+    // Pattern 2: Large single change (more than 50 characters or multiple lines)
+    for (const change of changes) {
+        const isLargeChange = change.text.length > 50 || change.rangeLength > 50;
+        const isMultiLineChange = change.text.includes('\n') || 
+                                 (change.range.end.line - change.range.start.line) > 0;
+        
+        if (isLargeChange || isMultiLineChange) {
+            log(`[UndoDetection] Large/multiline change detected - likely undo (text: ${change.text.length} chars, range: ${change.rangeLength})`);
+            return true;
+        }
+    }
+    
+    // Pattern 3: Rapid sequence of changes (if called multiple times quickly)
+    const now = Date.now();
+    if (now - lastUndoTime < 100) { // Within 100ms of last undo detection
+        log(`[UndoDetection] Rapid change sequence detected - likely continued undo`);
+        return true;
+    }
+    
+    return false;
+}
 
 /**
  * Clean up nav editor resources
@@ -31,6 +75,10 @@ function cleanupNavEditor(): void {
     if (pendingLineReadTimeout) {
         clearTimeout(pendingLineReadTimeout);
         pendingLineReadTimeout = null;
+    }
+    if (undoDetectionTimeout) {
+        clearTimeout(undoDetectionTimeout);
+        undoDetectionTimeout = null;
     }
     readyForCursor = false;
     resetSpeedTracking(); // Reset audio minimap tracking
@@ -52,6 +100,19 @@ export function suppressAutomaticTextReading(): void {
 export function resumeAutomaticTextReading(): void {
     suppressAutomaticReading = false;
     log('[NavEditor] Automatic text reading resumed');
+}
+
+/**
+ * Reset undo detection state (useful for debugging or manual reset)
+ */
+export function resetUndoDetection(): void {
+    isUndoOperation = false;
+    lastUndoTime = 0;
+    if (undoDetectionTimeout) {
+        clearTimeout(undoDetectionTimeout);
+        undoDetectionTimeout = null;
+    }
+    log('[NavEditor] Undo detection state reset');
 }
 
 export function registerNavEditor(context: vscode.ExtensionContext, audioMap: any) {
@@ -131,6 +192,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
     // Track text change for narration
     let skipNextIndent = false; // Flag to skip indent sound once after Enter
+
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((e) => {
             // Track typing time to prevent double audio
@@ -139,12 +201,43 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             // Skip automatic reading if suppressed (e.g., during vibe coding)
             if (suppressAutomaticReading) return;
             
+            // Detect undo operations and suppress TTS to prevent flooding
+            const changes = e.contentChanges;
+            if (changes.length === 0) return;
+            
+            // Detect potential undo operation based on change patterns
+            const isLikelyUndo = detectUndoOperation(changes);
+            if (isLikelyUndo) {
+                isUndoOperation = true;
+                lastUndoTime = Date.now();
+                log('[NavEditor] Undo operation detected - suppressing TTS to prevent flooding');
+                
+                // Clear any existing timeout
+                if (undoDetectionTimeout) {
+                    clearTimeout(undoDetectionTimeout);
+                }
+                
+                // Set timeout to resume normal TTS after undo window
+                undoDetectionTimeout = setTimeout(() => {
+                    isUndoOperation = false;
+                    log('[NavEditor] Undo detection window expired - resuming normal TTS');
+                }, UNDO_DETECTION_WINDOW_MS);
+                
+                return; // Skip TTS during undo operations
+            }
+            
+            // Skip if we're still in undo detection window
+            if (isUndoOperation) {
+                const timeSinceUndo = Date.now() - lastUndoTime;
+                if (timeSinceUndo < UNDO_DETECTION_WINDOW_MS) {
+                    log('[NavEditor] Still in undo detection window - suppressing TTS');
+                    return;
+                }
+            }
+            
             if (!config.typingSpeechEnabled) return;
             const editor = vscode.window.activeTextEditor;
             if (!editor || e.document !== editor.document) return;
-
-            const changes = e.contentChanges;
-            if (changes.length === 0) return;
 
             if (useWordMode) {
                 readWordTokens(e, changes);
@@ -337,6 +430,11 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
         }
     });
     context.subscriptions.push(selectionListener3);
+
+    // Register reset undo detection command for debugging
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.resetUndoDetection', resetUndoDetection)
+    );
 
     // Register cleanup disposal
     context.subscriptions.push({

@@ -67,6 +67,7 @@ export interface OpenAITTSConfig {
     language: string;     // ko for Korean, en for English, etc.
     speed: number;        // 0.25 to 4.0 (default: 1.0)
     responseFormat: string; // mp3, opus, aac, flac, wav, pcm
+    volumeBoost: number;  // Volume boost multiplier (1.0 = no change, 1.5 = 50% louder)
 }
 
 export interface ClaudeConfig {
@@ -124,6 +125,7 @@ export let openaiTTSConfig: OpenAITTSConfig = {
     language: 'ko', // Korean language
     speed: 1.0, // Normal speed
     responseFormat: 'wav', // WAV format for compatibility
+    volumeBoost: 1.3, // 30% volume boost for Korean TTS
 };
 
 export let claudeConfig: ClaudeConfig = {
@@ -439,6 +441,9 @@ export function loadConfigFromSettings() {
         
         const ttsSpeed = config.get('openaiTTSSpeed', 1.0) as number;
         openaiTTSConfig.speed = ttsSpeed;
+        
+        const ttsVolumeBoost = config.get('openaiTTSVolumeBoost', 1.3) as number;
+        openaiTTSConfig.volumeBoost = ttsVolumeBoost;
         
         // Load LLM backend selection
         const llmBackend = config.get('llmBackend', 'claude') as string;

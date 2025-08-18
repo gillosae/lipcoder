@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ASRClient, ASRChunk } from '../asr';
 import { log } from '../utils';
+import { stopAllAudio } from './stop_reading';
+import { logASRStart, logASRStop, logASRCommand, startInteractionTurn, logASRComplete, logActionStart, logActionEnd, endInteractionTurn } from '../activity_logger';
 
 let asrClient: ASRClient | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
@@ -26,6 +28,15 @@ export function registerASRStreaming(context: vscode.ExtensionContext) {
                 }
 
                 log('[ASR] Starting ASR streaming...');
+                logASRStart();
+                
+                // Start interaction turn for metrics tracking
+                const interactionId = startInteractionTurn('asr_streaming');
+                
+                // Stop all ongoing TTS before starting ASR
+                stopAllAudio();
+                log('[ASR] Stopped all TTS before starting ASR streaming');
+                
                 vscode.window.showInformationMessage('Starting ASR streaming...');
 
                 asrClient = new ASRClient({
@@ -37,6 +48,10 @@ export function registerASRStreaming(context: vscode.ExtensionContext) {
                         const message = `[${timestamp}] ${chunk.text}`;
                         
                         log(`[ASR] Transcription: ${chunk.text}`);
+                        // Log ASR transcription with timing
+                        logASRCommand('transcription', chunk.text, chunk.confidence);
+                        logASRComplete(chunk.text, chunk.confidence);
+                        
                         outputChannel?.appendLine(message);
                         
                         // Show notification for each transcription
@@ -64,6 +79,7 @@ export function registerASRStreaming(context: vscode.ExtensionContext) {
             if (asrClient && asrClient.getRecordingStatus()) {
                 asrClient.stopStreaming();
                 asrClient = null;
+                logASRStop();
                 vscode.window.showInformationMessage('ASR streaming stopped');
                 log('[ASR] Streaming stopped');
             } else {

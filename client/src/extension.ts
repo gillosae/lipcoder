@@ -38,7 +38,9 @@ import { registerTTSBackendSwitch } from './features/tts_backend_switch';
 import { registerLLMBackendSwitch } from './features/llm_backend_switch';
 import { registerOpenFile } from './features/open_file';
 import { registerSyntaxErrors } from './features/syntax_errors';
+import { registerTestKoreanTTS } from './features/test_korean_tts';
 import { serverManager } from './server_manager';
+import { activityLogger, logFeatureUsage } from './activity_logger';
 
 // Memory monitoring
 let memoryMonitorInterval: NodeJS.Timeout | null = null;
@@ -199,6 +201,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerLLMBackendSwitch(context);
 	registerOpenFile(context);
 	registerSyntaxErrors(context);
+	registerTestKoreanTTS(context);
 
 	// Add command to restart language server
 	context.subscriptions.push(
@@ -293,6 +296,155 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// Add command to test activity logging
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.testActivityLogging', async () => {
+			try {
+				const { logFeatureUsage, logVibeCoding, logASRCommand, activityLogger } = await import('./activity_logger.js');
+				
+				// Test various log types
+				logFeatureUsage('test_feature', 'test_action', { testData: 'test_value' });
+				logVibeCoding('test_vibe_coding', 'test instruction', 'test_file.ts', { testChanges: 5 });
+				logASRCommand('test_command', 'test transcription', 0.95, 2000);
+				
+				const logFile = activityLogger.getCurrentLogFile();
+				vscode.window.showInformationMessage(`Activity logging test completed! Check log file: ${logFile}`);
+				
+				// Open log directory
+				const logDir = activityLogger.getLogDir();
+				vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(logDir), true);
+				
+			} catch (error) {
+				vscode.window.showErrorMessage(`Activity logging test failed: ${error}`);
+			}
+		})
+	);
+
+	// Add command to open activity logs
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.openActivityLogs', async () => {
+			try {
+				const { activityLogger } = await import('./activity_logger.js');
+				const logDir = activityLogger.getLogDir();
+				const currentLogFile = activityLogger.getCurrentLogFile();
+				
+				// Open the current log file
+				const document = await vscode.workspace.openTextDocument(currentLogFile);
+				await vscode.window.showTextDocument(document);
+				
+				vscode.window.showInformationMessage(`Opened current activity log: ${currentLogFile}`);
+				
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to open activity logs: ${error}`);
+			}
+		})
+	);
+
+	// Add command to analyze metrics
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.analyzeMetrics', async () => {
+			try {
+				const { activityLogger } = await import('./activity_logger.js');
+				const { generateReportFromLogFile } = await import('./metrics_analyzer.js');
+				
+				const currentLogFile = activityLogger.getCurrentLogFile();
+				const report = await generateReportFromLogFile(currentLogFile);
+				
+				// Create a new document with the report
+				const document = await vscode.workspace.openTextDocument({
+					content: report,
+					language: 'markdown'
+				});
+				await vscode.window.showTextDocument(document);
+				
+				vscode.window.showInformationMessage('Metrics analysis completed! Check the report.');
+				
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to analyze metrics: ${error}`);
+			}
+		})
+	);
+
+	// Set up cursor movement tracking
+	let lastCursorPosition: { file: string; line: number; character: number } | null = null;
+	
+	context.subscriptions.push(
+		vscode.window.onDidChangeTextEditorSelection((event) => {
+			const editor = event.textEditor;
+			if (!editor || editor.document.uri.scheme !== 'file') {
+				return;
+			}
+
+			const currentPosition = {
+				file: editor.document.fileName,
+				line: event.selections[0].active.line,
+				character: event.selections[0].active.character
+			};
+
+			// Only log if position actually changed
+			if (!lastCursorPosition || 
+				lastCursorPosition.file !== currentPosition.file ||
+				lastCursorPosition.line !== currentPosition.line ||
+				lastCursorPosition.character !== currentPosition.character) {
+				
+				const { logCursorMovement } = require('./activity_logger');
+				logCursorMovement(
+					currentPosition.file,
+					currentPosition.line,
+					currentPosition.character,
+					lastCursorPosition?.line,
+					lastCursorPosition?.character
+				);
+
+				lastCursorPosition = currentPosition;
+			}
+		})
+	);
+
+	// Track file opening/closing and navigation
+	let lastActiveFile: string | null = null;
+	
+	context.subscriptions.push(
+		vscode.workspace.onDidOpenTextDocument((document) => {
+			if (document.uri.scheme === 'file') {
+				const { logFileOperation, logNavigation } = require('./activity_logger');
+				logFileOperation('file_opened', document.fileName, {
+					languageId: document.languageId,
+					lineCount: document.lineCount
+				});
+				
+				// Track navigation if this is a different file
+				if (lastActiveFile && lastActiveFile !== document.fileName) {
+					logNavigation(lastActiveFile, document.fileName, 'file_switch');
+				}
+				lastActiveFile = document.fileName;
+			}
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.workspace.onDidCloseTextDocument((document) => {
+			if (document.uri.scheme === 'file') {
+				const { logFileOperation } = require('./activity_logger');
+				logFileOperation('file_closed', document.fileName);
+			}
+		})
+	);
+
+	// Track active editor changes for navigation
+	context.subscriptions.push(
+		vscode.window.onDidChangeActiveTextEditor((editor) => {
+			if (editor && editor.document.uri.scheme === 'file') {
+				const currentFile = editor.document.fileName;
+				if (lastActiveFile && lastActiveFile !== currentFile) {
+					const { logNavigation } = require('./activity_logger');
+					logNavigation(lastActiveFile, currentFile, 'editor_switch');
+				}
+				lastActiveFile = currentFile;
+			}
+		})
+	);
+
 }
 
 export async function deactivate() {
@@ -311,8 +463,16 @@ export async function deactivate() {
 	}, 8000); // 8 second timeout
 	
 	try {
-			// Stop memory monitoring first
-	stopMemoryMonitoring();
+		// Dispose activity logger first
+		try {
+			await activityLogger.dispose();
+			logSuccess('✅ Activity logger disposed');
+		} catch (error) {
+			logError(`❌ Failed to dispose activity logger: ${error}`);
+		}
+
+		// Stop memory monitoring
+		stopMemoryMonitoring();
 	
 	// Stop all servers
 	try {

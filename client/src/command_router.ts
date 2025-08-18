@@ -3,6 +3,7 @@ import { log, logError, logSuccess, logWarning } from './utils';
 import { getOpenAIClient } from './llm';
 import { analyzeCodeWithQuestion } from './features/code_analysis';
 import { startThinkingAudio, stopThinkingAudio } from './audio';
+import { logCommandExecution, logFeatureUsage } from './activity_logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -666,12 +667,13 @@ Available command categories:
 3. VARIABLE_DEFINITION - Find variable definition (e.g., "find variable config", "go to variable data definition")
 4. PARENT_NAVIGATION - Navigate to parent scope (e.g., "go to parent", "move up", "parent")
 5. LIPCODER_COMMAND - LipCoder specific commands (e.g., "symbol tree", "function list", "breadcrumb")
-6. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
-7. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
-8. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
-9. CODE_GENERATION - Generate code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x")
-10. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
-11. NOT_A_COMMAND - Just regular text to type
+6. SYNTAX_ERROR_COMMAND - Syntax error and diagnostic commands (e.g., "syntax error list", "error list", "errors", "next error", "previous error")
+7. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
+8. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
+9. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
+10. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
+11. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
+12. NOT_A_COMMAND - Just regular text to type
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -682,6 +684,7 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "functionName": "myFunc",
     "variableName": "config",
     "command": "symbolTree",
+    "syntaxErrorAction": "list|next|previous",
     "operation": "save",
     "codeDescription": "function that gets parameter x and y and returns sum",
     "generationType": "complete|create|test",
@@ -771,6 +774,9 @@ Only include parameters relevant to the category. Use null for missing parameter
                 
                 case 'LIPCODER_COMMAND':
                     return await this.executeLLMLipCoderCommand(parameters, originalText);
+                
+                case 'SYNTAX_ERROR_COMMAND':
+                    return await this.executeLLMSyntaxErrorCommand(parameters, originalText);
                 
                 case 'FILE_OPERATION':
                     return await this.executeLLMFileOperation(parameters, originalText);
@@ -1016,6 +1022,49 @@ Only include parameters relevant to the category. Use null for missing parameter
                 return true;
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to execute ${command}: ${error}`);
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Execute syntax error command
+     */
+    private async executeLLMSyntaxErrorCommand(parameters: any, originalText: string): Promise<boolean> {
+        const syntaxErrorAction = parameters?.syntaxErrorAction;
+        
+        // Use parameters if available, otherwise fall back to text analysis
+        let action = syntaxErrorAction;
+        if (!action) {
+            const text = originalText.toLowerCase();
+            if (text.includes('syntax error list') || text.includes('error list') || text === 'errors') {
+                action = 'list';
+            } else if (text.includes('next error') || text.includes('next syntax error')) {
+                action = 'next';
+            } else if (text.includes('previous error') || text.includes('prev error') || text.includes('previous syntax error')) {
+                action = 'previous';
+            }
+        }
+        
+        const actionMap: { [key: string]: string } = {
+            'list': 'lipcoder.syntaxErrorList',
+            'next': 'lipcoder.nextSyntaxError',
+            'previous': 'lipcoder.previousSyntaxError'
+        };
+        
+        const command = actionMap[action];
+        if (command) {
+            try {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] 🔍 Executing syntax error command: ${command}`);
+                }
+                await vscode.commands.executeCommand(command);
+                vscode.window.showInformationMessage(`🔍 Executed: ${action} syntax error`);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to execute syntax error command: ${error}`);
                 return false;
             }
         }
@@ -1484,13 +1533,13 @@ Generate appropriate ${languageId} code that:
             },
             {
                 pattern: /^(terminal up|up line|previous line)$/i,
-                command: 'lipcoder.terminalPrevLine',
+                command: 'lipcoder.terminalHistoryUp',
                 description: 'Navigate to previous terminal line',
                 preventDefault: true
             },
             {
                 pattern: /^(terminal down|down line|next line)$/i,
-                command: 'lipcoder.terminalNextLine',
+                command: 'lipcoder.terminalHistoryDown',
                 description: 'Navigate to next terminal line',
                 preventDefault: true
             },
@@ -1532,8 +1581,14 @@ Generate appropriate ${languageId} code that:
             },
             {
                 pattern: /^(terminal read line|read line|read current line)$/i,
-                command: 'lipcoder.terminalReadLine',
+                command: 'lipcoder.terminalReadCurrentLine',
                 description: 'Read current terminal line',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal read char|read char|read current char)$/i,
+                command: 'lipcoder.terminalReadCurrentChar',
+                description: 'Read current terminal character',
                 preventDefault: true
             },
             {
@@ -1558,6 +1613,12 @@ Generate appropriate ${languageId} code that:
                 pattern: /^(terminal status|terminal info|where am i)$/i,
                 command: 'lipcoder.terminalStatus',
                 description: 'Get current terminal position and status',
+                preventDefault: true
+            },
+            {
+                pattern: /^(capture terminal|terminal capture|save terminal)$/i,
+                command: 'lipcoder.captureTerminalOutput',
+                description: 'Capture current terminal output for navigation',
                 preventDefault: true
             },
 

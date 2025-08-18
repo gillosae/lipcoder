@@ -7,6 +7,7 @@ import { speakTokenList } from '../audio';
 import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
 import { isEditorActive } from '../ide/active';
 import { config } from '../config';
+import { logFeatureUsage } from '../activity_logger';
 
 // Track the current execution to enable immediate cancellation
 let currentReadLineTokensExecution: Promise<void> | null = null;
@@ -166,6 +167,13 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
         vscode.commands.registerCommand('lipcoder.readLineTokens', async (editorArg?: vscode.TextEditor) => {
             const editor = isEditorActive(editorArg);
             if (!editor) return;
+
+            logFeatureUsage('read_line_tokens', 'command_executed', {
+                file: editor.document.fileName,
+                line: editor.selection.active.line,
+                character: editor.selection.active.character,
+                languageId: editor.document.languageId
+            });
 
             // Check if ASR is currently recording - if so, don't start token reading
             if (getASRRecordingActive()) {

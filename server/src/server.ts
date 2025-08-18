@@ -103,7 +103,19 @@ connection.onDocumentSymbol(params => {
     return syms.map(sym => ({ ...sym, location: { ...sym.location, uri: params.textDocument.uri } }));
 });
 
-// Simplified tokenization - just return characters/words without complex categorization
+/**
+ * Check if character is Korean
+ */
+function isKoreanChar(char: string): boolean {
+    const code = char.charCodeAt(0);
+    return (code >= 0xAC00 && code <= 0xD7AF) ||  // Hangul Syllables
+           (code >= 0x1100 && code <= 0x11FF) ||  // Hangul Jamo
+           (code >= 0x3130 && code <= 0x318F) ||  // Hangul Compatibility Jamo
+           (code >= 0xA960 && code <= 0xA97F) ||  // Hangul Jamo Extended-A
+           (code >= 0xD7B0 && code <= 0xD7FF);    // Hangul Jamo Extended-B
+}
+
+// Simplified tokenization - now supports Korean text
 // Let the client handle categorization based on its own logic
 function tokenizeComplexText(text: string): Array<{ text: string; category: string }> {
     const tokens: Array<{ text: string; category: string }> = [];
@@ -116,7 +128,7 @@ function tokenizeComplexText(text: string): Array<{ text: string; category: stri
             // Whitespace - skip it (don't tokenize spaces in complex text)
             i++;
         } else if (/[a-zA-Z0-9]/.test(char)) {
-            // Alphanumeric - collect as word
+            // English alphanumeric - collect as word
             let word = '';
             while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
                 word += text[i];
@@ -125,8 +137,18 @@ function tokenizeComplexText(text: string): Array<{ text: string; category: stri
             if (word) {
                 tokens.push({ text: word, category: 'variable' });
             }
+        } else if (isKoreanChar(char)) {
+            // Korean characters - collect as word
+            let koreanWord = '';
+            while (i < text.length && isKoreanChar(text[i])) {
+                koreanWord += text[i];
+                i++;
+            }
+            if (koreanWord) {
+                tokens.push({ text: koreanWord, category: 'variable' });
+            }
         } else {
-            // All other characters - let client decide categorization
+            // All other characters (punctuation, symbols) - individual tokens
             tokens.push({ text: char, category: 'unknown' });
             i++;
         }
@@ -168,7 +190,7 @@ function tokenizeCommentText(text: string): Array<{ text: string; category: stri
             // Whitespace - skip it (don't tokenize spaces in comment text)
             i++;
         } else if (/[a-zA-Z0-9]/.test(char)) {
-            // Alphanumeric - collect as word and use 'comment_text' category for comment voice
+            // English alphanumeric - collect as word and use 'comment_text' category for comment voice
             let word = '';
             while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
                 word += text[i];
@@ -177,6 +199,17 @@ function tokenizeCommentText(text: string): Array<{ text: string; category: stri
             if (word) {
                 // Use 'comment_text' category so words are spoken with comment voice
                 tokens.push({ text: word, category: 'comment_text' });
+            }
+        } else if (isKoreanChar(char)) {
+            // Korean characters - collect as word and use 'comment_text' category for comment voice
+            let koreanWord = '';
+            while (i < text.length && isKoreanChar(text[i])) {
+                koreanWord += text[i];
+                i++;
+            }
+            if (koreanWord) {
+                // Use 'comment_text' category so Korean words are spoken with comment voice
+                tokens.push({ text: koreanWord, category: 'comment_text' });
             }
         } else {
             // Other characters - treat as symbols with 'comment_symbol' category
@@ -188,57 +221,84 @@ function tokenizeCommentText(text: string): Array<{ text: string; category: stri
     return tokens;
 }
 
-// Helper function to tokenize comments properly
+// Helper function to tokenize comments - extract special chars but keep text as whole units
 function tokenizeComment(commentText: string): Array<{ text: string; category: string }> {
     const tokens: Array<{ text: string; category: string }> = [];
     
-    // Match comment patterns like "# 2) Some descriptive text"
-    const commentMatch = commentText.match(/^(\s*)(#|\/\/)\s*([0-9]*)\s*([)}\]]*)\s*(.*)$/);
+    // Extract leading whitespace
+    const leadingSpaceMatch = commentText.match(/^(\s*)/);
+    if (leadingSpaceMatch && leadingSpaceMatch[1]) {
+        tokens.push({ text: leadingSpaceMatch[1], category: 'whitespace' });
+    }
     
-    if (commentMatch) {
-        const [, leadingSpace, commentChar, number, closingChars, description] = commentMatch;
+    // Get the comment content without leading whitespace
+    const trimmedComment = commentText.trim();
+    
+    if (trimmedComment) {
+        // Parse the comment to extract special characters while keeping text together
+        let i = 0;
+        let currentText = '';
         
-        // Add leading whitespace if present
-        if (leadingSpace) {
-            tokens.push({ text: leadingSpace, category: 'whitespace' });
-        }
-        
-        // Add comment symbol
-        tokens.push({ text: commentChar, category: 'comment_symbol' });
-        
-        // Add space after comment symbol if it was there
-        const afterCommentMatch = commentText.match(/^(\s*)(#|\/\/)\s+/);
-        if (afterCommentMatch) {
-            tokens.push({ text: ' ', category: 'whitespace' });
-        }
-        
-        // Add number if present
-        if (number) {
-            tokens.push({ text: number, category: 'comment_number' });
-            // Add space after number if description follows
-            if (closingChars || description.trim()) {
-                tokens.push({ text: ' ', category: 'whitespace' });
+        while (i < trimmedComment.length) {
+            const char = trimmedComment[i];
+            const nextChar = trimmedComment[i + 1];
+            
+            // Check for comment symbols and other special characters
+            if (char === '/' && nextChar === '/') {
+                // Flush any accumulated text
+                if (currentText.trim()) {
+                    tokens.push({ text: currentText.trim(), category: 'comment_text' });
+                    currentText = '';
+                }
+                tokens.push({ text: '//', category: 'comment_symbol' });
+                i += 2;
+            } else if (char === '#') {
+                // Flush any accumulated text
+                if (currentText.trim()) {
+                    tokens.push({ text: currentText.trim(), category: 'comment_text' });
+                    currentText = '';
+                }
+                tokens.push({ text: '#', category: 'comment_symbol' });
+                i++;
+            } else if (char === ':' || char === ';' || char === '.' || char === ',' || 
+                       char === '(' || char === ')' || char === '[' || char === ']' || 
+                       char === '{' || char === '}' || char === '"' || char === "'" || 
+                       char === '`' || char === '_' || char === '\\') {
+                // Flush any accumulated text
+                if (currentText.trim()) {
+                    tokens.push({ text: currentText.trim(), category: 'comment_text' });
+                    currentText = '';
+                }
+                tokens.push({ text: char, category: 'comment_symbol' });
+                i++;
+            } else if (/\d/.test(char)) {
+                // Numbers - collect consecutive digits
+                let number = '';
+                while (i < trimmedComment.length && /\d/.test(trimmedComment[i])) {
+                    number += trimmedComment[i];
+                    i++;
+                }
+                // Flush any accumulated text before the number
+                if (currentText.trim()) {
+                    tokens.push({ text: currentText.trim(), category: 'comment_text' });
+                    currentText = '';
+                }
+                tokens.push({ text: number, category: 'comment_number' });
+            } else if (/\s/.test(char)) {
+                // Whitespace - add to current text but don't create separate tokens
+                currentText += char;
+                i++;
+            } else {
+                // Regular text character - accumulate
+                currentText += char;
+                i++;
             }
         }
         
-        // Add closing characters individually (like ), }, ])
-        for (const char of closingChars) {
-            tokens.push({ text: char, category: 'comment_symbol' });
+        // Flush any remaining text
+        if (currentText.trim()) {
+            tokens.push({ text: currentText.trim(), category: 'comment_text' });
         }
-        
-        // Add space before description if present
-        if (closingChars && description.trim()) {
-            tokens.push({ text: ' ', category: 'whitespace' });
-        }
-        
-        // Add the descriptive text, but further tokenize backslash commands
-        if (description.trim()) {
-            const textTokens = tokenizeCommentText(description.trim());
-            tokens.push(...textTokens);
-        }
-    } else {
-        // Fallback: treat as regular comment
-        tokens.push({ text: commentText, category: 'comment' });
     }
     
     return tokens;

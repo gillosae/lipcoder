@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
-import { speakTokenList, TokenChunk, startThinkingAudio, stopThinkingAudio, playThinkingFinished } from '../audio';
+import { speakTokenList, TokenChunk, startThinkingAudio, stopThinkingAudio, playThinkingFinished, stopPlayback } from '../audio';
 import { suppressAutomaticTextReading, resumeAutomaticTextReading } from './nav_editor';
+import { stopAllAudio } from './stop_reading';
 import { log } from '../utils';
+import { logVibeCoding, logFeatureUsage } from '../activity_logger';
 import * as Diff from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -45,17 +47,112 @@ interface PendingChange {
 let pendingChanges: Map<string, PendingChange> = new Map();
 let currentChangeId: string | null = null;
 
+// Track if vibe coding TTS is currently active
+let vibeCodingTTSActive = false;
+
+/**
+ * Set vibe coding TTS active state
+ */
+export function setVibeCodingTTSActive(active: boolean): void {
+    vibeCodingTTSActive = active;
+    log(`[vibe_coding] TTS active state set to: ${active}`);
+}
+
+/**
+ * Get vibe coding TTS active state
+ */
+export function getVibeCodingTTSActive(): boolean {
+    return vibeCodingTTSActive;
+}
+
+/**
+ * Stop vibe coding TTS if active
+ */
+export function stopVibeCodingTTS(): void {
+    if (vibeCodingTTSActive) {
+        log('[vibe_coding] Stopping vibe coding TTS due to cursor movement');
+        vibeCodingTTSActive = false;
+        // Use comprehensive audio stopping
+        try {
+            stopAllAudio(); // Stop all audio including TTS
+            stopPlayback(); // Additional direct stop call
+            log('[vibe_coding] Successfully stopped vibe coding TTS');
+        } catch (error) {
+            log(`[vibe_coding] Error stopping TTS: ${error}`);
+        }
+    }
+}
+
+/**
+ * Wrapper for speakTokenList that tracks vibe coding TTS state
+ */
+async function speakTokenListWithTracking(chunks: TokenChunk[]): Promise<void> {
+    try {
+        setVibeCodingTTSActive(true);
+        await speakTokenList(chunks);
+    } finally {
+        setVibeCodingTTSActive(false);
+    }
+}
+
+/**
+ * Get active editor with retry logic to handle timing issues
+ */
+async function getActiveEditorWithRetry(maxRetries: number = 3, delayMs: number = 100): Promise<vscode.TextEditor | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        log(`[vibe_coding] Attempting to get active editor (attempt ${attempt}/${maxRetries})`);
+        
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            // Validate that this is a proper file editor
+            if (editor.document.uri.scheme === 'file') {
+                log(`[vibe_coding] Found valid file editor: ${editor.document.fileName}`);
+                return editor;
+            } else {
+                log(`[vibe_coding] Found editor but not a file (scheme: ${editor.document.uri.scheme})`);
+            }
+        } else {
+            log(`[vibe_coding] No active editor found on attempt ${attempt}`);
+        }
+        
+        // Wait before next attempt (except on last attempt)
+        if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+    
+    // Last resort: try to get any visible text editor
+    const visibleEditors = vscode.window.visibleTextEditors;
+    log(`[vibe_coding] Found ${visibleEditors.length} visible editors`);
+    
+    for (const editor of visibleEditors) {
+        if (editor.document.uri.scheme === 'file') {
+            log(`[vibe_coding] Using visible file editor: ${editor.document.fileName}`);
+            return editor;
+        }
+    }
+    
+    log(`[vibe_coding] No valid editor found after all attempts`);
+    return null;
+}
+
 export async function activateVibeCoding(prefilledInstruction?: string) {
     log('[vibe_coding] ===== VIBE CODING ACTIVATED =====');
+    logVibeCoding('vibe_coding_activated', prefilledInstruction);
     
-    const editor = vscode.window.activeTextEditor;
+    // Enhanced editor detection with retry logic
+    let editor = await getActiveEditorWithRetry();
     if (!editor) {
-        log('[vibe_coding] No active editor found');
-        await speakTokenList([{ tokens: ['No active editor'], category: undefined }]);
+        log('[vibe_coding] No active editor found after retries');
+        logVibeCoding('vibe_coding_error', 'No active editor found');
+        await speakTokenListWithTracking([{ tokens: ['No active editor found. Please open a file and try again.'], category: undefined }]);
+        vscode.window.showErrorMessage('No active editor found. Please open a file and try again.');
         return;
     }
     
     log(`[vibe_coding] Active editor found: ${editor.document.fileName}`);
+    log(`[vibe_coding] Editor scheme: ${editor.document.uri.scheme}, language: ${editor.document.languageId}`);
+    
     if (prefilledInstruction) {
         log(`[vibe_coding] Using prefilled instruction: "${prefilledInstruction}"`);
     }
@@ -70,8 +167,8 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
         instruction = prefilledInstruction;
         log(`[vibe_coding] Using ASR instruction directly: "${instruction}"`);
         
-        // Give audio feedback that we received the instruction
-        await speakTokenList([{ tokens: [`Received instruction: ${instruction}`], category: undefined }]);
+        // Silent - no audio feedback for ASR instructions
+        log(`[vibe_coding] Received ASR instruction silently: "${instruction}"`);
     } else {
         // Show input box for manual instruction
         instruction = await vscode.window.showInputBox({
@@ -83,17 +180,20 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
     }
 
     if (!instruction) {
-        await speakTokenList([{ tokens: ['No instruction provided'], category: undefined }]);
+        await speakTokenListWithTracking([{ tokens: ['No instruction provided'], category: undefined }]);
         return;
     }
 
-    await speakTokenList([{ tokens: ['Processing vibe coding request'], category: undefined }]);
+    // Silent processing - no audio feedback
+    log('[vibe_coding] Processing vibe coding request silently');
     
     // Get original text for diff comparison
     const originalText = editor.document.getText();
     
     try {
         log(`[vibe_coding] Starting vibe coding request: ${instruction}`);
+        logVibeCoding('vibe_coding_request_started', instruction, editor.document.fileName);
+        
         const result = await processVibeCodingRequest(editor, instruction, context);
         log(`[vibe_coding] Request processed, showing diff preview`);
         
@@ -109,6 +209,14 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
             instruction
         });
         
+        logVibeCoding('vibe_coding_changes_generated', instruction, editor.document.fileName, {
+            changeId,
+            changesCount: result.changes.length,
+            totalAdded: result.totalAdded,
+            totalRemoved: result.totalRemoved,
+            changeType: result.changeType
+        });
+        
         // Show diff and handle user decision
         await showSmartDiffPreview(changeId, result);
         
@@ -116,7 +224,8 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
     } catch (error) {
         log(`[vibe_coding] Error: ${error}`);
         log(`[vibe_coding] Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
-        await speakTokenList([{ tokens: ['Error processing vibe coding request'], category: undefined }]);
+        logVibeCoding('vibe_coding_error', instruction, editor.document.fileName, { error: String(error) });
+        await speakTokenListWithTracking([{ tokens: ['Error processing vibe coding request'], category: undefined }]);
         vscode.window.showErrorMessage(`Vibe Coding Error: ${error}`);
     }
 }
@@ -124,7 +233,7 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
 // Test function for debugging
 export async function testVibeCoding() {
     log('[vibe_coding] ===== TEST VIBE CODING =====');
-    await speakTokenList([{ tokens: ['Testing vibe coding'], category: undefined }]);
+    await speakTokenListWithTracking([{ tokens: ['Testing vibe coding'], category: undefined }]);
     vscode.window.showInformationMessage('Vibe Coding Test - Check console for logs');
     
     // Test with a sample instruction
@@ -141,16 +250,18 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
     
     const text = voiceText.toLowerCase().trim();
     log(`[vibe_coding] Processing voice command: "${text}"`);
+    logVibeCoding('vibe_coding_voice_command', text);
     
     // Check if there are pending changes
     const hasPendingChanges = currentChangeId || currentDiffChangeId;
     
     if (!hasPendingChanges) {
         log(`[vibe_coding] No pending changes for voice command: "${text}"`);
+        logVibeCoding('vibe_coding_voice_command_no_changes', text);
         return false;
     }
     
-    // Voice patterns for applying changes
+    // Voice patterns for applying changes (English and Korean)
     const applyPatterns = [
         'accept',
         'apply',
@@ -159,10 +270,24 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
         'yes',
         'confirm',
         'ok',
-        'okay'
+        'okay',
+        // Korean patterns
+        '적용',
+        '적용해',
+        '적용해줘',
+        '승인',
+        '승인해',
+        '승인해줘',
+        '확인',
+        '네',
+        '예',
+        '좋아',
+        '맞아',
+        '변경 적용',
+        '변경사항 적용'
     ];
     
-    // Voice patterns for rejecting changes
+    // Voice patterns for rejecting changes (English and Korean)
     const rejectPatterns = [
         'reject',
         'revert',
@@ -171,14 +296,31 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
         'reject changes',
         'revert changes',
         'cancel changes',
-        'undo'
+        'undo',
+        // Korean patterns
+        '거부',
+        '거부해',
+        '거부해줘',
+        '취소',
+        '취소해',
+        '취소해줘',
+        '되돌려',
+        '되돌려줘',
+        '아니야',
+        '아니',
+        '싫어',
+        '안돼',
+        '변경 취소',
+        '변경사항 취소',
+        '원래대로',
+        '이전으로'
     ];
     
     // Check for apply patterns
     for (const pattern of applyPatterns) {
         if (text === pattern || text.includes(pattern)) {
             log(`[vibe_coding] Voice command matched apply pattern: "${pattern}"`);
-            await speakTokenList([{ tokens: ['Applying changes via voice command'], category: undefined }]);
+            await speakTokenListWithTracking([{ tokens: ['Applying changes via voice command'], category: undefined }]);
             
             if (currentChangeId) {
                 await applyPendingChange(currentChangeId);
@@ -195,7 +337,7 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
     for (const pattern of rejectPatterns) {
         if (text === pattern || text.includes(pattern)) {
             log(`[vibe_coding] Voice command matched reject pattern: "${pattern}"`);
-            await speakTokenList([{ tokens: ['Rejecting changes via voice command'], category: undefined }]);
+            await speakTokenListWithTracking([{ tokens: ['Rejecting changes via voice command'], category: undefined }]);
             
             if (currentChangeId) {
                 await rejectPendingChange(currentChangeId);
@@ -241,7 +383,7 @@ async function getIntelligentContext(editor: vscode.TextEditor): Promise<Context
     const cursorPosition = editor.selection.active;
     const fullText = document.getText();
     
-    // 1. Check for user selection first
+    // 1. Check for user selection first - only use selected code if explicitly selected
     const selectedCode = document.getText(selection);
     if (selectedCode.trim()) {
         log(`[vibe_coding] Using selected code (${selectedCode.length} chars)`);
@@ -254,32 +396,23 @@ async function getIntelligentContext(editor: vscode.TextEditor): Promise<Context
         };
     }
     
-    // 2. Try to find function under cursor using regex
+    // 2. Always use full file context for better LLM understanding
+    // Find function under cursor for reference but don't limit context to it
     const focusedFunction = findFunctionUnderCursor(fullText, cursorPosition.line);
     
-    // 3. Use AST analysis to get more context if needed
-    const astContext = await getASTContext(document, cursorPosition);
-    
-    // 4. Determine if this is a large file
+    // 3. Determine if this is a large file
     const isLargeFile = fullText.split('\n').length > 500;
     
-    let contextLines: string[];
+    log(`[vibe_coding] Using full file context (${fullText.length} chars, ${fullText.split('\n').length} lines)`);
     if (focusedFunction) {
-        log(`[vibe_coding] Found function under cursor: ${focusedFunction.substring(0, 100)}...`);
-        contextLines = focusedFunction.split('\n');
-    } else if (astContext) {
-        log(`[vibe_coding] Using AST context`);
-        contextLines = astContext.split('\n');
-    } else {
-        log(`[vibe_coding] Using full file context`);
-        contextLines = fullText.split('\n');
+        log(`[vibe_coding] Cursor is in function: ${focusedFunction.substring(0, 100)}...`);
     }
     
     return {
         selectedCode: '',
         focusedFunction,
         cursorPosition,
-        contextLines,
+        contextLines: fullText.split('\n'), // Always use full file
         isLargeFile
     };
 }
@@ -304,14 +437,14 @@ async function generateSmartCodeModification(originalText: string, instruction: 
     try {
         const { callLLMForCompletion } = await import('../llm.js');
         
-        // Analyze the instruction to determine the best approach
-        const isTestRequest = /test|unit test|create test|add test|write test/i.test(instruction);
-        const isFunctionRequest = /function|method|def |create function|add function/i.test(instruction);
-        const isClassRequest = /class|create class|add class/i.test(instruction);
-        const isFullRewrite = /rewrite|refactor|restructure|reorganize/i.test(instruction);
+        // Analyze the instruction to determine the best approach (English and Korean)
+        const isTestRequest = /test|unit test|create test|add test|write test|테스트|단위 테스트|테스트 함수|테스트를 만들어|테스트 코드/i.test(instruction);
+        const isFunctionRequest = /function|method|def |create function|add function|함수|메서드|함수를 만들어|함수 생성|새 함수/i.test(instruction);
+        const isClassRequest = /class|create class|add class|클래스|클래스를 만들어|클래스 생성|새 클래스/i.test(instruction);
+        const isFullRewrite = /rewrite|refactor|restructure|reorganize|리팩토링|리팩터링|재구성|다시 작성|코드 개선/i.test(instruction);
         
-        // Enhanced system prompt for better code generation
-        const systemPrompt = `You are an expert coding assistant that generates high-quality code modifications.
+        // Enhanced system prompt for better code generation with Korean language support
+        const systemPrompt = `You are an expert coding assistant that generates high-quality code modifications. You understand instructions in both English and Korean.
 
 IMPORTANT: Always return the COMPLETE modified file, not just snippets or diffs.
 
@@ -321,12 +454,18 @@ CONTEXT ANALYSIS:
 - Selected code: ${context.selectedCode ? 'Yes' : 'No'}
 - File size: ${context.isLargeFile ? 'Large' : 'Normal'}
 
+LANGUAGE SUPPORT:
+- You understand Korean instructions like "코드의 신택스 에러를 고쳐줘" (fix syntax errors in the code)
+- Korean coding terms: 함수 (function), 변수 (variable), 클래스 (class), 에러 (error), 테스트 (test)
+- Respond to Korean instructions with the same quality as English instructions
+
 RULES:
 1. Return the complete file with all modifications applied
 2. Maintain proper code structure and formatting
 3. Include all necessary imports
 4. Preserve existing functionality while adding requested changes
-5. Do not use markdown code fences in your response`;
+5. Do not use markdown code fences in your response
+6. Handle both English and Korean instructions with equal proficiency`;
 
         // Always request complete file to avoid merging issues
         const prompt = `Original Code:
@@ -369,7 +508,8 @@ async function showSmartDiffPreview(changeId: string, result: VibeCodingResult):
     const { changes, summary, totalAdded, totalRemoved, modifiedText, originalText, changeDescription } = result;
     
     if (changes.length === 0) {
-        await speakTokenList([{ tokens: ['No changes were made'], category: undefined }]);
+        // Silent - log instead of speaking
+        log('[vibe_coding] No changes were made');
         vscode.window.showInformationMessage('No changes were made to the code.');
         return;
     }
@@ -380,19 +520,56 @@ async function showSmartDiffPreview(changeId: string, result: VibeCodingResult):
         // Validate that we have different content
         if (originalText === modifiedText) {
             log(`[vibe_coding] No changes detected - original and modified text are identical`);
-            await speakTokenList([{ tokens: ['No changes were made'], category: undefined }]);
+            // Silent - log instead of speaking
+            log('[vibe_coding] No changes were made');
             vscode.window.showInformationMessage('No changes were made to the code.');
             return;
         }
         
-        // Show inline diff in the current editor (like Cursor/ChatGPT)
-        await showInlineDiffWithDecorations(changeId, result);
+        // Show changes briefly and auto-accept
+        await showChangesAndAutoAccept(changeId, result);
         
     } catch (error) {
         log(`[vibe_coding] Error showing diff preview: ${error}`);
         log(`[vibe_coding] Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
-        // Fallback to simple dialog
-        await showSimpleDiffPreview(changeId, result);
+        // Fallback to auto-apply
+        await applyPendingChange(changeId);
+    }
+}
+
+/**
+ * Show changes briefly and automatically accept them
+ */
+async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResult): Promise<void> {
+    const { changes, summary, totalAdded, totalRemoved, modifiedText, originalText, changeDescription } = result;
+    
+    try {
+        log(`[vibe_coding] Showing changes and auto-accepting for change ${changeId}`);
+        
+        // Show a brief notification about the changes
+        vscode.window.showInformationMessage(
+            `${summary} - Changes: +${totalAdded} -${totalRemoved} lines (Auto-applying...)`,
+            { modal: false }
+        );
+        
+        // Brief delay to show the notification
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Auto-apply the changes
+        await applyPendingChange(changeId);
+        
+        // Show success notification
+        vscode.window.showInformationMessage(
+            `✅ Changes applied successfully: ${summary}`,
+            { modal: false }
+        );
+        
+        log(`[vibe_coding] Auto-accepted change ${changeId}: ${summary}`);
+        
+    } catch (error) {
+        log(`[vibe_coding] Error in auto-accept: ${error}`);
+        // Fallback to direct apply
+        await applyPendingChange(changeId);
     }
 }
 
@@ -410,7 +587,7 @@ let vibeCodingDiffContext: vscode.EventEmitter<boolean> = new vscode.EventEmitte
  */
 async function showInlineDiffWithDecorations(changeId: string, result: VibeCodingResult): Promise<void> {
     const { changes, summary, totalAdded, totalRemoved, modifiedText, originalText, changeDescription } = result;
-    const editor = vscode.window.activeTextEditor;
+    const editor = await getActiveEditorWithRetry();
     
     if (!editor) {
         log(`[vibe_coding] No active editor for inline diff`);
@@ -506,8 +683,8 @@ async function showInlineDiffWithDecorations(changeId: string, result: VibeCodin
         
         log(`[vibe_coding] Applied ${addedRanges.length} added, ${removedRanges.length} removed, ${modifiedRanges.length} modified decorations`);
         
-        // Announce the changes with detailed audio description
-        await announceCodeChanges(result);
+        // Silent - no audio announcement of changes
+        log(`[vibe_coding] Changes ready: ${result.summary}`);
         
         // Show action buttons with enhanced options
         const action = await vscode.window.showInformationMessage(
@@ -530,7 +707,7 @@ async function showInlineDiffWithDecorations(changeId: string, result: VibeCodin
             await showInlineDiffActionDialog(changeId, result);
         } else {
             // User closed dialog, keep change pending with decorations
-            await speakTokenList([{ tokens: ['Change pending review. Use command palette to apply or reject.'], category: undefined }]);
+            await speakTokenListWithTracking([{ tokens: ['Change pending review. Use command palette to apply or reject.'], category: undefined }]);
         }
         
     } catch (error) {
@@ -704,15 +881,15 @@ function registerChangeManagementCommands(context: vscode.ExtensionContext): voi
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.applyCurrentChange', async () => {
             if (currentChangeId) {
-                await speakTokenList([{ tokens: ['Applying changes'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['Applying changes'], category: undefined }]);
                 await applyPendingChange(currentChangeId);
                 clearInlineDiffDecorations();
             } else if (currentDiffChangeId) {
-                await speakTokenList([{ tokens: ['Applying changes'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['Applying changes'], category: undefined }]);
                 await applyPendingChange(currentDiffChangeId);
                 clearInlineDiffDecorations();
     } else {
-                await speakTokenList([{ tokens: ['No pending changes to apply'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['No pending changes to apply'], category: undefined }]);
                 vscode.window.showInformationMessage('No pending changes to apply');
             }
         })
@@ -722,15 +899,15 @@ function registerChangeManagementCommands(context: vscode.ExtensionContext): voi
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.rejectCurrentChange', async () => {
             if (currentChangeId) {
-                await speakTokenList([{ tokens: ['Rejecting changes'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['Rejecting changes'], category: undefined }]);
                 await rejectPendingChange(currentChangeId);
                 clearInlineDiffDecorations();
             } else if (currentDiffChangeId) {
-                await speakTokenList([{ tokens: ['Rejecting changes'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['Rejecting changes'], category: undefined }]);
                 await rejectPendingChange(currentDiffChangeId);
                 clearInlineDiffDecorations();
             } else {
-                await speakTokenList([{ tokens: ['No pending changes to reject'], category: undefined }]);
+                await speakTokenListWithTracking([{ tokens: ['No pending changes to reject'], category: undefined }]);
                 vscode.window.showInformationMessage('No pending changes to reject');
             }
         })
@@ -1047,7 +1224,7 @@ function analyzeChangeType(changes: CodeChange[], totalAdded: number, totalRemov
     
     const hasTestClass = /class.*Test.*unittest\.TestCase/i.test(addedCode);
     const hasTestMethods = /def test_/i.test(addedCode);
-    const isTestInstruction = /test|unit test|create test|add test|write test/i.test(instruction);
+    const isTestInstruction = /test|unit test|create test|add test|write test|테스트|단위 테스트|테스트 함수|테스트를 만들어|테스트 코드/i.test(instruction);
     
     if (hasTestClass && hasTestMethods && isTestInstruction) {
         return 'test_addition';
@@ -1237,12 +1414,12 @@ async function announceCodeChanges(result: VibeCodingResult) {
             category: undefined  // No category = pure TTS without earcons
         }];
         
-        await speakTokenList(chunks);
+        await speakTokenListWithTracking(chunks);
         
     } catch (error) {
         log(`[vibe_coding] Error announcing changes: ${error}`);
         // Fallback to basic announcement
-        await speakTokenList([{ 
+        await speakTokenListWithTracking([{ 
             tokens: [`Code modified with ${totalAdded} additions and ${totalRemoved} removals`], 
             category: undefined 
         }]);
@@ -1322,9 +1499,10 @@ async function applyPendingChange(changeId: string) {
         return;
     }
     
-    const editor = vscode.window.activeTextEditor;
+    const editor = await getActiveEditorWithRetry();
     if (!editor) {
-        vscode.window.showErrorMessage('No active editor');
+        vscode.window.showErrorMessage('No active editor found. Please open a file and try again.');
+        log('[vibe_coding] No active editor found when applying changes');
         return;
     }
     
@@ -1354,8 +1532,8 @@ async function applyPendingChange(changeId: string) {
         pendingChanges.delete(changeId);
         currentChangeId = null;
         
-        // Announce success
-            await speakVibeCodingSuccess(result);
+        // Silent success - no audio announcement
+        log(`[vibe_coding] Changes applied successfully: ${result.summary}`);
             
         log(`[vibe_coding] Successfully applied change ${changeId}`);
         
@@ -1381,7 +1559,7 @@ async function rejectPendingChange(changeId: string) {
     pendingChanges.delete(changeId);
     currentChangeId = null;
     
-    await speakTokenList([{ tokens: ['Changes rejected'], category: undefined }]);
+    await speakTokenListWithTracking([{ tokens: ['Changes rejected'], category: undefined }]);
     vscode.window.showInformationMessage('Changes rejected');
     
     log(`[vibe_coding] Rejected change ${changeId}`);
@@ -1429,11 +1607,11 @@ async function speakVibeCodingSuccess(result: VibeCodingResult) {
             category: undefined  // No category = pure TTS without earcons
         }];
         
-        await speakTokenList(chunks);
+        await speakTokenListWithTracking(chunks);
         
     } catch (error) {
         log(`[vibe_coding] Error speaking success message: ${error}`);
-        await speakTokenList([{ 
+        await speakTokenListWithTracking([{ 
             tokens: [`Changes applied with ${totalAdded} additions and ${totalRemoved} removals`], 
             category: undefined 
         }]);

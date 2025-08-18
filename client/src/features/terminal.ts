@@ -4,15 +4,71 @@ import { speakTokenList, TokenChunk, playWave } from '../audio';
 import { stopReading } from './stop_reading';
 import { stopAllAudio } from './stop_reading';
 import { logWarning, logError, logSuccess } from '../utils';
+import { logFeatureUsage } from '../activity_logger';
 import { config } from '../config';
+import { isEarcon, specialCharMap } from '../mapping';
 import * as path from 'path';
 
-let terminalLines: string[] = [];
+// Terminal screen buffer management
+let terminalScreenLines: string[] = [];
 let currentLineIndex = -1;
-let currentCharIndex = -1;
 let activePtyProcesses = new Set<any>();
-let realCursorLine = -1; // Track the actual terminal cursor position
-let realCursorColumn = -1;
+let hasNodePty = false;
+let fallbackTerminal: vscode.Terminal | null = null;
+let currentPtyProcess: any = null;
+let terminalOutputBuffer: string[] = []; // Enhanced buffer for better output tracking
+
+/**
+ * Convert a terminal line into proper token chunks with categories and earcons
+ */
+function parseTerminalLineToTokens(line: string): TokenChunk[] {
+    const chunks: TokenChunk[] = [];
+    let currentToken = '';
+    
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        // If we encounter a special character that should be an earcon
+        if (isEarcon(char)) {
+            // First, add any accumulated text as a regular token
+            if (currentToken.trim().length > 0) {
+                chunks.push({
+                    tokens: [currentToken.trim()],
+                    category: undefined
+                });
+                currentToken = '';
+            }
+            
+            // Add the special character as its own earcon token
+            chunks.push({
+                tokens: [char],
+                category: 'earcon'
+            });
+        } else if (char === ' ') {
+            // Space separates tokens
+            if (currentToken.trim().length > 0) {
+                chunks.push({
+                    tokens: [currentToken.trim()],
+                    category: undefined
+                });
+                currentToken = '';
+            }
+        } else {
+            // Regular character - accumulate
+            currentToken += char;
+        }
+    }
+    
+    // Add any remaining token
+    if (currentToken.trim().length > 0) {
+        chunks.push({
+            tokens: [currentToken.trim()],
+            category: undefined
+        });
+    }
+    
+    return chunks;
+}
 
 /**
  * Clean up all terminal resources
@@ -31,682 +87,551 @@ function cleanupTerminalResources(): void {
         }
     }
     
+    // Clean up fallback terminal
+    if (fallbackTerminal) {
+        fallbackTerminal.dispose();
+        fallbackTerminal = null;
+    }
+    
     activePtyProcesses.clear();
-    terminalLines = [];
+    terminalScreenLines = [];
+    terminalOutputBuffer = [];
     currentLineIndex = -1;
-    currentCharIndex = -1;
-    realCursorLine = -1;
-    realCursorColumn = -1;
+    currentPtyProcess = null;
     
     logSuccess('[Terminal] Terminal resources cleaned up');
 }
 
 /**
- * Registers terminal reader commands and a custom pseudoterminal
- * that echoes each typed character and buffers output lines.
+ * Get current terminal screen content
+ */
+function getCurrentScreenContent(): string[] {
+    if (currentPtyProcess && typeof currentPtyProcess.getScreenContent === 'function') {
+        try {
+            return currentPtyProcess.getScreenContent();
+        } catch (error) {
+            logError(`[Terminal] Error getting screen content: ${error}`);
+        }
+    }
+    
+    // Fallback to stored screen lines
+    return terminalScreenLines.filter(line => line.trim().length > 0);
+}
+
+/**
+ * Update terminal screen buffer - capture complete lines only
+ */
+function updateScreenBuffer(data: string): void {
+    // Accumulate data until we have complete lines
+    terminalOutputBuffer.push(data);
+    const fullBuffer = terminalOutputBuffer.join('');
+    
+    // Only process when we have complete lines (ending with newline)
+    if (data.includes('\n') || data.includes('\r')) {
+        // Split into lines and clean ANSI sequences
+        const lines = fullBuffer.split(/\r?\n/);
+        
+        // Clear the buffer since we're processing it
+        terminalOutputBuffer = [];
+        
+        // Keep the last incomplete line in buffer if any
+        if (lines.length > 0 && !fullBuffer.endsWith('\n') && !fullBuffer.endsWith('\r')) {
+            terminalOutputBuffer.push(lines.pop() || '');
+        }
+        
+        for (const line of lines) {
+            const cleanLine = line
+                .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
+                .replace(/\u001b\]0;.*?\u0007/g, '') // Remove terminal title sequences
+                .replace(/\r/g, '') // Remove carriage returns
+                .trim();
+            
+            // Only add meaningful lines (not empty, not just single characters)
+            if (cleanLine.length > 2) {
+                terminalScreenLines.push(cleanLine);
+                logSuccess(`[Terminal] Added line: "${cleanLine}"`);
+                
+                // Keep a reasonable buffer size
+                if (terminalScreenLines.length > 50) {
+                    terminalScreenLines = terminalScreenLines.slice(-25);
+                    if (currentLineIndex >= terminalScreenLines.length) {
+                        currentLineIndex = terminalScreenLines.length - 1;
+                    }
+                }
+            }
+        }
+        
+        // Initialize to last line if not set
+        if (currentLineIndex < 0 && terminalScreenLines.length > 0) {
+            currentLineIndex = terminalScreenLines.length - 1;
+        }
+    }
+}
+
+/**
+ * Create PTY-based terminal with screen buffer capture
+ */
+function createPtyTerminal(pty: any): void {
+    logSuccess('[Terminal] Creating PTY-based terminal with screen buffer');
+    hasNodePty = true;
+    
+    // Reset state
+    terminalScreenLines = [];
+    currentLineIndex = -1;
+
+    // Spawn shell
+    const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL']!;
+    const ptyProcess = pty.spawn(shell, [], {
+        name: 'xterm-color',
+        cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath,
+        env: process.env
+    });
+    
+    // Store current process reference
+    currentPtyProcess = ptyProcess;
+    
+    // Track process
+    activePtyProcesses.add(ptyProcess);
+    ptyProcess.onExit(() => {
+        activePtyProcesses.delete(ptyProcess);
+        if (currentPtyProcess === ptyProcess) {
+            currentPtyProcess = null;
+        }
+    });
+
+    // Terminal emitters
+    const writeEmitter = new vscode.EventEmitter<string>();
+    const closeEmitter = new vscode.EventEmitter<void>();
+
+    // Capture output and update screen buffer
+    ptyProcess.onData((data: string) => {
+        writeEmitter.fire(data);
+        updateScreenBuffer(data);
+    });
+
+    // Simple pseudoterminal interface
+    const ptyTerminal = {
+        onDidWrite: writeEmitter.event,
+        onDidClose: closeEmitter.event,
+        
+        open: () => {
+            logSuccess('[Terminal] PTY terminal with screen buffer opened');
+        },
+        
+        close: () => {
+            logWarning('[Terminal] PTY terminal closed');
+            ptyProcess.kill();
+            closeEmitter.fire();
+        },
+        
+        handleInput: async (input: string) => {
+            // Intercept arrow keys for navigation
+            if (input === '\u001b[A') { // Up arrow
+                // Immediately stop all audio before navigation
+                stopAllAudio();
+                await vscode.commands.executeCommand('lipcoder.terminalHistoryUp');
+                return;
+            }
+            if (input === '\u001b[B') { // Down arrow
+                // Immediately stop all audio before navigation
+                stopAllAudio();
+                await vscode.commands.executeCommand('lipcoder.terminalHistoryDown');
+                return;
+            }
+            
+            // Pass through other input and echo characters
+            stopAllAudio();
+            ptyProcess.write(input);
+            
+            // Simple character echo
+            if (input.length === 1 && input !== '\r' && input !== '\n') {
+                const chunks: TokenChunk[] = [{
+                    tokens: [input],
+                    category: undefined
+                }];
+                await speakTokenList(chunks);
+            }
+        }
+    };
+
+    // Create and show terminal
+    const terminal = vscode.window.createTerminal({ name: 'LipCoder', pty: ptyTerminal });
+    terminal.show();
+}
+
+/**
+ * Create fallback terminal
+ */
+function createFallbackTerminal(): void {
+    logWarning('[Terminal] Creating fallback terminal');
+    hasNodePty = false;
+    
+    terminalScreenLines = [];
+    currentLineIndex = -1;
+
+    fallbackTerminal = vscode.window.createTerminal({
+        name: 'LipCoder Terminal (Fallback)',
+        shellPath: process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'],
+        cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath
+    });
+    
+    fallbackTerminal.show();
+    
+    vscode.window.showInformationMessage(
+        'LipCoder Terminal: Fallback mode. Use "Add Terminal Output" to add content for navigation.',
+        { modal: false }
+    );
+}
+
+/**
+ * Register terminal commands with simple navigation
  */
 export function registerTerminalReader(context: ExtensionContext) {
+    // Auto-open LipCoder terminal when other terminals close
+    const terminalCloseListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
+        if (closedTerminal.name !== 'LipCoder' && closedTerminal.name !== 'LipCoder Terminal (Fallback)') {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            await vscode.commands.executeCommand('lipcoder.openTerminal');
+            
+            vscode.window.showInformationMessage('Terminal closed - LipCoder terminal opened', { modal: false });
+            await speakTokenList([{ tokens: ['Terminal closed, LipCoder terminal opened'], category: undefined }]);
+        }
+    });
+    
+    context.subscriptions.push(terminalCloseListener);
     context.subscriptions.push(
+        // Open LipCoder terminal
         vscode.commands.registerCommand('lipcoder.openTerminal', () => {
             let pty: any;
             try {
                 pty = require('node-pty');
-                logSuccess('[Terminal] node-pty loaded successfully');
+                createPtyTerminal(pty);
             } catch (err) {
                 logError(`[Terminal] Failed to load node-pty: ${err}`);
-                
-                // Fall back to basic terminal
-                const fallbackTerminal = vscode.window.createTerminal({
-                    name: 'LipCoder Terminal (Fallback)',
-                    shellPath: process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'],
-                    cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath
-                });
-                
-                fallbackTerminal.show();
-                vscode.window.showWarningMessage(
-                    'LipCoder Terminal: Using fallback mode due to node-pty error. Some features may be limited.'
-                );
-                return;
+                createFallbackTerminal();
             }
-            
-            // Reset buffers
-            terminalLines = [];
-            currentLineIndex = -1;
-            currentCharIndex = -1;
-            realCursorLine = -1;
-            realCursorColumn = -1;
-
-            // Spawn a real PTY running the user's shell
-            const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL']!;
-            const ptyProcess = pty.spawn(shell, [], {
-                name: 'xterm-color',
-                cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath,
-                env: process.env
-            });
-            
-            // Track this process for cleanup
-            activePtyProcesses.add(ptyProcess);
-            
-            // Remove from tracking when it exits
-            ptyProcess.onExit(() => {
-                activePtyProcesses.delete(ptyProcess);
-            });
-
-            // Emitters for the terminal UI
-            const writeEmitter = new vscode.EventEmitter<string>();
-            const closeEmitter = new vscode.EventEmitter<void>();
-
-            // Forward PTY output into VS Code terminal and buffer lines
-            ptyProcess.onData((data: string) => {
-                writeEmitter.fire(data);
-                
-                // Improved content extraction with better ANSI handling
-                const lines = data.split(/\r?\n/);
-                for (let i = 0; i < lines.length; i++) {
-                    let line = lines[i];
-                    
-                    // Remove ANSI escape sequences but preserve content structure
-                    const cleanLine = line
-                        .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
-                        .replace(/\u001b\]0;.*?\u0007/g, '') // Remove terminal title sequences
-                        .replace(/\u001b\[[\d;]*[HfABCDsuK]/g, '') // Remove cursor movement sequences
-                        .replace(/\r/g, ''); // Remove carriage returns
-                    
-                    // Only add non-empty lines or preserve structure for empty lines in middle of output
-                    if (cleanLine.length > 0 || (i > 0 && i < lines.length - 1)) {
-                        // If this is updating an existing line (carriage return behavior)
-                        if (line.includes('\r') && terminalLines.length > 0) {
-                            terminalLines[terminalLines.length - 1] = cleanLine;
-                        } else {
-                            terminalLines.push(cleanLine);
-                        }
-                        
-                        // Keep only recent lines to prevent memory issues
-                        if (terminalLines.length > 200) {
-                            terminalLines = terminalLines.slice(-100);
-                            currentLineIndex = Math.min(currentLineIndex, terminalLines.length - 1);
-                        }
-                    }
-                }
-                
-                // Update cursor position to latest content
-                if (terminalLines.length > 0) {
-                    currentLineIndex = terminalLines.length - 1;
-                    currentCharIndex = 0;
-                    realCursorLine = currentLineIndex;
-                    realCursorColumn = terminalLines[currentLineIndex]?.length || 0;
-                }
-            });
-            
-            ptyProcess.onExit(() => {
-                closeEmitter.fire();
-            });
-
-            // Create a true PTY-based pseudoterminal
-            const ptyTerminal: vscode.Pseudoterminal = {
-                onDidWrite: writeEmitter.event,
-                onDidClose: closeEmitter.event,
-                open: () => { /* no-op */ },
-                close: () => {
-                    ptyProcess.kill();
-                },
-                handleInput: async (input: string) => {
-                    // Handle special navigation keys with audio feedback
-                    if (input === '\u001b[A') { // Up arrow
-                        // Navigate to previous terminal line
-                        if (terminalLines.length === 0) return;
-                        stopReading();
-                        currentLineIndex = Math.max(currentLineIndex - 1, 0);
-                        currentCharIndex = 0;
-                        const line = terminalLines[currentLineIndex];
-                        
-                        // Play navigation earcon for up movement
-                        const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
-                        await playWave(upEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                        
-                        // Small delay to let earcon complete before TTS
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        // Move cursor to line position with non-destructive highlighting
-                        const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
-                        const cursorOps = [
-                            '\u001b[s', // Save cursor position
-                            linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
-                            '\u001b[1G', // Go to beginning of line
-                            '\u001b[4m', // Start underline (non-destructive highlight)
-                        ].filter(s => s).join('');
-                        
-                        writeEmitter.fire(cursorOps);
-                        
-                        // Brief pause to show position, then restore
-                        setTimeout(() => {
-                            writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
-                        }, 300);
-                        
-                        // Use TTS with no category for terminal content
-                        await speakTokenList([{ tokens: [line], category: undefined }]);
-                        return; // Don't pass to PTY
-                    }
-                    
-                    if (input === '\u001b[B') { // Down arrow
-                        // Navigate to next terminal line
-                        if (terminalLines.length === 0) return;
-                        stopReading();
-                        currentLineIndex = Math.min(currentLineIndex + 1, terminalLines.length - 1);
-                        currentCharIndex = 0;
-                        const line = terminalLines[currentLineIndex];
-                        
-                        // Play navigation earcon for down movement
-                        const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
-                        await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                        
-                        // Small delay to let earcon complete before TTS
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        // Move cursor to line position with non-destructive highlighting
-                        const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
-                        const cursorOps = [
-                            '\u001b[s', // Save cursor position
-                            linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
-                            '\u001b[1G', // Go to beginning of line
-                            '\u001b[4m', // Start underline (non-destructive highlight)
-                        ].filter(s => s).join('');
-                        
-                        writeEmitter.fire(cursorOps);
-                        
-                        // Brief pause to show position, then restore
-                        setTimeout(() => {
-                            writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
-                        }, 300);
-                        
-                        // Use TTS with no category for terminal content
-                        await speakTokenList([{ tokens: [line], category: undefined }]);
-                        return; // Don't pass to PTY
-                    }
-                    
-                    if (input === '\u001b[D') { // Left arrow
-                        // Navigate character left
-                        if (terminalLines.length === 0 || currentLineIndex < 0) return;
-                        stopReading();
-                        const line = terminalLines[currentLineIndex];
-                        currentCharIndex = Math.max(currentCharIndex - 1, 0);
-                        const ch = line.charAt(currentCharIndex);
-                        
-                        // Play character navigation earcon for left movement
-                        const leftEarcon = path.join(config.audioPath(), 'earcon', 'comma.pcm');
-                        await playWave(leftEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                        
-                        // Small delay to let earcon complete before TTS
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        // Move cursor to character position with highlighting
-                        if (ch) {
-                            const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
-                            const cursorOps = [
-                                '\u001b[s', // Save cursor position
-                                linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
-                                `\u001b[${currentCharIndex + 1}G`, // Move to character position
-                                '\u001b[7m', // Reverse video highlight for character
-                            ].filter(s => s).join('');
-                            
-                            writeEmitter.fire(cursorOps);
-                            
-                            // Brief pause to show character position, then restore
-                            setTimeout(() => {
-                                writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
-                            }, 300);
-                        }
-                        
-                        // Use TTS with no category for character content
-                        if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
-                        return; // Don't pass to PTY
-                    }
-                    
-                    if (input === '\u001b[C') { // Right arrow
-                        // Navigate character right
-                        if (terminalLines.length === 0 || currentLineIndex < 0) return;
-                        stopReading();
-                        const line = terminalLines[currentLineIndex];
-                        currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
-                        const ch = line.charAt(currentCharIndex);
-                        
-                        // Play character navigation earcon for right movement
-                        const rightEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
-                        await playWave(rightEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                        
-                        // Small delay to let earcon complete before TTS
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        // Move cursor to character position with highlighting
-                        if (ch) {
-                            const linesToMoveUp = terminalLines.length - 1 - currentLineIndex;
-                            const cursorOps = [
-                                '\u001b[s', // Save cursor position
-                                linesToMoveUp > 0 ? `\u001b[${linesToMoveUp}A` : '', // Move up to target line
-                                `\u001b[${currentCharIndex + 1}G`, // Move to character position
-                                '\u001b[7m', // Reverse video highlight for character
-                            ].filter(s => s).join('');
-                            
-                            writeEmitter.fire(cursorOps);
-                            
-                            // Brief pause to show character position, then restore
-                            setTimeout(() => {
-                                writeEmitter.fire('\u001b[0m\u001b[u'); // Reset formatting and restore cursor
-                            }, 300);
-                        }
-                        
-                        // Use TTS with no category for character content
-                        if (ch) await speakTokenList([{ tokens: [ch], category: undefined }]);
-                        return; // Don't pass to PTY
-                    }
-                    
-                    // For regular input, stop any other speech and proceed normally
-                    stopAllAudio();
-                    // Write into the PTY (handles erase/backspace)
-                    ptyProcess.write(input);
-                    // Echo each character spoken using speakTokenList with no category
-                    const chunks: TokenChunk[] = input.split('').map(ch => ({
-                        tokens: [ch],
-                        category: undefined
-                    }));
-                    await speakTokenList(chunks);
-                }
-            };
-
-            // Show the custom terminal
-            const terminal = vscode.window.createTerminal({ name: 'LipCoder', pty: ptyTerminal });
-            terminal.show();
         }),
 
-        // Navigate to next buffered terminal line and speak it
-        vscode.commands.registerCommand('lipcoder.terminalNextLine', async () => {
-            if (terminalLines.length === 0) {
-                await speakTokenList([{ tokens: ['No terminal output to navigate'], category: undefined }]);
+        // Read current terminal screen content
+        vscode.commands.registerCommand('lipcoder.terminalReadHistory', async () => {
+            if (terminalScreenLines.length === 0) {
+                await speakTokenList([{ tokens: ['No terminal content available'], category: undefined }]);
                 return;
             }
-            stopReading();
             
-            // Initialize currentLineIndex if it's -1
-            if (currentLineIndex < 0) {
-                currentLineIndex = 0;
-            } else {
-                currentLineIndex = Math.min(currentLineIndex + 1, terminalLines.length - 1);
+            // Stop any previous reading immediately
+            stopAllAudio();
+            
+            // Read last 5 screen lines
+            const recentLines = terminalScreenLines.slice(-5);
+            const screenText = recentLines.join(' ... ');
+            
+            const historyEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
+            await playWave(historyEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await speakTokenList([{ tokens: ['Terminal screen:', screenText], category: undefined }]);
+        }),
+
+        // Read last terminal line
+        vscode.commands.registerCommand('lipcoder.terminalReadLast', async () => {
+            if (terminalScreenLines.length === 0) {
+                await speakTokenList([{ tokens: ['No terminal content'], category: undefined }]);
+                return;
             }
-            currentCharIndex = 0;
-            const line = terminalLines[currentLineIndex];
             
-            // Play navigation earcon
-            const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
-            await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            // Stop any previous reading immediately
+            stopAllAudio();
+            const lastLine = terminalScreenLines[terminalScreenLines.length - 1];
             
-            // Small delay to let earcon complete before TTS
+            const lastEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
+            await playWave(lastEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
             await new Promise(resolve => setTimeout(resolve, 50));
-            
-            await speakTokenList([{ tokens: [line], category: undefined }]);
+            await speakTokenList([{ tokens: [lastLine], category: undefined }]);
         }),
 
-        // Navigate to previous buffered terminal line and speak it
-        vscode.commands.registerCommand('lipcoder.terminalPrevLine', async () => {
-            if (terminalLines.length === 0) {
-                await speakTokenList([{ tokens: ['No terminal output to navigate'], category: undefined }]);
+        // Navigate up through terminal screen lines
+        vscode.commands.registerCommand('lipcoder.terminalHistoryUp', async () => {
+            // IMMEDIATELY stop all audio at the very start
+            stopAllAudio();
+            
+            logFeatureUsage('terminalHistoryUp', 'navigate');
+            
+            if (terminalScreenLines.length === 0) {
+                await speakTokenList([{ tokens: ['No terminal content available'], category: undefined }]);
                 return;
             }
-            stopReading();
             
-            // Initialize currentLineIndex if it's -1
+            // Initialize to last line if not set
             if (currentLineIndex < 0) {
-                currentLineIndex = 0;
+                currentLineIndex = terminalScreenLines.length - 1;
             } else {
-                currentLineIndex = Math.max(currentLineIndex - 1, 0);
+                const newIndex = currentLineIndex - 1;
+                if (newIndex < 0) {
+                    // Already at top, give feedback but don't read line again
+                    const topEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
+                    await playWave(topEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await speakTokenList([{ tokens: ['Top of terminal buffer'], category: undefined }]);
+                    return;
+                }
+                currentLineIndex = newIndex;
             }
-            currentCharIndex = 0;
-            const line = terminalLines[currentLineIndex];
+            
+            const line = terminalScreenLines[currentLineIndex];
+            const lineNumber = currentLineIndex + 1;
             
             // Play navigation earcon
             const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
             await playWave(upEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            // Small delay to let earcon complete before TTS
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await new Promise(resolve => setTimeout(resolve, 100));
             
-            await speakTokenList([{ tokens: [line], category: undefined }]);
+            if (!line || line.trim().length === 0) {
+                await speakTokenList([{ tokens: [`Line ${lineNumber}: empty`], category: undefined }]);
+            } else {
+                // Parse the terminal line into proper tokens with earcons
+                const lineTokens = parseTerminalLineToTokens(line);
+                const lineNumberChunk: TokenChunk = { tokens: [`Line ${lineNumber}:`], category: undefined };
+                await speakTokenList([lineNumberChunk, ...lineTokens]);
+            }
         }),
 
-        // Move cursor left within current line buffer and speak character
-        vscode.commands.registerCommand('lipcoder.terminalCharLeft', async () => {
-            if (terminalLines.length === 0) {
-                await speakTokenList([{ tokens: ['No terminal output to navigate'], category: undefined }]);
+        // Navigate down through terminal screen lines
+        vscode.commands.registerCommand('lipcoder.terminalHistoryDown', async () => {
+            // IMMEDIATELY stop all audio at the very start
+            stopAllAudio();
+            
+            logFeatureUsage('terminalHistoryDown', 'navigate');
+            
+            if (terminalScreenLines.length === 0) {
+                await speakTokenList([{ tokens: ['No terminal content available'], category: undefined }]);
                 return;
             }
+            
+            // Initialize to first line if not set
             if (currentLineIndex < 0) {
                 currentLineIndex = 0;
-                currentCharIndex = 0;
-            }
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            currentCharIndex = Math.max(currentCharIndex - 1, 0);
-            const ch = line.charAt(currentCharIndex);
-            
-            // Play character navigation earcon
-            const leftEarcon = path.join(config.audioPath(), 'earcon', 'comma.pcm');
-            await playWave(leftEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (ch) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: [ch], category: undefined }]);
-            }
-        }),
-
-        // Move cursor right within current line buffer and speak character
-        vscode.commands.registerCommand('lipcoder.terminalCharRight', async () => {
-            if (terminalLines.length === 0) {
-                await speakTokenList([{ tokens: ['No terminal output to navigate'], category: undefined }]);
-                return;
-            }
-            if (currentLineIndex < 0) {
-                currentLineIndex = 0;
-                currentCharIndex = 0;
-            }
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            currentCharIndex = Math.min(currentCharIndex + 1, line.length - 1);
-            const ch = line.charAt(currentCharIndex);
-            
-            // Play character navigation earcon
-            const rightEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
-            await playWave(rightEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (ch) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: [ch], category: undefined }]);
-            }
-        }),
-
-        // Move cursor to beginning of current line
-        vscode.commands.registerCommand('lipcoder.terminalLineStart', async () => {
-            if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReading();
-            currentCharIndex = 0;
-            const line = terminalLines[currentLineIndex];
-            const ch = line.charAt(currentCharIndex);
-            
-            // Play line start earcon
-            const startEarcon = path.join(config.audioPath(), 'earcon', 'indent_0.pcm');
-            await playWave(startEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (ch) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: ['line start', ch], category: undefined }]);
-            }
-        }),
-
-        // Move cursor to end of current line
-        vscode.commands.registerCommand('lipcoder.terminalLineEnd', async () => {
-            if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            currentCharIndex = Math.max(line.length - 1, 0);
-            const ch = line.charAt(currentCharIndex);
-            
-            // Play line end earcon
-            const endEarcon = path.join(config.audioPath(), 'earcon', 'indent_9.pcm');
-            await playWave(endEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (ch) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: ['line end', ch], category: undefined }]);
-            }
-        }),
-
-        // Move cursor to previous word
-        vscode.commands.registerCommand('lipcoder.terminalWordLeft', async () => {
-            if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            
-            // Find previous word boundary
-            let newIndex = currentCharIndex - 1;
-            // Skip current whitespace
-            while (newIndex >= 0 && /\s/.test(line[newIndex])) {
-                newIndex--;
-            }
-            // Skip current word
-            while (newIndex >= 0 && !/\s/.test(line[newIndex])) {
-                newIndex--;
-            }
-            // Move to start of previous word
-            while (newIndex >= 0 && /\s/.test(line[newIndex])) {
-                newIndex--;
-            }
-            while (newIndex >= 0 && !/\s/.test(line[newIndex])) {
-                newIndex--;
-            }
-            newIndex++; // Move to first character of word
-            
-            currentCharIndex = Math.max(newIndex, 0);
-            
-            // Extract the word at current position
-            let wordStart = currentCharIndex;
-            let wordEnd = currentCharIndex;
-            while (wordEnd < line.length && !/\s/.test(line[wordEnd])) {
-                wordEnd++;
-            }
-            const word = line.substring(wordStart, wordEnd);
-            
-            // Play word navigation earcon
-            const wordEarcon = path.join(config.audioPath(), 'earcon', 'parenthesis.pcm');
-            await playWave(wordEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (word) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: [word], category: undefined }]);
-            }
-        }),
-
-        // Move cursor to next word
-        vscode.commands.registerCommand('lipcoder.terminalWordRight', async () => {
-            if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            
-            // Find next word boundary
-            let newIndex = currentCharIndex;
-            // Skip current word
-            while (newIndex < line.length && !/\s/.test(line[newIndex])) {
-                newIndex++;
-            }
-            // Skip whitespace
-            while (newIndex < line.length && /\s/.test(line[newIndex])) {
-                newIndex++;
-            }
-            
-            currentCharIndex = Math.min(newIndex, line.length - 1);
-            
-            // Extract the word at current position
-            let wordStart = currentCharIndex;
-            let wordEnd = currentCharIndex;
-            while (wordEnd < line.length && !/\s/.test(line[wordEnd])) {
-                wordEnd++;
-            }
-            const word = line.substring(wordStart, wordEnd);
-            
-            // Play word navigation earcon
-            const wordEarcon = path.join(config.audioPath(), 'earcon', 'parenthesis2.pcm');
-            await playWave(wordEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            if (word) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: [word], category: undefined }]);
-            }
-        }),
-
-        // Read current line in terminal
-        vscode.commands.registerCommand('lipcoder.terminalReadLine', async () => {
-            if (terminalLines.length === 0 || currentLineIndex < 0) return;
-            stopReading();
-            const line = terminalLines[currentLineIndex];
-            
-            // Play read line earcon
-            const readEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
-            await playWave(readEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            await speakTokenList([{ tokens: [line || 'empty line'], category: undefined }]);
-        }),
-
-        // Jump to first line in terminal buffer
-        vscode.commands.registerCommand('lipcoder.terminalFirstLine', async () => {
-            if (terminalLines.length === 0) return;
-            stopReading();
-            currentLineIndex = 0;
-            currentCharIndex = 0;
-            const line = terminalLines[currentLineIndex];
-            
-            // Play first line earcon
-            const firstEarcon = path.join(config.audioPath(), 'musical', 'do.pcm');
-            await playWave(firstEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            await speakTokenList([{ tokens: ['first line', line], category: undefined }]);
-        }),
-
-        // Jump to last line in terminal buffer
-        vscode.commands.registerCommand('lipcoder.terminalLastLine', async () => {
-            if (terminalLines.length === 0) return;
-            stopReading();
-            currentLineIndex = terminalLines.length - 1;
-            currentCharIndex = 0;
-            const line = terminalLines[currentLineIndex];
-            
-            // Play last line earcon
-            const lastEarcon = path.join(config.audioPath(), 'musical', 'high_do.pcm');
-            await playWave(lastEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            // Small delay to let earcon complete before TTS
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            await speakTokenList([{ tokens: ['last line', line], category: undefined }]);
-        }),
-
-        // Search within terminal output
-        vscode.commands.registerCommand('lipcoder.terminalSearch', async () => {
-            const searchTerm = await vscode.window.showInputBox({
-                prompt: 'Search terminal output',
-                placeHolder: 'Enter search term...'
-            });
-            
-            if (!searchTerm || !searchTerm.trim()) return;
-            
-            const term = searchTerm.trim().toLowerCase();
-            const matches: { lineIndex: number, line: string, matchIndex: number }[] = [];
-            
-            // Find all matches
-            for (let i = 0; i < terminalLines.length; i++) {
-                const line = terminalLines[i];
-                const lowerLine = line.toLowerCase();
-                let matchIndex = lowerLine.indexOf(term);
-                
-                while (matchIndex !== -1) {
-                    matches.push({ lineIndex: i, line, matchIndex });
-                    matchIndex = lowerLine.indexOf(term, matchIndex + 1);
+            } else {
+                const newIndex = currentLineIndex + 1;
+                if (newIndex >= terminalScreenLines.length) {
+                    // Already at bottom, give feedback
+                    const bottomEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
+                    await playWave(bottomEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await speakTokenList([{ tokens: ['Bottom of terminal buffer'], category: undefined }]);
+                    return;
                 }
+                currentLineIndex = newIndex;
             }
             
-            if (matches.length === 0) {
-                // Play not found earcon
-                const notFoundEarcon = path.join(config.audioPath(), 'earcon', 'question.pcm');
-                await playWave(notFoundEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await speakTokenList([{ tokens: ['Not found'], category: undefined }]);
+            const line = terminalScreenLines[currentLineIndex];
+            const lineNumber = currentLineIndex + 1;
+            
+            // Play navigation earcon
+            const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
+            await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            if (!line || line.trim().length === 0) {
+                await speakTokenList([{ tokens: [`Line ${lineNumber}: empty`], category: undefined }]);
+            } else {
+                // Parse the terminal line into proper tokens with earcons
+                const lineTokens = parseTerminalLineToTokens(line);
+                const lineNumberChunk: TokenChunk = { tokens: [`Line ${lineNumber}:`], category: undefined };
+                await speakTokenList([lineNumberChunk, ...lineTokens]);
+            }
+        }),
+
+        // Clear terminal screen buffer
+        vscode.commands.registerCommand('lipcoder.terminalClearHistory', async () => {
+            terminalScreenLines = [];
+            terminalOutputBuffer = [];
+            currentLineIndex = -1;
+            
+            const clearEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
+            await playWave(clearEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await speakTokenList([{ tokens: ['Terminal buffer cleared'], category: undefined }]);
+        }),
+
+        // Capture current terminal content manually
+        vscode.commands.registerCommand('lipcoder.captureTerminalOutput', async () => {
+            const activeTerminal = vscode.window.activeTerminal;
+            if (!activeTerminal) {
+                await speakTokenList([{ tokens: ['No active terminal to capture'], category: undefined }]);
                 return;
             }
+
+            // Get clipboard content before and after selection
+            const originalClipboard = await vscode.env.clipboard.readText();
             
-            // Jump to first match
-            const firstMatch = matches[0];
-            currentLineIndex = firstMatch.lineIndex;
-            currentCharIndex = firstMatch.matchIndex;
+            // Select all terminal content
+            await vscode.commands.executeCommand('workbench.action.terminal.selectAll');
+            await new Promise(resolve => setTimeout(resolve, 100));
             
-            // Play search success earcon
-            const foundEarcon = path.join(config.audioPath(), 'earcon', 'excitation.pcm');
-            await playWave(foundEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            // Copy to clipboard
+            await vscode.commands.executeCommand('workbench.action.terminal.copySelection');
+            await new Promise(resolve => setTimeout(resolve, 100));
             
-            await new Promise(resolve => setTimeout(resolve, 50));
+            // Get the copied content
+            const terminalContent = await vscode.env.clipboard.readText();
             
-            // Announce the match with context
-            const contextStart = Math.max(0, firstMatch.matchIndex - 10);
-            const contextEnd = Math.min(firstMatch.line.length, firstMatch.matchIndex + term.length + 10);
-            const context = firstMatch.line.substring(contextStart, contextEnd);
+            // Restore original clipboard
+            await vscode.env.clipboard.writeText(originalClipboard);
             
-            await speakTokenList([
-                { tokens: [`Found ${matches.length} matches`], category: undefined },
-                { tokens: [context], category: undefined }
-            ]);
+            if (terminalContent && terminalContent !== originalClipboard) {
+                // Clear existing buffer
+                terminalScreenLines = [];
+                terminalOutputBuffer = [];
+                
+                // Process the captured content
+                const lines = terminalContent.split(/\r?\n/);
+                for (const line of lines) {
+                    const cleanLine = line
+                        .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
+                        .replace(/\u001b\]0;.*?\u0007/g, '') // Remove terminal title sequences
+                        .replace(/\r/g, '') // Remove carriage returns
+                        .trim();
+                    
+                    if (cleanLine.length > 0) {
+                        terminalScreenLines.push(cleanLine);
+                    }
+                }
+                
+                // Set current position to the last line
+                currentLineIndex = terminalScreenLines.length - 1;
+                
+                const captureEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
+                await playWave(captureEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                
+                await new Promise(resolve => setTimeout(resolve, 100));
+                await speakTokenList([{ 
+                    tokens: [`Captured ${terminalScreenLines.length} lines from terminal. Use up/down to navigate.`], 
+                    category: undefined 
+                }]);
+            } else {
+                await speakTokenList([{ tokens: ['No terminal content captured'], category: undefined }]);
+            }
         }),
 
-        // Find next search result
-        vscode.commands.registerCommand('lipcoder.terminalSearchNext', async () => {
-            // This would need to store the last search term and current match index
-            // For now, just re-run the search command
-            await vscode.commands.executeCommand('lipcoder.terminalSearch');
-        }),
-
-        // Get terminal status/info
-        vscode.commands.registerCommand('lipcoder.terminalStatus', async () => {
-            stopReading();
-            
-            const totalLines = terminalLines.length;
-            const currentPos = currentLineIndex + 1;
-            const currentLine = terminalLines[currentLineIndex] || '';
-            const charPos = currentCharIndex + 1;
-            
-            // Play status earcon
-            const statusEarcon = path.join(config.audioPath(), 'earcon', 'colon.pcm');
-            await playWave(statusEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-            
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            await speakTokenList([
-                { tokens: [`Line ${currentPos} of ${totalLines}`], category: undefined },
-                { tokens: [`Character ${charPos} of ${currentLine.length}`], category: undefined }
-            ]);
-        }),
-
-        // Add a command to manually add terminal output for navigation
+        // Add manual output (for fallback mode)
         vscode.commands.registerCommand('lipcoder.addTerminalOutput', async () => {
             const input = await vscode.window.showInputBox({
-                prompt: 'Enter terminal output to add for navigation',
+                prompt: 'Enter terminal output to add to screen buffer',
                 placeHolder: 'Terminal output...'
             });
             
             if (input && input.trim()) {
-                terminalLines.push(input.trim());
-                currentLineIndex = terminalLines.length - 1;
-                currentCharIndex = -1;
+                terminalScreenLines.push(input.trim());
                 
-                // Play confirmation earcon
+                // Keep buffer size manageable
+                if (terminalScreenLines.length > 50) {
+                    terminalScreenLines = terminalScreenLines.slice(-30);
+                }
+                
+                // Set current line to the newly added line
+                currentLineIndex = terminalScreenLines.length - 1;
+                
                 const confirmEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
                 await playWave(confirmEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                // Small delay to let earcon complete before TTS
                 await new Promise(resolve => setTimeout(resolve, 50));
+                await speakTokenList([{ tokens: ['Added to terminal screen'], category: undefined }]);
+            }
+        }),
+
+        // Quick setup for your terminal content
+        vscode.commands.registerCommand('lipcoder.setupTerminalDemo', async () => {
+            stopAllAudio();
+            
+            // Clear existing content
+            terminalScreenLines = [];
+            
+            // Add the lines from your terminal screenshot in reverse order (bottom to top)
+            const demoLines = [
+                'gillosae@gimgillosaui-MacBookPro boost1 %',
+                'npm start    # Run all university challenges', 
+                'Usage:',
+                'fetchUSUniversities function not implemented',
+                'Problem 1: Fetching US universities...',
+                '=== University API Challenge ===',
+                'ts-node src/university.ts',
+                '> boost1-university-search@1.0.0 start',
+                'gillosae@gimgillosaui-MacBookPro boost1 % npm start'
+            ];
+            
+            // Add lines to buffer
+            terminalScreenLines.push(...demoLines);
+            
+            // Set current position to the bottom (prompt line)
+            currentLineIndex = terminalScreenLines.length - 1;
+            
+            const confirmEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
+            await playWave(confirmEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await speakTokenList([{ 
+                tokens: [`Demo terminal content loaded. ${terminalScreenLines.length} lines ready. Use Up/Down to navigate.`], 
+                category: undefined 
+            }]);
+        }),
+
+        // Debug terminal state
+        vscode.commands.registerCommand('lipcoder.debugTerminalState', async () => {
+            stopAllAudio();
+            
+            const totalLines = terminalScreenLines.length;
+            const currentPos = currentLineIndex + 1; // 1-based for user
+            
+            // Also log to console for debugging
+            console.log('[Terminal Debug]', {
+                totalLines,
+                currentPos,
+                terminalScreenLines,
+                currentLineIndex
+            });
+            
+            await speakTokenList([{ 
+                tokens: [`Terminal has ${totalLines} lines, currently at line ${currentPos}`], 
+                category: undefined 
+            }]);
+            
+            // If no lines, suggest manual addition
+            if (totalLines === 0) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await speakTokenList([{ 
+                    tokens: ['Use Add Terminal Output command to add content manually'], 
+                    category: undefined 
+                }]);
+            }
+        }),
+
+        // Kill terminal and open LipCoder terminal
+        vscode.commands.registerCommand('lipcoder.killTerminalAndOpenLipCoder', async () => {
+            const activeTerminal = vscode.window.activeTerminal;
+            
+            if (activeTerminal) {
+                activeTerminal.dispose();
                 
-                await speakTokenList([{ tokens: ['Added to terminal buffer'], category: undefined }]);
+                const killEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
+                await playWave(killEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+                
+                await new Promise(resolve => setTimeout(resolve, 100));
+                await vscode.commands.executeCommand('lipcoder.openTerminal');
+                
+                await speakTokenList([{ tokens: ['Terminal killed, LipCoder terminal opened'], category: undefined }]);
+            } else {
+                await vscode.commands.executeCommand('lipcoder.openTerminal');
+                await speakTokenList([{ tokens: ['No active terminal, LipCoder terminal opened'], category: undefined }]);
             }
         })
     );
     
-    // Register cleanup disposal
+    // Register cleanup
     context.subscriptions.push({
         dispose: cleanupTerminalResources
     });

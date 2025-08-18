@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ASRClient, ASRChunk } from '../asr';
 import { log } from '../utils';
+import { stopAllAudio } from './stop_reading';
+import { logASRStart, logASRStop, logASRCommand } from '../activity_logger';
 
 let asrClient: ASRClient | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
@@ -160,6 +162,10 @@ export function registerPushToTalkASR(context: vscode.ExtensionContext) {
 async function startRecording() {
     try {
         log('[ASR] Starting push-to-talk recording...');
+        
+        // Stop all ongoing TTS before starting ASR
+        stopAllAudio();
+        log('[ASR] Stopped all TTS before starting Push-to-Talk ASR');
         
         // Show instructions for browser-based ASR
         const message = 'Push-to-Talk ASR requires browser access. Please:\n\n' +

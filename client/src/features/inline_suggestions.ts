@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { callLLMForCompletion, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
-import { playWave, speakTokenList, TokenChunk, playEarcon } from '../audio';
+import { playWave, speakTokenList, TokenChunk, playEarcon, isAudioPlaying } from '../audio';
 import { stopAllAudio, getLineTokenReadingActive } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
@@ -29,9 +29,9 @@ function cleanupInlineSuggestions(): void {
  */
 export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
-    // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading
+    // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading OR audio playing
     const periodicCheck = setInterval(() => {
-        if (getLineTokenReadingActive()) {
+        if (getLineTokenReadingActive() || isAudioPlaying()) {
             // Hide suggestions
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             
@@ -57,16 +57,16 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             clearTimeout(idleTimer);
         }
         
-        // Clear any existing inline suggestions if line reading becomes active
-        if (getLineTokenReadingActive()) {
+        // Clear any existing inline suggestions if line reading becomes active OR audio is playing
+        if (getLineTokenReadingActive() || isAudioPlaying()) {
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             return;
         }
         
         idleTimer = setTimeout(() => {
-            // Don't trigger suggestions if line token reading is active
-            if (getLineTokenReadingActive()) {
-                log(`[InlineSuggestions] Skipping idle trigger during line token reading`);
+            // Don't trigger suggestions if line token reading is active OR audio is playing
+            if (getLineTokenReadingActive() || isAudioPlaying()) {
+                log(`[InlineSuggestions] Skipping idle trigger during line token reading or audio playback`);
                 return;
             }
             
@@ -81,9 +81,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
     const provider: InlineCompletionItemProvider = {
         async provideInlineCompletionItems(document, position, context: InlineCompletionContext) {
-            // AGGRESSIVE: Don't run inline suggestions during line token reading
-            if (getLineTokenReadingActive()) {
-                log(`[InlineSuggestions] BLOCKING suggestion generation during line token reading (trigger: ${context.triggerKind})`);
+            // AGGRESSIVE: Don't run inline suggestions during line token reading OR audio playback
+            if (getLineTokenReadingActive() || isAudioPlaying()) {
+                log(`[InlineSuggestions] BLOCKING suggestion generation during line token reading or audio playback (trigger: ${context.triggerKind})`);
                 
                 // Also try to hide any existing suggestions
                 vscode.commands.executeCommand('editor.action.inlineSuggest.hide');

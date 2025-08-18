@@ -14,6 +14,16 @@ const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
 
 // Note: specialWordCache removed - now using direct TTS inference
 
+// Valid OpenAI TTS voice names
+const VALID_OPENAI_VOICES = ['nova', 'shimmer', 'echo', 'onyx', 'fable', 'alloy', 'ash', 'sage', 'coral'];
+
+/**
+ * Check if a voice name is valid for OpenAI TTS
+ */
+function isValidOpenAIVoice(voice: string): boolean {
+    return VALID_OPENAI_VOICES.includes(voice);
+}
+
 /**
  * Generate (but don't play) audio for a token
  */
@@ -45,9 +55,21 @@ export async function genTokenAudio(
     
     if (token.length > 1 && !isSpecialChar) {
         // Only cache non-special characters - include backend and language in cache key
-        const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
         const detectedLang = detectLanguage(token);
         const effectiveBackend = shouldUseKoreanTTS(token) ? 'openai_ko' : currentBackend;
+        
+        // Create a proper cache key that preserves Korean characters
+        let sanitized: string;
+        if (detectedLang === DetectedLanguage.Korean) {
+            // For Korean text, use a hash to create a unique but safe filename
+            const crypto = require('crypto');
+            sanitized = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
+            log(`[genTokenAudio] Korean token "${token}" → hash: ${sanitized}`);
+        } else {
+            // For English text, use the original sanitization
+            sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        }
+        
         const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
         log(`[genTokenAudio] cache check for "${token}" (${detectedLang}) → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
@@ -63,9 +85,23 @@ export async function genTokenAudio(
     let wavBuffer: Buffer;
     
     // Language-based TTS routing: Korean text always uses OpenAI TTS
-    if (shouldUseKoreanTTS(token)) {
+    const detectedLanguage = detectLanguage(token);
+    const useKoreanTTS = shouldUseKoreanTTS(token);
+    log(`[genTokenAudio] Language detection for "${token}": ${detectedLanguage}, useKoreanTTS: ${useKoreanTTS}`);
+    
+    if (useKoreanTTS) {
         log(`[genTokenAudio] Korean text detected, using OpenAI TTS: "${token}"`);
-        wavBuffer = await generateOpenAITTS(token, category, opts);
+        try {
+            // For Korean text, don't pass Silero voice names - let OpenAI TTS use its own voice mapping
+            const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
+                ? opts 
+                : undefined; // Don't pass Silero voices to OpenAI
+            wavBuffer = await generateOpenAITTS(token, category, koreanOpts);
+            log(`[genTokenAudio] OpenAI TTS successful for Korean text: "${token}"`);
+        } catch (error) {
+            log(`[genTokenAudio] OpenAI TTS failed for Korean text: "${token}", error: ${error}`);
+            throw error;
+        }
     } else if (currentBackend === TTSBackend.Silero) {
         wavBuffer = await generateSileroTTS(token, category, opts);
     } else if (currentBackend === TTSBackend.Espeak) {
@@ -87,12 +123,23 @@ export async function genTokenAudio(
             return outFile;
         } else if (token.length > 1) {
             // Regular multi-character tokens: save to cache with .wav extension (for regular playWave handling)
-            const sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
             const detectedLang = detectLanguage(token);
             const effectiveBackend = shouldUseKoreanTTS(token) ? 'openai_ko' : currentBackend;
+            
+            // Create the same cache key as used for lookup
+            let sanitized: string;
+            if (detectedLang === DetectedLanguage.Korean) {
+                // For Korean text, use a hash to create a unique but safe filename
+                const crypto = require('crypto');
+                sanitized = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
+            } else {
+                // For English text, use the original sanitization
+                sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            }
+            
             const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
             fs.writeFileSync(cachedFile, wavBuffer);
-            log(`[genTokenAudio] cached token saved: ${cachedFile}`);
+            log(`[genTokenAudio] cached token saved: ${cachedFile} for "${token}"`);
             return cachedFile;
         } else {
             // Single character fallback - also WAV format
@@ -231,9 +278,14 @@ async function generateOpenAITTS(
     const categorySettings = (baseCategory && openaiCategoryVoiceMap[baseCategory]) || {};
     const openaiSettings = { ...openaiTTSConfig, ...categorySettings };
     
-    // Allow override via opts (using speaker as voice for compatibility)
+    // Allow override via opts, but validate it's a valid OpenAI voice
     if (opts?.speaker) {
-        openaiSettings.voice = opts.speaker;
+        if (isValidOpenAIVoice(opts.speaker)) {
+            openaiSettings.voice = opts.speaker;
+        } else {
+            // If speaker is a Silero voice (like en_41), use default OpenAI voice
+            log(`[generateOpenAITTS] Invalid OpenAI voice "${opts.speaker}", using default "${openaiSettings.voice}"`);
+        }
     }
     
     // Detect language and adjust settings accordingly
@@ -249,15 +301,24 @@ async function generateOpenAITTS(
     
     // Check if API key is available
     if (!openaiSettings.apiKey) {
+        log(`[generateOpenAITTS] ERROR: OpenAI API key not configured for token "${token}"`);
         throw new Error('OpenAI API key not configured. Please set lipcoder.openaiApiKey in VS Code settings.');
     }
     
     log(`[generateOpenAITTS] Using OpenAI TTS for token "${token}" with voice "${openaiSettings.voice}" and language "${openaiSettings.language}"`);
+    log(`[generateOpenAITTS] OpenAI settings: model=${openaiSettings.model}, speed=${openaiSettings.speed}`);
     
     try {
         // Import OpenAI client
+        log(`[generateOpenAITTS] Importing OpenAI client...`);
         const { getOpenAIClient } = await import('./llm.js');
         const client = getOpenAIClient();
+        log(`[generateOpenAITTS] OpenAI client created successfully`);
+        
+        // Load configuration to ensure API key is fresh
+        const { loadConfigFromSettings } = await import('./config.js');
+        loadConfigFromSettings();
+        log(`[generateOpenAITTS] Configuration reloaded`);
         
         // Create TTS request
         const response = await client.audio.speech.create({
