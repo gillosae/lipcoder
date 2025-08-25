@@ -4,8 +4,9 @@ import { config } from '../config';
 import { LineSeverityMap } from './line_severity';
 import { playWave, playEarcon, speakTokenList, TokenChunk } from '../audio';
 import { stopAllAudio } from './stop_reading';
-import { isEarcon, specialCharMap } from '../mapping';
+import { isEarcon, getSpecialCharSpoken } from '../mapping';
 import { log } from '../utils';
+import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 // Helper function to calculate panning based on column position
 function calculatePanning(column: number): number {
@@ -34,7 +35,20 @@ export async function readTextTokens(
     MAX_INDENT_UNITS: number,
     audioMap: Record<string, string>,
 ): Promise<void> {
+    // Check if we should suppress reading for debug console or other panels
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && shouldSuppressReadingEnhanced(activeEditor)) {
+        return;
+    }
+    
     for (const change of changes) {
+        // Check if Korean TTS is active and should be protected
+        const koreanTTSActive = (global as any).koreanTTSActive || false;
+        if (koreanTTSActive) {
+            log(`[readTextTokens] Korean TTS is active - skipping text reading to prevent interruption`);
+            return;
+        }
+        
         // Immediately halt any currently playing audio when a new key event occurs
         stopAllAudio();
         log(`change.text:' ${JSON.stringify(change.text)}, rangeLength: ${change.rangeLength}, startChar: ${change.range.start.character}`);
@@ -139,12 +153,12 @@ export async function readTextTokens(
                 try {
                     if (audioMap[ch]) {
                         playWave(audioMap[ch], { isEarcon: true, immediate: true, panning: charPanning });
-                    } else if (specialCharMap[ch]) {
+                    } else if (getSpecialCharSpoken(ch)) {
                         // Remove redundant stopAllAudio() call here
                         if (isEarcon(ch)) {
                             await playEarcon(ch, charPanning);
                         } else {
-                            await speakTokenList([{ tokens: [specialCharMap[ch]], category: 'special', panning: charPanning }]);
+                            await speakTokenList([{ tokens: [getSpecialCharSpoken(ch)!], category: 'special', panning: charPanning }]);
                         }
                     } else if (/^[a-zA-Z]$/.test(ch)) {
                         const tokenPath = audioMap[ch.toLowerCase()];
@@ -162,18 +176,18 @@ export async function readTextTokens(
         const char = text;
         stopAllAudio();
         try {
-            console.log(`[read_text_tokens] Processing char: "${char}", audioMap: ${audioMap[char]}, specialCharMap: ${specialCharMap[char]}, isEarcon: ${isEarcon(char)}`);
+            console.log(`[read_text_tokens] Processing char: "${char}", audioMap: ${audioMap[char]}, specialCharMap: ${getSpecialCharSpoken(char)}, isEarcon: ${isEarcon(char)}`);
             if (audioMap[char]) {
                 console.log(`[read_text_tokens] Using audioMap path for "${char}": ${audioMap[char]}`);
                 playWave(audioMap[char], { isEarcon: true, immediate: true, panning });
                 return; // Prevent further processing to avoid double audio
-            } else if (specialCharMap[char]) {
+            } else if (getSpecialCharSpoken(char)) {
                 console.log(`[read_text_tokens] Using specialCharMap path for "${char}"`);
                 // Remove redundant stopAllAudio() call here
                 if (isEarcon(char)) {
                     await playEarcon(char, panning);
                 } else {
-                    await speakTokenList([{ tokens: [specialCharMap[char]], category: 'special', panning }]);
+                    await speakTokenList([{ tokens: [getSpecialCharSpoken(char)!], category: 'special', panning }]);
                 }
                 return; // Prevent further processing to avoid double audio
             } else if (/^[a-zA-Z]$/.test(char)) {

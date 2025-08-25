@@ -31,7 +31,8 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
     // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading OR audio playing
     const periodicCheck = setInterval(() => {
-        if (getLineTokenReadingActive() || isAudioPlaying()) {
+        const koreanTTSActive = (global as any).koreanTTSActive || false;
+        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
             // Hide suggestions
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             
@@ -57,16 +58,25 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             clearTimeout(idleTimer);
         }
         
-        // Clear any existing inline suggestions if line reading becomes active OR audio is playing
-        if (getLineTokenReadingActive() || isAudioPlaying()) {
+        // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active
+        const koreanTTSActive = (global as any).koreanTTSActive || false;
+        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            if (koreanTTSActive) {
+                log(`[InlineSuggestions] Skipping due to Korean TTS protection`);
+            }
             return;
         }
         
         idleTimer = setTimeout(() => {
-            // Don't trigger suggestions if line token reading is active OR audio is playing
-            if (getLineTokenReadingActive() || isAudioPlaying()) {
-                log(`[InlineSuggestions] Skipping idle trigger during line token reading or audio playback`);
+            // Don't trigger suggestions if line token reading is active OR audio is playing OR Korean TTS is active
+            const koreanTTSActive = (global as any).koreanTTSActive || false;
+            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
+                if (koreanTTSActive) {
+                    log(`[InlineSuggestions] Skipping idle trigger during Korean TTS playback`);
+                } else {
+                    log(`[InlineSuggestions] Skipping idle trigger during line token reading or audio playback`);
+                }
                 return;
             }
             

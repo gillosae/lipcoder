@@ -10,9 +10,9 @@ export function initConfig(context: ExtensionContext) {
 
 // TTS Backends & Config ─────────────────────────────────────────────────────
 export enum TTSBackend {
-    Silero = 'silero',
-    Espeak = 'espeak',
-    OpenAI = 'openai',
+    SileroGPT = 'silero-gpt',     // Silero for English + GPT for Korean
+    EspeakGPT = 'espeak-gpt',     // Espeak for English + GPT for Korean  
+    XTTSV2 = 'xtts-v2',          // XTTS-v2 for both Korean and English
 }
 
 // ASR Backends & Config ─────────────────────────────────────────────────────
@@ -70,6 +70,15 @@ export interface OpenAITTSConfig {
     volumeBoost: number;  // Volume boost multiplier (1.0 = no change, 1.5 = 50% louder)
 }
 
+export interface XTTSV2Config {
+    serverUrl: string;    // URL of the XTTS-v2 server
+    model: string;        // tts_models/multilingual/multi-dataset/xtts_v2
+    language: string;     // ko for Korean
+    sampleRate: number;   // 24000 (XTTS-v2 default)
+    volumeBoost: number;  // Volume boost multiplier
+    speakerWav?: string;  // Optional speaker reference for voice cloning
+}
+
 export interface ClaudeConfig {
     apiKey: string;
     model: string;        // claude-3-5-sonnet-20241022, claude-3-haiku-20240307, etc.
@@ -77,13 +86,13 @@ export interface ClaudeConfig {
     temperature: number;  // 0.0 to 1.0 (default: 0.1 for code)
 }
 
-export let currentBackend = TTSBackend.Silero;
+export let currentBackend = TTSBackend.XTTSV2;
 
 // ASR Configuration ─────────────────────────────────────────────────────
 export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
 
 // LLM Configuration ─────────────────────────────────────────────────────
-export let currentLLMBackend = LLMBackend.Claude; // Default to Claude as requested
+export let currentLLMBackend = LLMBackend.Claude; // Claude for vibe coding, ChatGPT used directly for routing
 
 export let sileroASRConfig: SileroASRConfig = {
     serverUrl: 'http://localhost:5004/asr',
@@ -126,6 +135,14 @@ export let openaiTTSConfig: OpenAITTSConfig = {
     speed: 1.0, // Normal speed
     responseFormat: 'wav', // WAV format for compatibility
     volumeBoost: 1.3, // 30% volume boost for Korean TTS
+};
+
+export let xttsV2Config: XTTSV2Config = {
+    serverUrl: 'http://localhost:5006/tts_fast', // Use fast endpoint with precomputed embeddings
+    model: 'tts_models/multilingual/multi-dataset/xtts_v2', // XTTS-v2 model
+    language: 'ko', // Korean language
+    sampleRate: 24000, // 24kHz (XTTS-v2 default)
+    volumeBoost: 1.0, // No volume boost by default
 };
 
 export let claudeConfig: ClaudeConfig = {
@@ -315,14 +332,21 @@ export const openaiCategoryVoiceMap: Record<string, Partial<OpenAITTSConfig>> = 
 };
 
 // Allow runtime switching of TTS backend & config
-export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>, openaiPartial?: Partial<OpenAITTSConfig>) {
+export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>, openaiPartial?: Partial<OpenAITTSConfig>, xttsV2Partial?: Partial<XTTSV2Config>) {
     currentBackend = backend;
-    if (backend === TTSBackend.Silero && sileroPartial) {
+    
+    // Apply partial configs based on what the combined backend uses
+    if ((backend === TTSBackend.SileroGPT || backend === TTSBackend.XTTSV2) && sileroPartial) {
         sileroConfig = { ...sileroConfig, ...sileroPartial };
-    } else if (backend === TTSBackend.Espeak && espeakPartial) {
+    }
+    if ((backend === TTSBackend.EspeakGPT) && espeakPartial) {
         espeakConfig = { ...espeakConfig, ...espeakPartial };
-    } else if (backend === TTSBackend.OpenAI && openaiPartial) {
+    }
+    if ((backend === TTSBackend.SileroGPT || backend === TTSBackend.EspeakGPT) && openaiPartial) {
         openaiTTSConfig = { ...openaiTTSConfig, ...openaiPartial };
+    }
+    if (backend === TTSBackend.XTTSV2 && xttsV2Partial) {
+        xttsV2Config = { ...xttsV2Config, ...xttsV2Partial };
     }
 }
 
@@ -367,6 +391,7 @@ export const config = {
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
     specialPath: () => path.join(config.audioPath(), 'special'),
     musicalPath: () => path.join(config.audioPath(), 'musical'),
+    alertPath: () => path.join(config.audioPath(), 'alert'),
 
 } as {
     typingSpeechEnabled: boolean;
@@ -388,6 +413,7 @@ export const config = {
     scriptPath: () => string;
     specialPath: () => string;
     musicalPath: () => string;
+    alertPath: () => string;
 };
 
 // Load configuration from VS Code settings
@@ -444,6 +470,31 @@ export function loadConfigFromSettings() {
         
         const ttsVolumeBoost = config.get('openaiTTSVolumeBoost', 1.3) as number;
         openaiTTSConfig.volumeBoost = ttsVolumeBoost;
+        
+        // Load TTS backend selection
+        const ttsBackend = config.get('ttsBackend', 'xtts-v2') as string;
+        if (ttsBackend === 'silero-gpt') {
+            currentBackend = TTSBackend.SileroGPT;
+        } else if (ttsBackend === 'espeak-gpt') {
+            currentBackend = TTSBackend.EspeakGPT;
+        } else if (ttsBackend === 'xtts-v2') {
+            currentBackend = TTSBackend.XTTSV2;
+        }
+        
+        // Load XTTS-v2 configuration
+        const xttsV2ServerUrl = config.get('xttsV2ServerUrl', 'http://localhost:5006/tts_fast') as string;
+        xttsV2Config.serverUrl = xttsV2ServerUrl;
+        
+        const xttsV2SampleRate = config.get('xttsV2SampleRate', 24000) as number;
+        xttsV2Config.sampleRate = xttsV2SampleRate;
+        
+        const xttsV2VolumeBoost = config.get('xttsV2VolumeBoost', 1.0) as number;
+        xttsV2Config.volumeBoost = xttsV2VolumeBoost;
+        
+        const xttsV2SpeakerWav = config.get('xttsV2SpeakerWav', '') as string;
+        if (xttsV2SpeakerWav) {
+            xttsV2Config.speakerWav = xttsV2SpeakerWav;
+        }
         
         // Load LLM backend selection
         const llmBackend = config.get('llmBackend', 'claude') as string;

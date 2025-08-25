@@ -1,191 +1,144 @@
-import * as path from 'path';
-import type { ExtensionContext } from 'vscode';
+/**
+ * Character and token mapping utilities for audio generation
+ */
 
-// Two and three word exception mappings
-export const twoLenExceptions = new Set(['no', 'is', 'if', 'on', 'in', 'to', 'by', 'of', 'as', 'at', 'or', 'up']);
-export const threeLenExceptions = new Set(['fmt', 'rgb', 'str', 'png', 'jpg', 'wav', 'mp3', 'mp4', 'ogg', 'url', 'api', 'css', 'vfx', 'xml', 'jsx', 'tsx', 'ogg', 'pcm']);
-
-const PUNCTUATION_FILES: Record<string, string> = {
-    '{': 'brace.pcm', '}': 'brace2.pcm',
-    '<': 'anglebracket.pcm', '>': 'anglebracket2.pcm',
-    '[': 'squarebracket.pcm', ']': 'squarebracket2.pcm',
-    '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
-    "'": 'quote.pcm', '"': 'bigquote.pcm',
-    // Characters with existing earcon files should use earcons, not TTS
-    ';': 'semicolon.pcm',
-    // Removed: ',', '_', '.', ':', '=', '/' - user prefers TTS for these
-    // Removed characters now handled by TTS: '-', '!', '?', '~', '|', '=', '+', '`', '\\', '%', '^', '&', '*', '@', '#', '$', '₩'
-};
-
+// Special character to audio file mapping
 export const SPECIAL_CHAR_FILES: Record<string, string> = {
-    // Characters that have PCM files in the special directory and should use earcons
-    // Removed: '=' - user prefers TTS
-    '+': 'plus.pcm',
-    '&': 'ampersand.pcm',
-    '*': 'asterisk.pcm',
-    '@': 'at.pcm',
-    '`': 'backtick.pcm',
-    '^': 'caret.pcm',
-    '$': 'dollar.pcm',
-    '!': 'excitation.pcm',
-    '%': 'percent.pcm',
-    '?': 'question.pcm',
-    '#': 'sharp.pcm',
-    '~': 'tilde.pcm',
-    '₩': 'won.pcm'
+    '!': 'excitation.pcm', '@': 'at.pcm', '#': 'sharp.pcm', '$': 'dollar.pcm',
+    '%': 'percent.pcm', '^': 'caret.pcm', '&': 'ampersand.pcm', '*': 'asterisk.pcm',
+    '+': 'plus.pcm', '~': 'tilde.pcm', '|': 'bar.pcm', '?': 'question.pcm',
+    '₩': 'won.pcm', '=': 'equals.pcm', '`': 'backtick.pcm', '\\': 'backslash.pcm',
+    '-': 'dash.pcm', '/': 'slash.pcm', ':': 'colon.pcm', ';': 'semicolon.pcm',
+    ',': 'comma.pcm', '.': 'dot.pcm', '_': 'underbar.pcm', ' ': 'space.pcm'
 };
 
+// Multi-character operators and symbols
+export const MULTI_CHAR_FILES: Record<string, string> = {
+    '++': 'plus_plus.pcm',
+    '--': 'minus_minus.pcm',
+    '+=': 'plus_equals.pcm',
+    '-=': 'minus_equals.pcm',
+    '*=': 'times_equals.pcm',
+    '/=': 'divide_equals.pcm',
+    '==': 'equals_equals.pcm',
+    '!=': 'not_equal.pcm',
+    '===': 'triple_equals.pcm',
+    '!==': 'not_triple_equals.pcm',
+    '<=': 'less_than_or_equal.pcm',
+    '>=': 'greater_than_or_equal.pcm',
+    '&&': 'and_and.pcm',
+    '||': 'or_or.pcm',
+    '//': 'slash_slash.pcm',
+    '=>': 'arrow.pcm'
+};
 
-// "fallback" spoken names for chars that need TTS (not direct PCM mappings)
-export const specialCharMap: Record<string, string> = {
-    // digits → word (for spelling out numbers)
+// Number to spoken form mapping
+export const numberMap: Record<string, string> = {
     '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
-    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
-    // letters → name (for spelling out letters)
-    a: 'ay', b: 'bee', c: 'see', d: 'dee', e: 'ee', f: 'eff',
-    g: 'gee', h: 'aitch', i: 'eye', j: 'jay', k: 'kay', l: 'el',
-    m: 'em', n: 'en', o: 'oh', p: 'pee', q: 'cue', r: 'ar',
-    s: 'ess', t: 'tee', u: 'you', v: 'vee', w: 'double you',
-    x: 'ex', y: 'why', z: 'zee',
-    // punctuation characters that should use TTS
-    // User-requested TTS characters (even though PCM files exist)
-    '.': 'dot',
-    ',': 'comma',
-    ':': 'colon',
-    '-': 'dash',
-    '_': 'underbar',
-    '=': 'equals',
-    '/': 'slash',
-    // Special multi-character sequences
-    '//': 'slash slash',
-    '<=': 'less than or equal',
-    '>=': 'greater than or equal',
-    '==': 'equals equals',
-    '!=': 'not equal',
-    '===': 'triple equals',
-    '!==': 'not triple equals',
-    '&&': 'and and',
-    '||': 'or or',
-    '++': 'plus plus',
-    '--': 'minus minus',
-    '+=': 'plus equals',
-    '-=': 'minus equals',
-    '*=': 'times equals',
-    '/=': 'divide equals',
-    '=>': 'arrow',
-    // Other TTS characters
-    '|': 'bar',
-    '\\': 'backslash',
+    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine'
 };
 
-// Converts numbers 0–3000 to English words
-function numberToWords(num: number): string {
-    const ones = [
-        'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'
-    ];
-    const teens = [
-        'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
-        'sixteen', 'seventeen', 'eighteen', 'nineteen'
-    ];
-    const tens = [
-        '', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'
-    ];
-    if (num < 10) { return ones[num]; }
-    if (num < 20) { return teens[num - 10]; }
-    if (num < 100) {
-        const t = Math.floor(num / 10);
-        const r = num % 10;
-        return r === 0 ? tens[t] : `${tens[t]}-${ones[r]}`;
+// Earcon characters (punctuation that should use earcons instead of TTS)
+const EARCON_CHARS = new Set([
+    '(', ')', '[', ']', '{', '}', '<', '>',
+    '"', "'", '`', ',', '.', ';', ':', 
+    ' ', '\t', '\n'
+]);
+
+// Two-character exceptions for word splitting
+export const twoLenExceptions = new Set([
+    'if', 'is', 'in', 'or', 'on', 'at', 'to', 'be', 'do', 'go', 'no', 'so',
+    'up', 'us', 'we', 'me', 'my', 'by', 'an', 'as', 'of', 'it', 'he', 'hi'
+]);
+
+// Three-character exceptions for word splitting
+export const threeLenExceptions = new Set([
+    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had',
+    'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his',
+    'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy',
+    'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'try', 'run',
+    'may', 'ask', 'own', 'end', 'why', 'add', 'big', 'got', 'lot', 'off',
+    'set', 'top', 'yet', 'few', 'far', 'car', 'cut', 'eat', 'job', 'key',
+    'law', 'map', 'pay', 'red', 'sit', 'win', 'yes', 'age', 'bad', 'box',
+    'buy', 'eye', 'fly', 'fun', 'gun', 'hit', 'hot', 'ice', 'kid', 'lie',
+    'mix', 'oil', 'pop', 'row', 'sea', 'sky', 'tax', 'tea', 'tie', 'war'
+]);
+
+/**
+ * Check if a character is alphabetic
+ */
+export function isAlphabet(char: string): boolean {
+    return /^[a-zA-Z]$/.test(char);
+}
+
+/**
+ * Check if a character is numeric
+ */
+export function isNumber(char: string): boolean {
+    return /^[0-9]$/.test(char);
+}
+
+/**
+ * Check if a character should use earcon audio
+ */
+export function isEarcon(char: string): boolean {
+    return EARCON_CHARS.has(char);
+}
+
+/**
+ * Get the spoken form of a special character
+ */
+export function getSpecialCharSpoken(char: string): string | null {
+    // Check multi-character operators first
+    if (MULTI_CHAR_FILES[char]) {
+        return char; // Return the operator itself for multi-char
     }
-    if (num < 1000) {
-        const h = Math.floor(num / 100);
-        const r = num % 100;
-        return r === 0
-            ? `${ones[h]} hundred`
-            : `${ones[h]} hundred ${numberToWords(r)}`;
-    }
-    // 1000–3000
-    const th = Math.floor(num / 1000);
-    const r = num % 1000;
-    return r === 0
-        ? `${ones[th]} thousand`
-        : `${ones[th]} thousand ${numberToWords(r)}`;
-}
-
-// Precompute mappings for 0–3000
-export const numberMap: Record<string, string> = (() => {
-    const map: Record<string, string> = {};
-    for (let i = 0; i <= 3000; i++) {
-        map[i.toString()] = numberToWords(i);
-    }
-    return map;
-})();
-
-function mapFiles(mapping: Record<string, string>, dir: string) {
-    return Object.fromEntries(
-        Object.entries(mapping).map(([k, f]) => [k, path.join(dir, f)])
-    );
-}
-
-function rangeMap(start: number, end: number, dir: string) {
-    return Object.fromEntries(
-        Array.from({ length: end - start + 1 }, (_, i) => {
-            const k = String(start + i);
-            return [k, path.join(dir, `${k}.pcm`)];
-        })
-    );
-}
-
-function alphabetMap(dir: string) {
-    return Object.fromEntries(
-        Array.from({ length: 26 }, (_, i) => {
-            const ch = String.fromCharCode(97 + i);
-            return [ch, path.join(dir, `${ch}.pcm`)];
-        })
-    );
-}
-
-export function createAudioMap(ctx: ExtensionContext): Record<string, string> {
-    const BASE = ctx.asAbsolutePath(path.join('client', 'audio'));
-    const EARCON_DIR = path.join(BASE, 'earcon');
-    const NUMBER_DIR = path.join(BASE, 'number');
-    const ALPHABET_DIR = path.join(BASE, 'alphabet');
-    const SPECIAL_DIR = path.join(BASE, 'special');
-
-    const audioMap = {
-        // 1) on‐disk single‐char WAVs
-        ...mapFiles(PUNCTUATION_FILES, EARCON_DIR),
-        ...rangeMap(0, 9, NUMBER_DIR),
-        ...alphabetMap(ALPHABET_DIR),
-        ' ': path.join(EARCON_DIR, 'space.pcm'),
-        ...mapFiles(SPECIAL_CHAR_FILES, SPECIAL_DIR)
-    };
     
-    // Debug logging for underscore
-    console.log(`[createAudioMap] underscore mapped to: ${(audioMap as any)['_'] || 'undefined'}`);
+    // Check single character mappings
+    if (SPECIAL_CHAR_FILES[char]) {
+        return char; // Return the character itself
+    }
+    
+    // Special cases for common characters
+    switch (char) {
+        case ' ': return 'space';
+        case '\t': return 'tab';
+        case '\n': return 'newline';
+        case '\r': return 'return';
+        default: return null;
+    }
+}
+
+/**
+ * Create audio mapping for preloading
+ */
+export function createAudioMap(context?: any): Map<string, string> {
+    const audioMap = new Map<string, string>();
+    
+    // Add special characters
+    for (const [char, file] of Object.entries(SPECIAL_CHAR_FILES)) {
+        audioMap.set(char, file);
+    }
+    
+    // Add multi-character operators
+    for (const [op, file] of Object.entries(MULTI_CHAR_FILES)) {
+        audioMap.set(op, file);
+    }
+    
+    // Add numbers
+    for (let i = 0; i <= 9; i++) {
+        audioMap.set(i.toString(), `${i}.pcm`);
+    }
+    
+    // Add alphabet
+    for (let i = 0; i < 26; i++) {
+        const letter = String.fromCharCode(97 + i); // a-z
+        audioMap.set(letter, `${letter}.pcm`);
+        audioMap.set(letter.toUpperCase(), `${letter}.pcm`);
+    }
+    
+    // Add underscore for the extension check
+    audioMap.set('_', 'underbar.pcm');
     
     return audioMap;
-}
-
-export function isEarcon(ch: string): boolean {
-    // Single-char earcons include both punctuation and special‐char mappings
-    return (
-        ch.length === 1
-        && (
-            PUNCTUATION_FILES[ch] !== undefined
-            || SPECIAL_CHAR_FILES[ch] !== undefined
-        )
-    );
-}
-
-export function isSpecial(ch: string): boolean {
-    return ch.length === 1 && SPECIAL_CHAR_FILES[ch] !== undefined;
-}
-
-export function isAlphabet(token: string): boolean {
-    return /^[A-Za-z]$/.test(token);
-}
-
-export function isNumber(token: string): boolean {
-    return /^\d$/.test(token);
 }

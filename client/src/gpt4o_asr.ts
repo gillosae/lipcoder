@@ -1,4 +1,5 @@
 import { log, logError, logWarning, logSuccess } from './utils';
+import { handleASRErrorSimple } from './asr_error_handler';
 import { gpt4oASRConfig } from './config';
 
 export interface GPT4oASRChunk {
@@ -92,6 +93,9 @@ export class GPT4oASRClient {
             logError(`[Whisper-ASR] Failed to start recording: ${error}`);
             if (this.options && this.options.onError) {
                 this.options.onError(error as Error);
+            } else {
+                // Fallback to simple error handler if no callback provided
+                await handleASRErrorSimple(error as Error, 'GPT4o ASR Start');
             }
         }
     }
@@ -135,6 +139,9 @@ export class GPT4oASRClient {
             logError(`[Whisper-ASR] Error stopping recording: ${error}`);
             if (this.options && this.options.onError) {
                 this.options.onError(error as Error);
+            } else {
+                // Fallback to simple error handler if no callback provided
+                await handleASRErrorSimple(error as Error, 'GPT4o ASR Stop');
             }
         }
     }
@@ -176,6 +183,9 @@ export class GPT4oASRClient {
             logError(`[Whisper-ASR] Error processing audio buffer: ${error}`);
             if (this.options && this.options.onError) {
                 this.options.onError(error as Error);
+            } else {
+                // Fallback to simple error handler if no callback provided
+                await handleASRErrorSimple(error as Error, 'GPT4o ASR Processing');
             }
         }
     }

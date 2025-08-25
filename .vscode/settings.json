@@ -1,13 +1,48 @@
-// Place your settings in this file to overwrite default and user settings.
 {
     "files.exclude": {
-        "out": false, // set this to true to hide the "out" folder with the compiled JS files
-        "dist": false // set this to true to hide the "dist" folder with the compiled JS files
+        "**/node_modules": true,
+        "**/client/src/python": true,
+        "**/client/src/models": true,
+        "**/.git": true,
+        "**/.DS_Store": true,
+        "**/dist": true,
+        "**/*.wav": true,
+        "**/*.pcm": true,
+        "**/*.pt": true,
+        "**/*.so": true,
+        "**/*.dylib": true,
+        "**/lipcoder-mirror.git": true
     },
     "search.exclude": {
-        "out": true, // set this to false to include "out" folder in search results
-        "dist": true // set this to false to include "dist" folder in search results
+        "**/node_modules": true,
+        "**/client/src/python": true,
+        "**/client/src/models": true,
+        "**/dist": true,
+        "**/*.wav": true,
+        "**/*.pcm": true,
+        "**/*.pt": true
     },
-    // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
-    "typescript.tsc.autoDetect": "off"
+    "files.watcherExclude": {
+        "**/node_modules/**": true,
+        "**/client/src/python/**": true,
+        "**/client/src/models/**": true,
+        "**/dist/**": true,
+        "**/*.wav": true,
+        "**/*.pcm": true,
+        "**/*.pt": true
+    },
+    "typescript.preferences.includePackageJsonAutoImports": "off",
+    "typescript.suggest.autoImports": false,
+    "typescript.updateImportsOnFileMove.enabled": "never",
+    "python.analysis.exclude": [
+        "**/client/src/python/**",
+        "**/node_modules/**"
+    ],
+    "eslint.workingDirectories": [
+        "client/src",
+        "server/src"
+    ],
+    "eslint.options": {
+        "extensions": [".ts", ".js"]
+    }
 }

@@ -8,6 +8,8 @@ import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type Rout
 import { log, logError, logWarning, logSuccess } from '../utils';
 import { stopAllAudio, setASRRecordingActive } from './stop_reading';
 import { speakTokenList, TokenChunk } from '../audio';
+import { playEarcon } from '../earcon';
+import { handleASRError } from '../asr_error_handler';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -74,7 +76,7 @@ async function speakErrorMessage(message: string): Promise<void> {
 /**
  * Clean up all ASR resources
  */
-function cleanupASRResources(): void {
+export function cleanupASRResources(): void {
     logWarning('[Enhanced-ASR] Cleaning up ASR resources...');
     
     // Stop any ongoing recording
@@ -161,9 +163,18 @@ function initializeASRClients(): void {
                             await handleTranscription(chunk.text);
                         }
                     },
-                    onError: (error: Error) => {
+                    onError: async (error: Error) => {
                         if (error) {
-                            handleError(error);
+                            await handleError(error);
+                        }
+                    },
+                    onASRReady: async () => {
+                        // Play ASR start sound when ASR is actually ready and working
+                        try {
+                            await playEarcon('asr_start', 0);
+                            log('[Enhanced-ASR] Played ASR start sound (Silero ASR ready)');
+                        } catch (error) {
+                            log(`[Enhanced-ASR] Failed to play ASR start sound (Silero ASR ready): ${error}`);
                         }
                     }
                 });
@@ -188,12 +199,19 @@ function initializeASRClients(): void {
                             await handleTranscription(chunk.text);
                         }
                     },
-                    onError: (error: Error) => {
+                    onError: async (error: Error) => {
                         if (error) {
-                            handleError(error);
+                            await handleError(error);
                         }
                     },
-                    onRecordingStart: () => {
+                    onRecordingStart: async () => {
+                        // Play ASR start sound when GPT4o ASR is actually ready and working
+                        try {
+                            await playEarcon('asr_start', 0);
+                            log('[Enhanced-ASR] Played ASR start sound (GPT4o ASR ready)');
+                        } catch (error) {
+                            log(`[Enhanced-ASR] Failed to play ASR start sound (GPT4o ASR ready): ${error}`);
+                        }
                         handleRecordingStart();
                     },
                     onRecordingStop: () => {
@@ -282,7 +300,7 @@ function initializeASRClients(): void {
 }
 
 /**
- * Handle transcription result
+ * Handle transcription result with conversational flow
  */
 async function handleTranscription(text: string): Promise<void> {
     log(`[Enhanced-ASR] ================================================`);
@@ -303,89 +321,104 @@ async function handleTranscription(text: string): Promise<void> {
         outputChannel.show(true);
     }
     
-    // Try to process as command first (only in command mode)
-    let commandExecuted = false;
-    if (currentASRMode === ASRMode.Command && commandRouter) {
-        try {
-            log(`[Enhanced-ASR] 🚀 Calling command router with: "${text}"`);
-            commandExecuted = await commandRouter.processTranscription(text);
-            log(`[Enhanced-ASR] Command router result: ${commandExecuted}`);
-        } catch (error) {
-            logError(`[Enhanced-ASR] Command router processing failed: ${error}`);
+    // Process through conversational flow (unified approach)
+    try {
+        log(`[Enhanced-ASR] 🤖 Processing through conversational ASR...`);
+        
+        // Import conversational modules
+        const { processConversationalASR } = await import('../conversational_asr.js');
+        const { showConversationalResponse } = await import('../conversational_popup.js');
+        
+        // Process transcription through conversational flow
+        const mode = currentASRMode === ASRMode.Command ? 'command' : 'write';
+        const conversationalResponse = await processConversationalASR(text, { mode });
+        
+        // Show conversational response with action options (unless it's a navigation command)
+        if (conversationalResponse.response && conversationalResponse.response.trim() !== "") {
+            await showConversationalResponse(conversationalResponse);
+            log(`[Enhanced-ASR] ✅ Conversational processing complete: "${conversationalResponse.response}"`);
+        } else {
+            log(`[Enhanced-ASR] ✅ Navigation command completed silently - no popup shown`);
         }
-    } else {
-        log(`[Enhanced-ASR] ⚪ Not calling command router - Mode: ${currentASRMode}, Router: ${!!commandRouter}`);
-    }
-    
-    // Handle different modes
-    if (currentASRMode === ASRMode.Command) {
-        // In command mode, if no command was executed, show error
-        if (!commandExecuted) {
-            const errorMessage = 'Command not recognized. Please say again.';
-            log(`[Enhanced-ASR] Command not recognized: "${text}"`);
+        
+        // For write mode, if no specific actions were suggested, fall back to text insertion
+        if (currentASRMode === ASRMode.Write) {
+            const hasTextInsertionAction = conversationalResponse.actions.some(
+                (action: any) => action.command === 'insertText' || action.command === 'continueEditing'
+            );
             
-            // Show popup error message
-            vscode.window.showWarningMessage(errorMessage);
-            
-            // Speak the error message
-            try {
-                await speakErrorMessage(errorMessage);
-            } catch (error) {
-                logError(`[Enhanced-ASR] Failed to speak error message: ${error}`);
+            if (!hasTextInsertionAction) {
+                // The conversational system didn't suggest text insertion, so do it directly
+                await handleDirectTextInsertion(text);
+                log(`[Enhanced-ASR] Added direct text insertion for write mode`);
             }
         }
-    } else if (currentASRMode === ASRMode.Write) {
-        // In write mode, if no command was executed, fall back to text insertion
-        if (!commandExecuted) {
-            // Try to use captured editor context first, then fall back to active editor
-            let targetEditor = recordingContext?.editor;
-            
-            // Validate captured editor
-            if (targetEditor) {
-                try {
-                    if (!targetEditor.document || targetEditor.document.isClosed) {
-                        log('[Enhanced-ASR] Captured editor context is no longer valid for text insertion, falling back to active editor');
-                        targetEditor = undefined;
-                    }
-                } catch (error) {
-                    logError(`[Enhanced-ASR] Error accessing captured editor for text insertion: ${error}`);
-                    targetEditor = undefined;
-                }
-            }
-            
-            // Fallback to current active editor
-            if (!targetEditor) {
-                targetEditor = vscode.window.activeTextEditor;
-            }
-            
-            if (targetEditor) {
-                try {
-                    // Make sure the target editor is active
-                    await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
-                    
-                    // Use original cursor position if available, otherwise current position
-                    const insertPosition = recordingContext?.position || targetEditor.selection.active;
-                    
-                    await targetEditor.edit(editBuilder => {
-                        editBuilder.insert(insertPosition, text + ' ');
-                    });
-                    
-                    const fileName = path.basename(targetEditor.document.fileName);
-                    log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
-                } catch (error) {
-                    logError(`[Enhanced-ASR] Error inserting text: ${error}`);
-                    vscode.window.showErrorMessage(`Failed to insert text: ${error}`);
-                }
-            } else {
-                logWarning('[Enhanced-ASR] No editor available for text insertion');
-                vscode.window.showWarningMessage('No editor available to insert transcribed text');
-            }
-            
-            // Show notification for text insertion
+        
+    } catch (error) {
+        logError(`[Enhanced-ASR] Conversational processing failed, using minimal fallback: ${error}`);
+        
+        // Minimal fallback: just show the transcription and handle write mode
+        if (currentASRMode === ASRMode.Write) {
+            await handleDirectTextInsertion(text);
+        } else {
             vscode.window.showInformationMessage(`ASR: ${text}`);
         }
     }
 }
+
+/**
+ * Handle direct text insertion (fallback for write mode)
+ */
+async function handleDirectTextInsertion(text: string): Promise<void> {
+    // Try to use captured editor context first, then fall back to active editor
+    let targetEditor = recordingContext?.editor;
+    
+    // Validate captured editor
+    if (targetEditor) {
+        try {
+            if (!targetEditor.document || targetEditor.document.isClosed) {
+                log('[Enhanced-ASR] Captured editor context is no longer valid for text insertion, falling back to active editor');
+                targetEditor = undefined;
+            }
+        } catch (error) {
+            logError(`[Enhanced-ASR] Error accessing captured editor for text insertion: ${error}`);
+            targetEditor = undefined;
+        }
+    }
+    
+    // Fallback to current active editor
+    if (!targetEditor) {
+        targetEditor = vscode.window.activeTextEditor;
+    }
+    
+    if (targetEditor) {
+        try {
+            // Make sure the target editor is active
+            await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
+            
+            // Use original cursor position if available, otherwise current position
+            const insertPosition = recordingContext?.position || targetEditor.selection.active;
+            
+            await targetEditor.edit(editBuilder => {
+                editBuilder.insert(insertPosition, text + ' ');
+            });
+            
+            const fileName = path.basename(targetEditor.document.fileName);
+            log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
+            
+            // Show subtle notification
+            vscode.window.showInformationMessage(`Text inserted: ${text}`);
+        } catch (error) {
+            logError(`[Enhanced-ASR] Error inserting text: ${error}`);
+            vscode.window.showErrorMessage(`Failed to insert text: ${error}`);
+        }
+    } else {
+        logWarning('[Enhanced-ASR] No editor available for text insertion');
+        vscode.window.showWarningMessage('No editor available to insert transcribed text');
+    }
+}
+
+
 
 /**
  * Set VS Code context key for recording state
@@ -441,14 +474,14 @@ function handleRecordingStop(): void {
 /**
  * Handle errors
  */
-function handleError(error: Error): void {
-    logError(`[Enhanced-ASR] Error: ${error.message}`);
+async function handleError(error: Error): Promise<void> {
+    // Use enhanced error handler with TTS and popup
+    await handleASRError(error, 'Enhanced ASR');
     
+    // Show error in ASR popup if available
     if (asrPopup) {
         asrPopup.showError(error.message);
     }
-    
-    vscode.window.showErrorMessage(`ASR Error: ${error.message}`);
     
     // Stop recording on error
     if (isRecording) {
@@ -690,6 +723,14 @@ async function stopRecording(): Promise<void> {
             logWarning(`[Enhanced-ASR] No valid ASR client available to stop for backend: ${currentASRBackend}`);
         }
         
+        // Play ASR stop sound
+        try {
+            await playEarcon('asr_stop', 0);
+            log('[Enhanced-ASR] Played ASR stop sound');
+        } catch (error) {
+            log(`[Enhanced-ASR] Failed to play ASR stop sound: ${error}`);
+        }
+        
         logSuccess('[Enhanced-ASR] Recording stopped successfully');
         
     } catch (error) {
@@ -788,7 +829,7 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
         }
         
         // Create output channel
-        outputChannel = vscode.window.createOutputChannel('LipCoder Enhanced ASR');
+        outputChannel = vscode.window.createOutputChannel('LipCoder Enhanced ASR', {log:true});
         log('[Enhanced-ASR] Created output channel');
         
         // Create status bar item

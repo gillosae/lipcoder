@@ -6,7 +6,7 @@ import * as os from 'os';
 import { ExtensionContext } from 'vscode';
 import { earconRaw } from './audio';
 import { earconTokens, getTokenSound } from './tokens';
-import { specialCharMap } from './mapping';
+
 import { log, logWarning, logMemory } from './utils';
 
 const concurrency = 5;

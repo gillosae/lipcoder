@@ -1,0 +1,136 @@
+{
+  "universities": [
+    {
+      "id": 1,
+      "name": "Stanford University",
+      "location": {
+        "city": "Stanford",
+        "state": "California",
+        "country": "USA"
+      },
+      "founded": 1885,
+      "type": "Private",
+      "enrollment": 17249,
+      "tuition": {
+        "undergraduate": 56169,
+        "graduate": 54315
+      },
+      "departments": [
+        {
+          "name": "Computer Science",
+          "faculty_count": 45,
+          "student_count": 1200,
+          "programs": ["BS", "MS", "PhD"]
+        },
+        {
+          "name": "Engineering",
+          "faculty_count": 120,
+          "student_count": 3500,
+          "programs": ["BS", "MS", "PhD", "MEng"]
+        },
+        {
+          "name": "Business",
+          "faculty_count": 80,
+          "student_count": 800,
+          "programs": ["MBA", "MS", "PhD"]
+        }
+      ],
+      "rankings": {
+        "overall": 3,
+        "computer_science": 1,
+        "engineering": 2,
+        "business": 1
+      }
+    },
+    {
+      "id": 2,
+      "name": "Massachusetts Institute of Technology",
+      "location": {
+        "city": "Cambridge",
+        "state": "Massachusetts",
+        "country": "USA"
+      },
+      "founded": 1861,
+      "type": "Private",
+      "enrollment": 11934,
+      "tuition": {
+        "undergraduate": 57986,
+        "graduate": 57986
+      },
+      "departments": [
+        {
+          "name": "Computer Science",
+          "faculty_count": 60,
+          "student_count": 1500,
+          "programs": ["BS", "MS", "PhD"]
+        },
+        {
+          "name": "Engineering",
+          "faculty_count": 200,
+          "student_count": 4000,
+          "programs": ["BS", "MS", "PhD", "MEng"]
+        },
+        {
+          "name": "Mathematics",
+          "faculty_count": 50,
+          "student_count": 600,
+          "programs": ["BS", "MS", "PhD"]
+        }
+      ],
+      "rankings": {
+        "overall": 1,
+        "computer_science": 1,
+        "engineering": 1,
+        "mathematics": 1
+      }
+    },
+    {
+      "id": 3,
+      "name": "University of California, Berkeley",
+      "location": {
+        "city": "Berkeley",
+        "state": "California",
+        "country": "USA"
+      },
+      "founded": 1868,
+      "type": "Public",
+      "enrollment": 45057,
+      "tuition": {
+        "undergraduate": 14312,
+        "graduate": 14312
+      },
+      "departments": [
+        {
+          "name": "Computer Science",
+          "faculty_count": 55,
+          "student_count": 2000,
+          "programs": ["BS", "MS", "PhD"]
+        },
+        {
+          "name": "Engineering",
+          "faculty_count": 150,
+          "student_count": 5000,
+          "programs": ["BS", "MS", "PhD"]
+        },
+        {
+          "name": "Data Science",
+          "faculty_count": 30,
+          "student_count": 800,
+          "programs": ["BS", "MS", "PhD"]
+        }
+      ],
+      "rankings": {
+        "overall": 4,
+        "computer_science": 3,
+        "engineering": 3,
+        "data_science": 1
+      }
+    }
+  ],
+  "metadata": {
+    "last_updated": "2024-01-15",
+    "source": "University Rankings Database",
+    "total_universities": 3,
+    "data_version": "2024.1"
+  }
+}

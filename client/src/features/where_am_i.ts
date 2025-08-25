@@ -8,9 +8,10 @@ import { speakTokenList, TokenChunk } from '../audio';
 export function registerWhereAmI(context: ExtensionContext, client: LanguageClient) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.whereAmI', async () => {
-            const editor = vscode.window.activeTextEditor;
+            const { isEditorActive } = require('../ide/active');
+            const editor = isEditorActive();
             if (!editor) {
-                vscode.window.showWarningMessage('No active editor!');
+                vscode.window.setStatusBarMessage('No active editor!', 3000);
                 return;
             }
             const uri = editor.document.uri.toString();

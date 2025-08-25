@@ -12,9 +12,10 @@ export function registerBreadcrumb(
 ) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.breadcrumb', async (editorArg?: vscode.TextEditor) => {
-            const editor = editorArg || vscode.window.activeTextEditor;
+            const { isEditorActive } = require('../ide/active');
+            const editor = editorArg || isEditorActive();
             if (!editor) {
-                vscode.window.showWarningMessage('Open a file first!');
+                vscode.window.setStatusBarMessage('Open a file first!', 3000);
                 return;
             }
             const originalSelection = editor.selection;

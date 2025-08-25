@@ -4,10 +4,12 @@ import { suppressAutomaticTextReading, resumeAutomaticTextReading } from './nav_
 import { stopAllAudio } from './stop_reading';
 import { log } from '../utils';
 import { logVibeCoding, logFeatureUsage } from '../activity_logger';
+import { isEditorActive } from '../ide/active';
 import * as Diff from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { showIntelligentSuggestions } from './intelligent_suggestions';
 
 interface CodeChange {
     line: number;
@@ -97,23 +99,19 @@ async function speakTokenListWithTracking(chunks: TokenChunk[]): Promise<void> {
 
 /**
  * Get active editor with retry logic to handle timing issues
+ * Now uses last active editor tracking for terminal ASR support
  */
-async function getActiveEditorWithRetry(maxRetries: number = 3, delayMs: number = 100): Promise<vscode.TextEditor | null> {
+async function getActiveEditorWithRetry(maxRetries: number = 3, delayMs: number = 100): Promise<vscode.TextEditor | undefined> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         log(`[vibe_coding] Attempting to get active editor (attempt ${attempt}/${maxRetries})`);
         
-        const editor = vscode.window.activeTextEditor;
+        const editor = isEditorActive();
         if (editor) {
-            // Validate that this is a proper file editor
-            if (editor.document.uri.scheme === 'file') {
-                log(`[vibe_coding] Found valid file editor: ${editor.document.fileName}`);
-                return editor;
-            } else {
-                log(`[vibe_coding] Found editor but not a file (scheme: ${editor.document.uri.scheme})`);
-            }
-        } else {
-            log(`[vibe_coding] No active editor found on attempt ${attempt}`);
+            log(`[vibe_coding] Found valid file editor: ${editor.document.fileName}`);
+            return editor;
         }
+        
+        log(`[vibe_coding] No editor found on attempt ${attempt}`);
         
         // Wait before next attempt (except on last attempt)
         if (attempt < maxRetries) {
@@ -133,10 +131,10 @@ async function getActiveEditorWithRetry(maxRetries: number = 3, delayMs: number 
     }
     
     log(`[vibe_coding] No valid editor found after all attempts`);
-    return null;
+    return undefined;
 }
 
-export async function activateVibeCoding(prefilledInstruction?: string) {
+export async function activateVibeCoding(prefilledInstruction?: string, options?: { suppressConversationalASR?: boolean }) {
     log('[vibe_coding] ===== VIBE CODING ACTIVATED =====');
     logVibeCoding('vibe_coding_activated', prefilledInstruction);
     
@@ -146,7 +144,7 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
         log('[vibe_coding] No active editor found after retries');
         logVibeCoding('vibe_coding_error', 'No active editor found');
         await speakTokenListWithTracking([{ tokens: ['No active editor found. Please open a file and try again.'], category: undefined }]);
-        vscode.window.showErrorMessage('No active editor found. Please open a file and try again.');
+        vscode.window.setStatusBarMessage('No active editor - please open a file and try again', 4000);
         return;
     }
     
@@ -218,7 +216,7 @@ export async function activateVibeCoding(prefilledInstruction?: string) {
         });
         
         // Show diff and handle user decision
-        await showSmartDiffPreview(changeId, result);
+        await showSmartDiffPreview(changeId, result, options);
         
         log(`[vibe_coding] Diff preview completed`);
     } catch (error) {
@@ -431,11 +429,76 @@ async function processVibeCodingRequest(editor: vscode.TextEditor, instruction: 
 }
 
 /**
+ * Estimate token count for text (rough approximation: 1 token ≈ 4 characters)
+ */
+function estimateTokenCount(text: string): number {
+    return Math.ceil(text.length / 4);
+}
+
+/**
+ * Create smart context for large files that respects token limits
+ */
+function createSmartContext(originalText: string, context: ContextInfo, instruction: string): { contextText: string; isPartialContext: boolean } {
+    const maxTokens = 180000; // Leave buffer for system prompt and response
+    const systemPromptTokens = 1000; // Estimated system prompt size
+    const responseTokens = 4000; // Max response tokens
+    const availableTokens = maxTokens - systemPromptTokens - responseTokens;
+    
+    const fullTextTokens = estimateTokenCount(originalText);
+    const instructionTokens = estimateTokenCount(instruction);
+    
+    log(`[vibe_coding] Token estimation - Full text: ${fullTextTokens}, Available: ${availableTokens}`);
+    
+    // If the full text fits within token limits, use it
+    if (fullTextTokens + instructionTokens < availableTokens) {
+        return { contextText: originalText, isPartialContext: false };
+    }
+    
+    // For large files, create smart context around cursor position
+    const lines = originalText.split('\n');
+    const cursorLine = context.cursorPosition.line;
+    const totalLines = lines.length;
+    
+    log(`[vibe_coding] File too large (${fullTextTokens} tokens), creating smart context around line ${cursorLine + 1}`);
+    
+    // If user has selected code, prioritize that
+    if (context.selectedCode && context.selectedCode.trim()) {
+        const selectedTokens = estimateTokenCount(context.selectedCode);
+        if (selectedTokens + instructionTokens < availableTokens) {
+            log(`[vibe_coding] Using selected code context (${selectedTokens} tokens)`);
+            return { contextText: context.selectedCode, isPartialContext: true };
+        }
+    }
+    
+    // Calculate context window around cursor
+    const maxLinesForTokens = Math.floor(availableTokens / 20); // Rough estimate: 20 tokens per line
+    const contextRadius = Math.floor(maxLinesForTokens / 2);
+    
+    const startLine = Math.max(0, cursorLine - contextRadius);
+    const endLine = Math.min(totalLines - 1, cursorLine + contextRadius);
+    
+    const contextLines = lines.slice(startLine, endLine + 1);
+    const contextText = contextLines.join('\n');
+    
+    // Add file structure info for better context
+    const fileInfo = `// File: ${totalLines} total lines, showing lines ${startLine + 1}-${endLine + 1} around cursor (line ${cursorLine + 1})
+// This is a partial view of the file. Make changes that fit naturally within this context.
+
+${contextText}`;
+    
+    log(`[vibe_coding] Created smart context: lines ${startLine + 1}-${endLine + 1} (${estimateTokenCount(fileInfo)} tokens)`);
+    return { contextText: fileInfo, isPartialContext: true };
+}
+
+/**
  * Enhanced smart code modification that handles both full and partial code outputs
  */
 async function generateSmartCodeModification(originalText: string, instruction: string, context: ContextInfo): Promise<string> {
     try {
         const { callLLMForCompletion } = await import('../llm.js');
+        
+        // Create smart context that respects token limits
+        const { contextText, isPartialContext } = createSmartContext(originalText, context, instruction);
         
         // Analyze the instruction to determine the best approach (English and Korean)
         const isTestRequest = /test|unit test|create test|add test|write test|테스트|단위 테스트|테스트 함수|테스트를 만들어|테스트 코드/i.test(instruction);
@@ -446,13 +509,16 @@ async function generateSmartCodeModification(originalText: string, instruction: 
         // Enhanced system prompt for better code generation with Korean language support
         const systemPrompt = `You are an expert coding assistant that generates high-quality code modifications. You understand instructions in both English and Korean.
 
-IMPORTANT: Always return the COMPLETE modified file, not just snippets or diffs.
+${isPartialContext ? 
+'IMPORTANT: You are working with a PARTIAL view of a large file. Return only the modified section that needs to change, maintaining proper context and structure.' :
+'IMPORTANT: Always return the COMPLETE modified file, not just snippets or diffs.'}
 
 CONTEXT ANALYSIS:
 - Current cursor: Line ${context.cursorPosition.line + 1}
 - In function: ${context.focusedFunction ? 'Yes' : 'No'}
 - Selected code: ${context.selectedCode ? 'Yes' : 'No'}
 - File size: ${context.isLargeFile ? 'Large' : 'Normal'}
+- Context type: ${isPartialContext ? 'Partial (large file)' : 'Complete'}
 
 LANGUAGE SUPPORT:
 - You understand Korean instructions like "코드의 신택스 에러를 고쳐줘" (fix syntax errors in the code)
@@ -460,23 +526,31 @@ LANGUAGE SUPPORT:
 - Respond to Korean instructions with the same quality as English instructions
 
 RULES:
-1. Return the complete file with all modifications applied
-2. Maintain proper code structure and formatting
-3. Include all necessary imports
-4. Preserve existing functionality while adding requested changes
-5. Do not use markdown code fences in your response
-6. Handle both English and Korean instructions with equal proficiency`;
+${isPartialContext ? 
+'1. Return only the modified section with proper context\n2. Maintain existing indentation and structure exactly as provided\n3. Include necessary imports if adding new functionality\n4. Focus changes around the cursor position\n5. DO NOT reformat or change existing code formatting' :
+'1. Return the complete file with all modifications applied\n2. Preserve existing code structure and formatting exactly as provided\n3. Include all necessary imports\n4. Preserve existing functionality while adding requested changes\n5. DO NOT reformat or change existing code formatting'}
+6. Do not use markdown code fences in your response
+7. Handle both English and Korean instructions with equal proficiency
+8. IMPORTANT: Do not apply any code formatting, linting, or style changes unless explicitly requested`;
 
-        // Always request complete file to avoid merging issues
-        const prompt = `Original Code:
-${originalText}
+        // Create appropriate prompt based on context type
+        const prompt = isPartialContext ? 
+            `Code Context:
+${contextText}
+
+Instruction: ${instruction}
+
+Analyze the code context and instruction, then return the modified section with the requested changes.
+Focus on the area around the cursor and make targeted improvements.` :
+            `Original Code:
+${contextText}
 
 Instruction: ${instruction}
 
 Analyze the code and instruction, then return the complete modified file with all improvements.
 Make sure to include all existing code plus the requested changes.`;
         
-        log(`[vibe_coding] Smart modification request: ${instruction}`);
+        log(`[vibe_coding] Smart modification request: ${instruction} (${isPartialContext ? 'partial' : 'full'} context)`);
         
         // Start thinking audio during LLM processing
         await startThinkingAudio();
@@ -489,6 +563,12 @@ Make sure to include all existing code plus the requested changes.`;
             
             // Clean up the response
             const cleanedCode = stripCodeFences(modifiedCode);
+            
+            // For partial context, we need to merge the changes back into the original file
+            if (isPartialContext) {
+                log(`[vibe_coding] Merging partial changes back into full file`);
+                return mergePartialChanges(originalText, cleanedCode, context);
+            }
             
             log(`[vibe_coding] Smart modification completed`);
             return cleanedCode;
@@ -504,7 +584,46 @@ Make sure to include all existing code plus the requested changes.`;
     }
 }
 
-async function showSmartDiffPreview(changeId: string, result: VibeCodingResult): Promise<void> {
+/**
+ * Get programming language from file extension
+ */
+function getLanguageFromExtension(ext: string): string {
+    const langMap: { [key: string]: string } = {
+        '.ts': 'TypeScript',
+        '.js': 'JavaScript',
+        '.py': 'Python',
+        '.java': 'Java',
+        '.cpp': 'C++',
+        '.c': 'C',
+        '.cs': 'C#',
+        '.go': 'Go',
+        '.rs': 'Rust',
+        '.php': 'PHP',
+        '.rb': 'Ruby'
+    };
+    return langMap[ext] || 'Unknown';
+}
+
+/**
+ * Merge partial changes back into the original file
+ */
+function mergePartialChanges(originalText: string, partialChanges: string, context: ContextInfo): string {
+    // For now, return the partial changes as-is
+    // In a more sophisticated implementation, we would intelligently merge
+    // the changes back into the specific location in the original file
+    
+    // If user had selected code, replace the selection
+    if (context.selectedCode && context.selectedCode.trim()) {
+        return originalText.replace(context.selectedCode, partialChanges);
+    }
+    
+    // Otherwise, for partial context, we'll return the changes as-is
+    // This is a simplified approach - a full implementation would need
+    // more sophisticated merging logic
+    return partialChanges;
+}
+
+async function showSmartDiffPreview(changeId: string, result: VibeCodingResult, options?: { suppressConversationalASR?: boolean }): Promise<void> {
     const { changes, summary, totalAdded, totalRemoved, modifiedText, originalText, changeDescription } = result;
     
     if (changes.length === 0) {
@@ -520,14 +639,20 @@ async function showSmartDiffPreview(changeId: string, result: VibeCodingResult):
         // Validate that we have different content
         if (originalText === modifiedText) {
             log(`[vibe_coding] No changes detected - original and modified text are identical`);
-            // Silent - log instead of speaking
-            log('[vibe_coding] No changes were made');
-            vscode.window.showInformationMessage('No changes were made to the code.');
+            vscode.window.showInformationMessage('No changes detected in the code.');
             return;
         }
         
-        // Show changes briefly and auto-accept
-        await showChangesAndAutoAccept(changeId, result);
+        // Get current editor to determine file path
+        const editor = isEditorActive();
+        if (!editor) {
+            log('[vibe_coding] No active editor for diff preview');
+            await showChangesAndAutoAccept(changeId, result, options);
+            return;
+        }
+        
+        // Create simple inline diff with red/green highlighting
+        await showSimpleVibeCodingDiff(editor, originalText, modifiedText, summary, changeId, result, options);
         
     } catch (error) {
         log(`[vibe_coding] Error showing diff preview: ${error}`);
@@ -538,19 +663,424 @@ async function showSmartDiffPreview(changeId: string, result: VibeCodingResult):
 }
 
 /**
+ * Show inline diff for vibe coding changes
+ */
+async function showVibeCodingDiff(
+    filePath: string, 
+    originalText: string, 
+    modifiedText: string, 
+    summary: string, 
+    changeId: string, 
+    result: VibeCodingResult,
+    options?: { suppressConversationalASR?: boolean }
+): Promise<void> {
+    try {
+        log(`[vibe_coding] Creating inline diff for: ${filePath}`);
+        
+        // Open the original file
+        const originalUri = vscode.Uri.file(filePath);
+        const document = await vscode.workspace.openTextDocument(originalUri);
+        const editor = await vscode.window.showTextDocument(document, {
+            preview: false,
+            preserveFocus: false
+        });
+        
+        // Create inline diff preview in a new document
+        const fileName = path.basename(filePath);
+        const previewContent = createVibeCodingDiffPreview(originalText, modifiedText, summary);
+        const previewUri = vscode.Uri.parse(`untitled:${fileName} - Vibe Coding Changes`);
+        const previewDoc = await vscode.workspace.openTextDocument(previewUri);
+        await vscode.window.showTextDocument(previewDoc, { viewColumn: vscode.ViewColumn.Beside });
+        
+        // Insert the preview content
+        const previewEditor = vscode.window.activeTextEditor;
+        if (previewEditor) {
+            await previewEditor.edit(editBuilder => {
+                editBuilder.insert(new vscode.Position(0, 0), previewContent);
+            });
+        }
+        
+        // Show changes summary with options
+        const changesSummary = `+${result.totalAdded || 0} -${result.totalRemoved || 0}`;
+        
+        // Ask user for confirmation
+        const choice = await vscode.window.showInformationMessage(
+            `Apply vibe coding changes to ${fileName}?\n\n${summary}\nChanges: ${changesSummary}`,
+            { modal: true },
+            'Apply Changes',
+            'Cancel'
+        );
+        
+        // Close preview document
+        if (previewEditor) {
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        }
+        
+        if (choice === 'Apply Changes') {
+            await applyPendingChange(changeId);
+            
+            // Show success message
+            vscode.window.showInformationMessage(
+                `✅ Vibe coding changes applied: ${changesSummary}`,
+                { modal: false }
+            );
+            
+            // Speak success
+            await speakTokenListWithTracking([{ 
+                tokens: [`Changes applied successfully. ${summary}`], 
+                category: undefined 
+            }]);
+            
+            // Show intelligent suggestions after applying changes
+            const updatedEditor = isEditorActive();
+            if (updatedEditor) {
+                const updatedFilePath = updatedEditor.document.fileName;
+                const updatedContent = updatedEditor.document.getText();
+                
+                // Small delay to let changes settle
+                // Only show intelligent suggestions if not suppressed
+                if (!options?.suppressConversationalASR) {
+                    setTimeout(async () => {
+                        await showIntelligentSuggestions(
+                            updatedContent,
+                            updatedFilePath,
+                            getLanguageFromExtension,
+                            async (instruction: string) => {
+                                await activateVibeCoding(instruction);
+                            }
+                        );
+                    }, 1500);
+                }
+            }
+        } else {
+            log(`[vibe_coding] User cancelled changes for ${changeId}`);
+            await rejectPendingChange(changeId);
+        }
+        
+    } catch (error) {
+        log(`[vibe_coding] Error in inline diff: ${error}`);
+        // Fallback to auto-accept
+        await showChangesAndAutoAccept(changeId, result, options);
+    }
+}
+
+/**
+ * Show simple inline diff for vibe coding changes
+ */
+async function showSimpleVibeCodingDiff(
+    editor: vscode.TextEditor,
+    originalText: string, 
+    modifiedText: string, 
+    summary: string, 
+    changeId: string, 
+    result: VibeCodingResult,
+    options?: { suppressConversationalASR?: boolean }
+): Promise<void> {
+    try {
+        log(`[vibe_coding] Creating simple diff for: ${editor.document.fileName}`);
+        
+        // Show simple diff with accept/reject
+        const accepted = await showSimpleVibeCodingStyleDiff(editor, originalText, modifiedText, summary, result);
+        
+        if (accepted) {
+            await applyPendingChange(changeId);
+            
+            // Show success message
+            const changesSummary = `+${result.totalAdded || 0} -${result.totalRemoved || 0}`;
+            vscode.window.showInformationMessage(
+                `✅ Changes applied: ${changesSummary}`,
+                { modal: false }
+            );
+            
+            // Speak success
+            await speakTokenListWithTracking([{ 
+                tokens: [`Changes applied successfully. ${summary}`], 
+                category: undefined 
+            }]);
+            
+            // Show intelligent suggestions after applying changes
+            if (!options?.suppressConversationalASR) {
+                const updatedEditor = isEditorActive();
+                if (updatedEditor) {
+                    const updatedFilePath = updatedEditor.document.fileName;
+                    const updatedContent = updatedEditor.document.getText();
+                    
+                    // Small delay to let changes settle
+                    setTimeout(async () => {
+                        await showIntelligentSuggestions(
+                            updatedContent,
+                            updatedFilePath,
+                            getLanguageFromExtension,
+                            async (instruction: string) => {
+                                await activateVibeCoding(instruction);
+                            }
+                        );
+                    }, 1500);
+                }
+            }
+        } else {
+            log(`[vibe_coding] User rejected changes for ${changeId}`);
+            await rejectPendingChange(changeId);
+        }
+        
+    } catch (error) {
+        log(`[vibe_coding] Error in simple diff: ${error}`);
+        // Fallback to auto-accept
+        await showChangesAndAutoAccept(changeId, result, options);
+    }
+}
+
+/**
+ * Show simple diff for vibe coding with red/green highlighting
+ */
+async function showSimpleVibeCodingStyleDiff(
+    editor: vscode.TextEditor, 
+    originalText: string, 
+    modifiedText: string, 
+    summary: string, 
+    result: VibeCodingResult
+): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+        // Apply the modified content to show the changes
+        editor.edit(editBuilder => {
+            const fullRange = new vscode.Range(
+                new vscode.Position(0, 0),
+                new vscode.Position(editor.document.lineCount, 0)
+            );
+            editBuilder.replace(fullRange, modifiedText);
+        }).then(() => {
+            // Apply proper diff highlighting with red/green colors
+            applyProperVibeCodingHighlighting(editor, originalText, modifiedText);
+            
+            // Show accept/reject buttons
+            showProperVibeCodingAcceptReject(editor, originalText, modifiedText, summary, result, resolve);
+        });
+    });
+}
+
+// Global decoration types for vibe coding
+let vbAddedDecorationType: vscode.TextEditorDecorationType | null = null;
+let vbRemovedDecorationType: vscode.TextEditorDecorationType | null = null;
+let vbActiveEditor: vscode.TextEditor | null = null;
+
+/**
+ * Apply proper diff highlighting using diff library
+ */
+function applyProperVibeCodingHighlighting(editor: vscode.TextEditor, originalText: string, modifiedText: string): void {
+    // Clear any existing decorations
+    clearVibeCodingDecorations();
+    
+    // Create decoration types
+    vbAddedDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: 'rgba(46, 160, 67, 0.2)', // Green background
+        isWholeLine: true
+    });
+    
+    vbRemovedDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: 'rgba(248, 81, 73, 0.2)', // Red background
+        isWholeLine: true,
+        textDecoration: 'line-through'
+    });
+    
+    // Calculate proper diff
+    const diffResult = Diff.diffLines(originalText, modifiedText);
+    const displayContent = createVibeCodingDiffContent(diffResult);
+    
+    // Replace editor content with diff display
+    editor.edit(editBuilder => {
+        const fullRange = new vscode.Range(
+            new vscode.Position(0, 0),
+            new vscode.Position(editor.document.lineCount, 0)
+        );
+        editBuilder.replace(fullRange, displayContent.content);
+    }).then(() => {
+        // Apply decorations
+        const addedDecorations: vscode.DecorationOptions[] = [];
+        const removedDecorations: vscode.DecorationOptions[] = [];
+        
+        displayContent.lineTypes.forEach((lineType, index) => {
+            const range = new vscode.Range(
+                new vscode.Position(index, 0),
+                new vscode.Position(index, Number.MAX_SAFE_INTEGER)
+            );
+            
+            if (lineType === 'added') {
+                addedDecorations.push({ range });
+            } else if (lineType === 'removed') {
+                removedDecorations.push({ range });
+            }
+        });
+        
+        if (vbAddedDecorationType) {
+            editor.setDecorations(vbAddedDecorationType, addedDecorations);
+        }
+        if (vbRemovedDecorationType) {
+            editor.setDecorations(vbRemovedDecorationType, removedDecorations);
+        }
+        
+        vbActiveEditor = editor;
+    });
+}
+
+/**
+ * Create diff content for vibe coding
+ */
+function createVibeCodingDiffContent(diffResult: Diff.Change[]): { content: string; lineTypes: ('added' | 'removed' | 'unchanged')[] } {
+    const lines: string[] = [];
+    const lineTypes: ('added' | 'removed' | 'unchanged')[] = [];
+    
+    diffResult.forEach(change => {
+        if (change.removed) {
+            const removedLines = change.value.split('\n').filter(line => line.length > 0);
+            removedLines.forEach(line => {
+                lines.push(`// REMOVED: ${line}`);
+                lineTypes.push('removed');
+            });
+        } else if (change.added) {
+            const addedLines = change.value.split('\n').filter(line => line.length > 0);
+            addedLines.forEach(line => {
+                lines.push(line);
+                lineTypes.push('added');
+            });
+        } else {
+            const unchangedLines = change.value.split('\n').filter(line => line.length > 0);
+            unchangedLines.forEach(line => {
+                lines.push(line);
+                lineTypes.push('unchanged');
+            });
+        }
+    });
+    
+    return {
+        content: lines.join('\n'),
+        lineTypes
+    };
+}
+
+/**
+ * Clear vibe coding decorations
+ */
+function clearVibeCodingDecorations(): void {
+    if (vbActiveEditor) {
+        if (vbAddedDecorationType) {
+            vbActiveEditor.setDecorations(vbAddedDecorationType, []);
+        }
+        if (vbRemovedDecorationType) {
+            vbActiveEditor.setDecorations(vbRemovedDecorationType, []);
+        }
+        vbActiveEditor = null;
+    }
+    
+    if (vbAddedDecorationType) {
+        vbAddedDecorationType.dispose();
+        vbAddedDecorationType = null;
+    }
+    if (vbRemovedDecorationType) {
+        vbRemovedDecorationType.dispose();
+        vbRemovedDecorationType = null;
+    }
+}
+
+/**
+ * Show proper accept/reject buttons for vibe coding with cleanup
+ */
+function showProperVibeCodingAcceptReject(
+    editor: vscode.TextEditor, 
+    originalText: string,
+    modifiedText: string,
+    summary: string, 
+    result: VibeCodingResult, 
+    resolve: (accepted: boolean) => void
+): void {
+    const changesSummary = `+${result.totalAdded || 0} -${result.totalRemoved || 0}`;
+    
+    vscode.window.showInformationMessage(
+        `${summary} (${changesSummary})`,
+        '✅ Accept',
+        '❌ Reject'
+    ).then(choice => {
+        if (choice === '✅ Accept') {
+            // Apply final modified content (without diff markers)
+            editor.edit(editBuilder => {
+                const fullRange = new vscode.Range(
+                    new vscode.Position(0, 0),
+                    new vscode.Position(editor.document.lineCount, 0)
+                );
+                editBuilder.replace(fullRange, modifiedText);
+            });
+            clearVibeCodingDecorations();
+            resolve(true);
+        } else {
+            // Restore original content
+            editor.edit(editBuilder => {
+                const fullRange = new vscode.Range(
+                    new vscode.Position(0, 0),
+                    new vscode.Position(editor.document.lineCount, 0)
+                );
+                editBuilder.replace(fullRange, originalText);
+            });
+            clearVibeCodingDecorations();
+            resolve(false);
+        }
+    });
+}
+
+/**
+ * Create inline diff preview content for vibe coding
+ */
+function createVibeCodingDiffPreview(original: string, modified: string, summary: string): string {
+    const originalLines = original.split('\n');
+    const modifiedLines = modified.split('\n');
+    const previewLines: string[] = [];
+    
+    previewLines.push(`// Vibe Coding Changes Preview`);
+    previewLines.push(`// Summary: ${summary}`);
+    previewLines.push(`// Legend: Green (+) = Added, Red (-) = Removed`);
+    previewLines.push('');
+    
+    const maxLines = Math.max(originalLines.length, modifiedLines.length);
+    
+    for (let i = 0; i < maxLines; i++) {
+        const originalLine = originalLines[i];
+        const modifiedLine = modifiedLines[i];
+        
+        if (originalLine === undefined) {
+            // Line added
+            previewLines.push(`+ ${modifiedLine}`);
+        } else if (modifiedLine === undefined) {
+            // Line removed
+            previewLines.push(`- ${originalLine}`);
+        } else if (originalLine !== modifiedLine) {
+            // Line modified
+            previewLines.push(`- ${originalLine}`);
+            previewLines.push(`+ ${modifiedLine}`);
+        } else {
+            // Line unchanged (show some context)
+            previewLines.push(`  ${originalLine}`);
+        }
+    }
+    
+    return previewLines.join('\n');
+}
+
+/**
  * Show changes briefly and automatically accept them
  */
-async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResult): Promise<void> {
+async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResult, options?: { suppressConversationalASR?: boolean }): Promise<void> {
     const { changes, summary, totalAdded, totalRemoved, modifiedText, originalText, changeDescription } = result;
     
     try {
         log(`[vibe_coding] Showing changes and auto-accepting for change ${changeId}`);
         
-        // Show a brief notification about the changes
-        vscode.window.showInformationMessage(
-            `${summary} - Changes: +${totalAdded} -${totalRemoved} lines (Auto-applying...)`,
-            { modal: false }
-        );
+        // Show a brief notification about the changes and speak it
+        const autoApplyMessage = `${summary} (Auto-applying...)`;
+        vscode.window.showInformationMessage(autoApplyMessage, { modal: false });
+        
+        // Speak the summary
+        await speakTokenListWithTracking([{ 
+            tokens: [summary], 
+            category: undefined 
+        }]);
         
         // Brief delay to show the notification
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -558,13 +1088,40 @@ async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResu
         // Auto-apply the changes
         await applyPendingChange(changeId);
         
-        // Show success notification
-        vscode.window.showInformationMessage(
-            `✅ Changes applied successfully: ${summary}`,
-            { modal: false }
-        );
+        // Show success notification and speak it
+        const successMessage = `✅ Changes applied successfully: ${summary}`;
+        vscode.window.showInformationMessage(successMessage, { modal: false });
+        
+        // Speak the success message
+        await speakTokenListWithTracking([{ 
+            tokens: [`Changes applied successfully. ${summary}`], 
+            category: undefined 
+        }]);
         
         log(`[vibe_coding] Auto-accepted change ${changeId}: ${summary}`);
+        
+        // Show intelligent suggestions for next improvements
+        const editor = isEditorActive();
+        if (editor) {
+            const filePath = editor.document.fileName;
+            const modifiedContent = editor.document.getText();
+            
+            // Small delay to let the changes settle
+            // Only show intelligent suggestions if not suppressed
+            if (!options?.suppressConversationalASR) {
+                setTimeout(async () => {
+                    await showIntelligentSuggestions(
+                        modifiedContent,
+                        filePath,
+                        getLanguageFromExtension,
+                        async (instruction: string) => {
+                            // Use vibe coding for the next suggestion
+                            await activateVibeCoding(instruction);
+                        }
+                    );
+                }, 1500);
+            }
+        }
         
     } catch (error) {
         log(`[vibe_coding] Error in auto-accept: ${error}`);
@@ -683,12 +1240,16 @@ async function showInlineDiffWithDecorations(changeId: string, result: VibeCodin
         
         log(`[vibe_coding] Applied ${addedRanges.length} added, ${removedRanges.length} removed, ${modifiedRanges.length} modified decorations`);
         
-        // Silent - no audio announcement of changes
+        // Speak the summary of changes
         log(`[vibe_coding] Changes ready: ${result.summary}`);
+        await speakTokenListWithTracking([{ 
+            tokens: [summary], 
+            category: undefined 
+        }]);
         
         // Show action buttons with enhanced options
         const action = await vscode.window.showInformationMessage(
-            `${summary}\n\n📊 Changes: +${totalAdded} -${totalRemoved} lines\n\n💡 Review the highlighted changes and choose an action:`,
+            `${summary}\n\n💡 Review the highlighted changes and choose an action:`,
             { modal: false }, // Non-modal so user can see the editor
             'Apply Changes',
             'Reject Changes',
@@ -723,8 +1284,14 @@ async function showInlineDiffWithDecorations(changeId: string, result: VibeCodin
 async function showInlineDiffActionDialog(changeId: string, result: VibeCodingResult): Promise<void> {
     const { summary, totalAdded, totalRemoved } = result;
     
+    // Speak the summary
+    await speakTokenListWithTracking([{ 
+        tokens: [summary], 
+        category: undefined 
+    }]);
+    
     const action = await vscode.window.showInformationMessage(
-        `${summary}\n\n📊 Changes: +${totalAdded} -${totalRemoved} lines\n\n💡 Choose an action:`,
+        `${summary}\n\n💡 Choose an action:`,
         { modal: false },
         'Apply Changes',
         'Reject Changes'
@@ -1269,15 +1836,15 @@ function generateIntelligentSummary(changes: CodeChange[], totalAdded: number, t
         const classCount = (addedCode.match(/class\s+\w+/g) || []).length;
         summary = `Added ${classCount} new class${classCount > 1 ? 'es' : ''}`;
     } else if (totalAdded > 10 && totalRemoved > 10) {
-        summary = `Major code refactoring with ${totalAdded} additions and ${totalRemoved} removals`;
+        summary = `Major code refactoring completed`;
     } else if (totalAdded > 0 && totalRemoved > 0) {
-        summary = `Modified code with ${totalAdded} additions and ${totalRemoved} removals`;
+        summary = `Code modified with improvements`;
     } else if (totalAdded > 0) {
-        summary = `Added ${totalAdded} lines of code`;
+        summary = `New code added`;
     } else if (totalRemoved > 0) {
-        summary = `Removed ${totalRemoved} lines of code`;
+        summary = `Code cleaned up`;
     } else {
-        summary = `Modified ${changes.length} locations in the code`;
+        summary = `Code modified`;
     }
     
     // Add quality improvements
@@ -1319,13 +1886,13 @@ function generateDetailedChangeDescription(
             description += `Added comprehensive test suite with ${testCount} test methods. `;
             break;
         case 'full_rewrite':
-            description += `Complete code rewrite with ${totalAdded} additions and ${totalRemoved} removals. `;
+            description += `Complete code rewrite with improvements. `;
             break;
         case 'partial_modification':
-            description += `Modified existing code with ${totalAdded} additions and ${totalRemoved} removals. `;
+            description += `Modified existing code with enhancements. `;
             break;
         case 'addition':
-            description += `Added ${totalAdded} new lines of code. `;
+            description += `Added new code. `;
             break;
     }
     
@@ -1420,7 +1987,7 @@ async function announceCodeChanges(result: VibeCodingResult) {
         log(`[vibe_coding] Error announcing changes: ${error}`);
         // Fallback to basic announcement
         await speakTokenListWithTracking([{ 
-            tokens: [`Code modified with ${totalAdded} additions and ${totalRemoved} removals`], 
+            tokens: [`Code modified successfully`], 
             category: undefined 
         }]);
     }
@@ -1432,8 +1999,14 @@ async function announceCodeChanges(result: VibeCodingResult) {
 async function showSimpleDiffPreview(changeId: string, result: VibeCodingResult) {
     const { summary, totalAdded, totalRemoved } = result;
     
+    // Speak the summary
+    await speakTokenListWithTracking([{ 
+        tokens: [summary], 
+        category: undefined 
+    }]);
+    
     const action = await vscode.window.showInformationMessage(
-        `${summary}\n\nChanges: +${totalAdded} -${totalRemoved} lines`,
+        `${summary}`,
         'Apply Changes',
         'Reject Changes',
         'Show Details'
@@ -1501,7 +2074,7 @@ async function applyPendingChange(changeId: string) {
     
     const editor = await getActiveEditorWithRetry();
     if (!editor) {
-        vscode.window.showErrorMessage('No active editor found. Please open a file and try again.');
+        vscode.window.setStatusBarMessage('No active editor - please open a file and try again', 4000);
         log('[vibe_coding] No active editor found when applying changes');
         return;
     }
@@ -1589,8 +2162,7 @@ async function speakVibeCodingSuccess(result: VibeCodingResult) {
                 break;
         }
         
-        message += `${totalAdded} lines added, ${totalRemoved} lines removed. `;
-        
+        // Focus on feature-based summary instead of line counts
         if (affectedFunctions.length > 0) {
             message += `Modified: ${affectedFunctions.slice(0, 3).join(', ')}`;
             if (affectedFunctions.length > 3) {

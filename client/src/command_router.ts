@@ -2,8 +2,12 @@ import * as vscode from 'vscode';
 import { log, logError, logSuccess, logWarning } from './utils';
 import { getOpenAIClient } from './llm';
 import { analyzeCodeWithQuestion } from './features/code_analysis';
-import { startThinkingAudio, stopThinkingAudio } from './audio';
+import { askLLMQuestion } from './features/llm_question';
+import { startThinkingAudio, stopThinkingAudio, speakTokenList, TokenChunk } from './audio';
 import { logCommandExecution, logFeatureUsage } from './activity_logger';
+import { getLastActiveEditor, getLastActiveEditorTabAware, openFileTabAware } from './features/last_editor_tracker';
+import { isEditorActive } from './ide/active';
+
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -11,7 +15,7 @@ import * as path from 'path';
  * Find a function in the current document using LLM
  */
 export async function findFunctionWithLLM(functionName: string, contextEditor?: vscode.TextEditor): Promise<{ line: number; character: number } | null> {
-    const editor = contextEditor || vscode.window.activeTextEditor;
+    const editor = contextEditor || await getLastActiveEditorTabAware(true);
     if (!editor) {
         return null;
     }
@@ -277,9 +281,9 @@ export class CommandRouter {
                 }
             }
             
-            // Fallback to current active editor
+            // Fallback to last active editor
             if (!targetEditor) {
-                targetEditor = vscode.window.activeTextEditor;
+                targetEditor = await getLastActiveEditorTabAware(true) || undefined;
             }
             
             if (!targetEditor) {
@@ -347,14 +351,29 @@ export class CommandRouter {
                 }
             }
             
-            // Fallback to current active editor
+            // Fallback to current active editor first
             if (!targetEditor) {
                 targetEditor = vscode.window.activeTextEditor;
+                log(`[CommandRouter] Using current active editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
+            }
+            
+            // Then fallback to last active editor
+            if (!targetEditor) {
+                targetEditor = await getLastActiveEditorTabAware(true) || undefined;
+                log(`[CommandRouter] Using last active editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
             }
             
             if (!targetEditor) {
-                vscode.window.showErrorMessage('No editor available to navigate to line');
-                return false;
+                log(`[CommandRouter] ❌ No editor found after all fallbacks for line navigation`);
+                
+                // Try to use any visible text editor as a last resort
+                if (vscode.window.visibleTextEditors.length > 0) {
+                    targetEditor = vscode.window.visibleTextEditors[0];
+                    log(`[CommandRouter] Using first visible editor as fallback: ${targetEditor.document.fileName}`);
+                } else {
+                    vscode.window.showErrorMessage('No editor available to navigate to line. Please open a file first.');
+                    return false;
+                }
             }
 
             try {
@@ -412,14 +431,34 @@ export class CommandRouter {
                 }
             }
             
-            // Fallback to current active editor
+            // Fallback to current active editor first
             if (!targetEditor) {
                 targetEditor = vscode.window.activeTextEditor;
+                log(`[CommandRouter] Using current active editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
+            }
+            
+            // Then fallback to last active editor
+            if (!targetEditor) {
+                targetEditor = await getLastActiveEditorTabAware(true) || undefined;
+                log(`[CommandRouter] Using last active editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
             }
             
             if (!targetEditor) {
-                vscode.window.showErrorMessage('No editor available to navigate to line');
-                return false;
+                log(`[CommandRouter] ❌ No editor found after all fallbacks`);
+                log(`[CommandRouter] Active editor: ${vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.fileName : 'none'}`);
+                log(`[CommandRouter] Visible editors: ${vscode.window.visibleTextEditors.length}`);
+                vscode.window.visibleTextEditors.forEach((editor, index) => {
+                    log(`[CommandRouter] Visible editor ${index}: ${editor.document.fileName} (scheme: ${editor.document.uri.scheme})`);
+                });
+                
+                // Try to use any visible text editor as a last resort
+                if (vscode.window.visibleTextEditors.length > 0) {
+                    targetEditor = vscode.window.visibleTextEditors[0];
+                    log(`[CommandRouter] Using first visible editor as fallback: ${targetEditor.document.fileName}`);
+                } else {
+                    vscode.window.showErrorMessage('No editor available to navigate to line. Please open a file first.');
+                    return false;
+                }
             }
 
             try {
@@ -471,9 +510,9 @@ export class CommandRouter {
                 }
             }
             
-            // Fallback to current active editor
+            // Fallback to last active editor
             if (!targetEditor) {
-                targetEditor = vscode.window.activeTextEditor;
+                targetEditor = await getLastActiveEditorTabAware(true) || undefined;
             }
             
             if (!targetEditor) {
@@ -560,9 +599,9 @@ export class CommandRouter {
                 }
             }
             
-            // Fallback to current active editor
+            // Fallback to last active editor
             if (!targetEditor) {
-                targetEditor = vscode.window.activeTextEditor;
+                targetEditor = await getLastActiveEditorTabAware(true) || undefined;
             }
             
             if (!targetEditor) {
@@ -671,9 +710,11 @@ Available command categories:
 7. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
 8. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
 9. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
-10. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
-11. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
-12. NOT_A_COMMAND - Just regular text to type
+10. PYTHON_EXECUTION - Execute Python files via bash (e.g., "run main.py", "execute test.py", "run university.py")
+11. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
+12. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
+13. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
+14. NOT_A_COMMAND - Just regular text to type
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -686,9 +727,11 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "command": "symbolTree",
     "syntaxErrorAction": "list|next|previous",
     "operation": "save",
+    "filename": "main.py",
     "codeDescription": "function that gets parameter x and y and returns sum",
     "generationType": "complete|create|test",
-    "question": "what does this function do?"
+    "question": "what does this function do?",
+    "generalQuestion": "what is a sine function?"
   },
   "reasoning": "Brief explanation"
 }
@@ -787,16 +830,22 @@ Only include parameters relevant to the category. Use null for missing parameter
                 case 'NAVIGATION_OPERATION':
                     return await this.executeLLMNavigationOperation(parameters, originalText);
                 
+                case 'PYTHON_EXECUTION':
+                    return await this.executeLLMPythonExecution(parameters, originalText);
+                
                 case 'CODE_GENERATION':
-                    // Route all code generation to vibe coding with original text
+                    // Route all code generation to enhanced ASR code editing workflow
                     if (this.options.enableLogging) {
-                        log(`[CommandRouter] 🎨 Routing code generation to vibe coding with instruction: "${originalText}"`);
+                        log(`[CommandRouter] 🎨 Routing code generation to ASR code editing with instruction: "${originalText}"`);
                     }
-                    await vscode.commands.executeCommand('lipcoder.vibeCoding', originalText);
+                    await vscode.commands.executeCommand('lipcoder.asrCodeEdit', originalText);
                     return true;
                 
                 case 'CODE_ANALYSIS':
                     return await this.executeLLMCodeAnalysis(parameters, originalText);
+                
+                case 'LLM_QUESTION':
+                    return await this.executeLLMGeneralQuestion(parameters, originalText);
                 
                 case 'NOT_A_COMMAND':
                     if (this.options.enableLogging) {
@@ -840,13 +889,30 @@ Only include parameters relevant to the category. Use null for missing parameter
             }
         }
         
+        // Fallback to current active editor first
         if (!targetEditor) {
             targetEditor = vscode.window.activeTextEditor;
+            log(`[CommandRouter] LLM Line Navigation - Using current active editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
+        }
+        
+        // Then fallback to isEditorActive and last active editor
+        if (!targetEditor) {
+            targetEditor = isEditorActive() || await getLastActiveEditorTabAware(true) || undefined;
+            log(`[CommandRouter] LLM Line Navigation - Using fallback editor: ${targetEditor ? targetEditor.document.fileName : 'none'}`);
         }
         
         if (!targetEditor) {
-            vscode.window.showErrorMessage('No editor available to navigate to line');
-            return false;
+            log(`[CommandRouter] ❌ LLM Line Navigation - No editor found after all fallbacks`);
+            
+            // Try to use any visible text editor as a last resort
+            if (vscode.window.visibleTextEditors.length > 0) {
+                targetEditor = vscode.window.visibleTextEditors[0];
+                log(`[CommandRouter] LLM Line Navigation - Using first visible editor as fallback: ${targetEditor.document.fileName}`);
+            } else {
+                vscode.window.setStatusBarMessage('No editor available to navigate to line', 3000);
+                await this.speakErrorMessage('No active editor found. Please open a code file first.');
+                return false;
+            }
         }
 
         try {
@@ -874,9 +940,10 @@ Only include parameters relevant to the category. Use null for missing parameter
             return false;
         }
 
-        let targetEditor = this.editorContext?.editor || vscode.window.activeTextEditor;
+        let targetEditor = this.editorContext?.editor || isEditorActive() || await getLastActiveEditorTabAware(true) || undefined;
         if (!targetEditor) {
-            vscode.window.showErrorMessage('No editor available to search for function');
+            vscode.window.setStatusBarMessage('No editor available to search for function', 3000);
+            await this.speakErrorMessage('No active editor found. Please open a code file first.');
             return false;
         }
 
@@ -925,7 +992,7 @@ Only include parameters relevant to the category. Use null for missing parameter
      * Execute parent navigation command
      */
     private async executeLLMParentNavigation(originalText: string): Promise<boolean> {
-        let targetEditor = this.editorContext?.editor || vscode.window.activeTextEditor;
+        let targetEditor = this.editorContext?.editor || await getLastActiveEditorTabAware(true) || undefined;
         if (!targetEditor) {
             vscode.window.showErrorMessage('No editor available for parent navigation');
             return false;
@@ -995,6 +1062,21 @@ Only include parameters relevant to the category. Use null for missing parameter
             'breadcrumb': 'lipcoder.breadcrumb',
             'whereAmI': 'lipcoder.breadcrumb',
             'fileTree': 'lipcoder.fileTree',
+            'findFiles': 'lipcoder.findFiles',
+            'searchFiles': 'lipcoder.findFiles',
+            'examineFile': 'lipcoder.examineFile',
+            'findCsv': 'lipcoder.findCsvFiles',
+            'csvFiles': 'lipcoder.findCsvFiles',
+            'checkCSVFiles': 'lipcoder.checkCSVFiles',
+            'analyzeCSVFile': 'lipcoder.analyzeCSVFile',
+            'findAnyFiles': 'lipcoder.findAnyFiles',
+            'openFileByName': 'lipcoder.openFileByName',
+            'analyzeFile': 'lipcoder.analyzeFile',
+            'generateBashScript': 'lipcoder.generateBashScript',
+            'previewBashScript': 'lipcoder.previewBashScript',
+            'fileBrowser': 'lipcoder.interactiveFileBrowser',
+            'browse': 'lipcoder.interactiveFileBrowser',
+            'createCsvFunction': 'lipcoder.createCsvFunction',
             'explorer': 'lipcoder.goToExplorer',
             'editor': 'lipcoder.goToEditor',
             'readLine': 'lipcoder.readLineTokens',
@@ -1159,6 +1241,180 @@ Only include parameters relevant to the category. Use null for missing parameter
     }
 
     /**
+     * Execute Python file via bash command - with intelligent file finding
+     */
+    private async executeLLMPythonExecution(parameters: any, originalText: string): Promise<boolean> {
+        const filename = parameters?.filename;
+        
+        if (!filename) {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ❌ No filename provided for Python execution`);
+            }
+            vscode.window.showErrorMessage('No Python file specified to run');
+            return false;
+        }
+
+        try {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🐍 Finding and executing Python file: ${filename}`);
+            }
+
+            // Get the workspace folder
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders || workspaceFolders.length === 0) {
+                vscode.window.showErrorMessage('No workspace folder found');
+                return false;
+            }
+
+            const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+            // First, try to find the file using the universal file checker
+            let actualFilePath: string | null = null;
+            
+            // Import the file finding functions
+            const { findFilesWithBash, speakFileSearchResults } = require('./features/universal_file_checker');
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🔍 Searching for Python file: ${filename}`);
+            }
+
+            // Try multiple search patterns to find the file
+            const searchPatterns = [
+                filename,                           // Exact filename
+                `*${filename}*`,                   // Contains filename
+                `${filename}.*`,                   // Filename with any extension
+                filename.replace(/\.[^/.]+$/, "") + ".py", // Add .py if missing
+                `*${filename.replace(/\.[^/.]+$/, "")}*.py` // Fuzzy match with .py
+            ];
+
+            let searchResult = null;
+            for (const pattern of searchPatterns) {
+                try {
+                    searchResult = await findFilesWithBash(pattern);
+                    if (searchResult.files.length > 0) {
+                        // Filter to only Python files
+                        searchResult.files = searchResult.files.filter((file: any) => 
+                            file.extension === '.py' || file.name.endsWith('.py')
+                        );
+                        
+                        if (searchResult.files.length > 0) {
+                            if (this.options.enableLogging) {
+                                log(`[CommandRouter] ✅ Found ${searchResult.files.length} Python file(s) with pattern: ${pattern}`);
+                            }
+                            break;
+                        }
+                    }
+                } catch (error) {
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] ⚠️ Search pattern failed: ${pattern} - ${error}`);
+                    }
+                }
+            }
+
+            if (!searchResult || searchResult.files.length === 0) {
+                // Speak the error and show message
+                await speakTokenList([
+                    { tokens: ['Python'], category: 'keyword_python' },
+                    { tokens: ['file'], category: 'comment' },
+                    { tokens: [filename], category: 'variable' },
+                    { tokens: ['not'], category: 'comment' },
+                    { tokens: ['found'], category: 'comment' }
+                ]);
+                
+                vscode.window.showErrorMessage(`Python file not found: ${filename}. Searched workspace for Python files matching the name.`);
+                return false;
+            }
+
+            // If multiple files found, let user choose or pick the best match
+            if (searchResult.files.length === 1) {
+                actualFilePath = searchResult.files[0].path;
+            } else {
+                // Multiple files found - pick the best match or let user choose
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] 🤔 Multiple Python files found: ${searchResult.files.map((f: any) => f.name).join(', ')}`);
+                }
+
+                // Try to find exact match first
+                const exactMatch = searchResult.files.find((file: any) => 
+                    file.name === filename || 
+                    file.name === filename + '.py' ||
+                    path.basename(file.name, '.py') === path.basename(filename, '.py')
+                );
+
+                if (exactMatch) {
+                    actualFilePath = exactMatch.path;
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] ✅ Found exact match: ${exactMatch.name}`);
+                    }
+                } else {
+                    // Show quick pick for user to choose
+                    const items = searchResult.files.map((file: any) => ({
+                        label: file.name,
+                        description: `${file.lines || 0} lines`,
+                        detail: vscode.workspace.asRelativePath(file.path),
+                        filePath: file.path
+                    }));
+
+                    const selected = await vscode.window.showQuickPick(items, {
+                        placeHolder: `Multiple Python files found for "${filename}". Select one to run:`
+                    });
+
+                    if (!selected) {
+                        vscode.window.showInformationMessage('Python execution cancelled');
+                        return false;
+                    }
+
+                    actualFilePath = (selected as any).filePath;
+                }
+            }
+
+            if (!actualFilePath) {
+                vscode.window.showErrorMessage('Could not determine which Python file to run');
+                return false;
+            }
+
+            // Get relative path for execution
+            const relativePath = path.relative(workspaceRoot, actualFilePath);
+            const displayName = path.basename(actualFilePath);
+
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🚀 Executing Python file: ${actualFilePath}`);
+            }
+
+            // Create and show terminal
+            const terminal = vscode.window.createTerminal({
+                name: `Run ${displayName}`,
+                cwd: workspaceRoot
+            });
+            
+            terminal.show();
+            
+            // Execute the Python file using relative path
+            terminal.sendText(`python3 "${relativePath}"`);
+            
+            // Provide audio feedback [[memory:6411078]]
+            vscode.window.setStatusBarMessage(`🐍 Running ${displayName}...`, 3000);
+            
+            // Speak confirmation using TTS
+            await speakTokenList([
+                { tokens: ['Running'], category: 'comment' },
+                { tokens: [displayName.replace('.py', '')], category: 'variable' }
+            ]);
+
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ✅ Python file execution started: ${displayName} (${relativePath})`);
+            }
+
+            return true;
+
+        } catch (error) {
+            logError(`[CommandRouter] Python execution error: ${error}`);
+            vscode.window.showErrorMessage(`Failed to run Python file: ${error}`);
+            return false;
+        }
+    }
+
+    /**
      * Execute code analysis command using LLM
      */
     private async executeLLMCodeAnalysis(parameters: any, originalText: string): Promise<boolean> {
@@ -1182,6 +1438,34 @@ Only include parameters relevant to the category. Use null for missing parameter
         } catch (error) {
             logError(`[CommandRouter] Code analysis error: ${error}`);
             vscode.window.showErrorMessage(`Code analysis failed: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute general LLM question command
+     */
+    private async executeLLMGeneralQuestion(parameters: any, originalText: string): Promise<boolean> {
+        try {
+            // Extract question from parameters or use original text
+            const question = parameters?.generalQuestion || originalText;
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 💬 Executing general LLM question: "${question}"`);
+            }
+            
+            // Call the LLM question function
+            await askLLMQuestion(question);
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ✅ LLM question completed successfully`);
+            }
+            
+            return true;
+            
+        } catch (error) {
+            logError(`[CommandRouter] LLM question error: ${error}`);
+            vscode.window.showErrorMessage(`LLM question failed: ${error}`);
             return false;
         }
     }
@@ -1212,7 +1496,7 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         if (!targetEditor) {
-            targetEditor = vscode.window.activeTextEditor;
+            targetEditor = await getLastActiveEditorTabAware(true) || undefined;
         }
         
         if (!targetEditor) {
@@ -1375,6 +1659,25 @@ Generate appropriate ${languageId} code that:
                 preventDefault: true
             },
             
+            // Python execution
+            {
+                pattern: /(?:run|execute)\s+([a-zA-Z0-9_.-]+(?:\.py)?)/i,
+                command: '',
+                description: 'Run Python file via terminal with intelligent file finding',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    const filename = match[1]?.trim();
+                    if (!filename) {
+                        vscode.window.showErrorMessage('Please specify a Python file to run');
+                        return false;
+                    }
+
+                    // Use the same logic as the LLM execution method
+                    return await this.executeLLMPythonExecution({ filename }, originalText);
+                }
+            },
+            
             // Navigation commands - more flexible patterns
             {
                 pattern: /(?:go\s*to\s*line|goto\s*line|move\s*to\s*line|moveto\s*line|jump\s*to\s*line|jumpto\s*line).*?(\d+)/i,
@@ -1421,8 +1724,8 @@ Generate appropriate ${languageId} code that:
                     }
                     
                     if (!targetEditor) {
-                        targetEditor = vscode.window.activeTextEditor;
-                        log(`[CommandRouter] Using active editor: ${!!targetEditor}`);
+                        targetEditor = await getLastActiveEditorTabAware(true) || undefined;
+                        log(`[CommandRouter] Using last active editor: ${!!targetEditor}`);
                     }
                     
                     if (!targetEditor) {
@@ -1749,7 +2052,7 @@ Generate appropriate ${languageId} code that:
                     vscode.window.showInformationMessage(`🎯 Debug pattern matched: "${originalText}"`);
                     
                     // Navigate to line 10
-                    const targetEditor = vscode.window.activeTextEditor;
+                    const targetEditor = await getLastActiveEditorTabAware(true);
                     if (targetEditor) {
                         const position = new vscode.Position(9, 0); // Line 10 (0-indexed)
                         targetEditor.selection = new vscode.Selection(position, position);
@@ -1774,13 +2077,55 @@ Generate appropriate ${languageId} code that:
                     const lineNum = match[1] ? parseInt(match[1]) : 1;
                     vscode.window.showInformationMessage(`🔥 Simple pattern found line: ${lineNum} in "${originalText}"`);
                     
-                    const targetEditor = vscode.window.activeTextEditor;
+                    const targetEditor = await getLastActiveEditorTabAware(true);
                     if (targetEditor && lineNum > 0) {
                         const position = new vscode.Position(lineNum - 1, 0);
                         targetEditor.selection = new vscode.Selection(position, position);
                         targetEditor.revealRange(new vscode.Range(position, position));
                         vscode.window.showInformationMessage(`Navigated to line ${lineNum}!`);
                     }
+                    return true;
+                }
+            },
+
+            // LLM Question commands - Korean and English patterns
+            {
+                pattern: /^(사인 함수가 뭐야|사인함수가 뭐야|sine function|what is sine function|what is a sine function)$/i,
+                command: '',
+                description: 'Ask about sine function',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    await askLLMQuestion(originalText);
+                    return true;
+                }
+            },
+            {
+                pattern: /^(파이썬에서 리스트와 튜플의 차이점은|리스트와 튜플 차이|list vs tuple|difference between list and tuple)$/i,
+                command: '',
+                description: 'Ask about Python list vs tuple',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    await askLLMQuestion(originalText);
+                    return true;
+                }
+            },
+            {
+                pattern: /^(머신러닝이 뭐야|machine learning|what is machine learning|explain machine learning)$/i,
+                command: '',
+                description: 'Ask about machine learning',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    await askLLMQuestion(originalText);
+                    return true;
+                }
+            },
+            {
+                pattern: /^(div를 가운데 정렬하는 방법|how to center a div|center div|가운데 정렬)$/i,
+                command: '',
+                description: 'Ask about centering a div',
+                preventDefault: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    await askLLMQuestion(originalText);
                     return true;
                 }
             },
@@ -1808,6 +2153,36 @@ Generate appropriate ${languageId} code that:
                 pattern: /^(file tree)$/i,
                 command: 'lipcoder.fileTree',
                 description: 'Build file tree',
+                preventDefault: true
+            },
+            {
+                pattern: /^(find files|search files)$/i,
+                command: 'lipcoder.findFiles',
+                description: 'Find files by pattern',
+                preventDefault: true
+            },
+            {
+                pattern: /^(examine file)$/i,
+                command: 'lipcoder.examineFile',
+                description: 'Examine file content',
+                preventDefault: true
+            },
+            {
+                pattern: /^(find csv|csv files|find csv files)$/i,
+                command: 'lipcoder.findCsvFiles',
+                description: 'Find and examine CSV files',
+                preventDefault: true
+            },
+            {
+                pattern: /^(file browser|browse files|browse)$/i,
+                command: 'lipcoder.interactiveFileBrowser',
+                description: 'Interactive file browser',
+                preventDefault: true
+            },
+            {
+                pattern: /^(create csv function|csv function)$/i,
+                command: 'lipcoder.createCsvFunction',
+                description: 'Create function from CSV structure',
                 preventDefault: true
             },
             {
@@ -2075,6 +2450,28 @@ Response:`;
     }
 
     /**
+     * Speak an error message using the TTS system
+     */
+    private async speakErrorMessage(message: string): Promise<void> {
+        try {
+            log(`[CommandRouter] Speaking error message: "${message}"`);
+            
+            // Use pure TTS without any special token processing
+            const chunks: TokenChunk[] = [{
+                tokens: [message],
+                category: undefined  // No category = pure TTS without earcons
+            }];
+            
+            // Speak the error message
+            await speakTokenList(chunks);
+            
+            log(`[CommandRouter] Successfully spoke error message`);
+        } catch (error) {
+            logError(`[CommandRouter] Failed to speak error message: ${error}`);
+        }
+    }
+
+    /**
      * Process transcribed text and execute matching commands using LLM
      */
     async processTranscription(text: string): Promise<boolean> {
@@ -2088,6 +2485,16 @@ Response:`;
             log(`[CommandRouter] ==========================================`);
             log(`[CommandRouter] Processing transcription: "${trimmedText}"`);
             log(`[CommandRouter] Using LLM-based command classification`);
+        }
+        
+        // SPECIAL DEBUG: Log all line navigation attempts
+        if (trimmedText.toLowerCase().includes('line')) {
+            log(`[CommandRouter] 🔍 SPECIAL DEBUG: Line command detected: "${trimmedText}"`);
+            log(`[CommandRouter] 🔍 Active editor: ${vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.fileName : 'none'}`);
+            log(`[CommandRouter] 🔍 Visible editors: ${vscode.window.visibleTextEditors.length}`);
+            vscode.window.visibleTextEditors.forEach((editor, index) => {
+                log(`[CommandRouter] 🔍 Visible editor ${index}: ${editor.document.fileName} (scheme: ${editor.document.uri.scheme})`);
+            });
         }
 
         // Use LLM to classify and execute command
@@ -2110,6 +2517,15 @@ Response:`;
         }
 
         // Fallback to pattern matching if LLM fails
+        if (this.options.enableLogging) {
+            log(`[CommandRouter] Falling back to pattern matching...`);
+        }
+        
+        // SPECIAL DEBUG: Extra logging for line commands
+        if (trimmedText.toLowerCase().includes('line')) {
+            log(`[CommandRouter] 🔍 PATTERN FALLBACK DEBUG: Testing patterns for line command: "${trimmedText}"`);
+        }
+        
         let matchedPattern: CommandPattern | null = null;
         if (this.options.useLLMMatching) {
             matchedPattern = await this.matchCommandWithLLM(trimmedText);
@@ -2117,6 +2533,9 @@ Response:`;
 
         // If LLM didn't find a match, fall back to exact pattern matching
         if (!matchedPattern) {
+            if (trimmedText.toLowerCase().includes('line')) {
+                log(`[CommandRouter] 🔍 EXACT PATTERN DEBUG: LLM didn't find match, testing exact patterns for: "${trimmedText}"`);
+            }
             if (this.options.enableLogging) {
                 log(`[CommandRouter] LLM didn't find match, trying exact pattern matching...`);
             }
@@ -2126,6 +2545,11 @@ Response:`;
                 
                 if (this.options.enableLogging) {
                     log(`[CommandRouter] Testing pattern ${i}: ${pattern.pattern} against "${trimmedText}"`);
+                }
+                
+                // SPECIAL DEBUG: Extra logging for line patterns
+                if (trimmedText.toLowerCase().includes('line') && pattern.description?.toLowerCase().includes('line')) {
+                    log(`[CommandRouter] 🔍 LINE PATTERN DEBUG: Testing line pattern ${i}: "${pattern.description}" - ${pattern.pattern}`);
                 }
                 
                 const match = this.matchPattern(trimmedText, pattern);
@@ -2300,4 +2724,288 @@ Response:`;
             log(`[CommandRouter] Options updated: ${JSON.stringify(newOptions)}`);
         }
     }
-} 
+}
+
+/**
+ * Enhanced command routing using GPT-4o mini realtime API
+ * Integrates with existing command router for seamless voice command handling
+ */
+// Removed realtime command router function - using comprehensive CommandRouter instead
+/*
+export async function routeRealtimeCommand(result: RealtimeCommandResult): Promise<boolean> {
+    log(`[CommandRouter] Processing realtime command: ${result.command} (confidence: ${result.confidence})`);
+    
+    // Log the command execution
+    logCommandExecution(`realtime_${result.command}`, true);
+    
+    if (result.action === 'reject' || result.confidence < 0.5) {
+        await speakTokenList([
+            { tokens: ['Command'], category: undefined },
+            { tokens: ['not'], category: undefined },
+            { tokens: ['recognized'], category: undefined }
+        ]);
+        return false;
+    }
+    
+    if (result.action === 'clarify') {
+        await speakTokenList([
+            { tokens: ['Please'], category: undefined },
+            { tokens: ['clarify'], category: undefined },
+            { tokens: ['command'], category: undefined }
+        ]);
+        return false;
+    }
+    
+    try {
+        // Route to appropriate command handler
+        switch (result.command) {
+            case 'goToLine':
+                if (result.parameters?.line) {
+                    const editor = vscode.window.activeTextEditor;
+                    if (editor) {
+                        const line = Math.max(0, Math.min(result.parameters.line - 1, editor.document.lineCount - 1));
+                        const position = new vscode.Position(line, 0);
+                        editor.selection = new vscode.Selection(position, position);
+                        editor.revealRange(new vscode.Range(position, position));
+                        
+                        await speakTokenList([
+                            { tokens: ['Line'], category: undefined },
+                            { tokens: [result.parameters.line.toString()], category: undefined }
+                        ]);
+                        return true;
+                    }
+                }
+                break;
+                
+            case 'findFunction':
+                if (result.parameters?.name) {
+                    const position = await findFunctionWithLLM(result.parameters.name);
+                    if (position) {
+                        const editor = vscode.window.activeTextEditor;
+                        if (editor) {
+                            const pos = new vscode.Position(position.line, position.character);
+                            editor.selection = new vscode.Selection(pos, pos);
+                            editor.revealRange(new vscode.Range(pos, pos));
+                            
+                            await speakTokenList([
+                                { tokens: ['Found'], category: undefined },
+                                { tokens: ['function'], category: undefined },
+                                { tokens: [result.parameters.name], category: undefined }
+                            ]);
+                            return true;
+                        }
+                    } else {
+                        await speakTokenList([
+                            { tokens: ['Function'], category: undefined },
+                            { tokens: ['not'], category: undefined },
+                            { tokens: ['found'], category: undefined }
+                        ]);
+                        return false;
+                    }
+                }
+                break;
+                
+            case 'runScript':
+                if (result.parameters?.script) {
+                    const success = await executePackageJsonScript(result.parameters.script);
+                    if (success) {
+                        await speakTokenList([
+                            { tokens: ['Running'], category: undefined },
+                            { tokens: ['script'], category: undefined },
+                            { tokens: [result.parameters.script], category: undefined }
+                        ]);
+                        return true;
+                    }
+                }
+                break;
+                
+            case 'goToExplorer':
+                await vscode.commands.executeCommand('lipcoder.goToExplorer');
+                return true;
+                
+            case 'openTerminal':
+                await vscode.commands.executeCommand('lipcoder.openTerminal');
+                return true;
+                
+            case 'readLineTokens':
+                await vscode.commands.executeCommand('lipcoder.readLineTokens');
+                return true;
+                
+            case 'switchPanel':
+                await vscode.commands.executeCommand('lipcoder.switchPanel');
+                return true;
+                
+            case 'functionList':
+                await vscode.commands.executeCommand('lipcoder.functionList');
+                return true;
+                
+            case 'fileTree':
+                await vscode.commands.executeCommand('lipcoder.fileTree');
+                return true;
+                
+            case 'findFiles':
+                await vscode.commands.executeCommand('lipcoder.findFiles');
+                return true;
+                
+            case 'searchFiles':
+                await vscode.commands.executeCommand('lipcoder.findFiles');
+                return true;
+                
+            case 'examineFile':
+                await vscode.commands.executeCommand('lipcoder.examineFile');
+                return true;
+                
+            case 'findCsv':
+                await vscode.commands.executeCommand('lipcoder.findCsvFiles');
+                return true;
+                
+            case 'csvFiles':
+                await vscode.commands.executeCommand('lipcoder.findCsvFiles');
+                return true;
+                
+            case 'fileBrowser':
+                await vscode.commands.executeCommand('lipcoder.interactiveFileBrowser');
+                return true;
+                
+            case 'browse':
+                await vscode.commands.executeCommand('lipcoder.interactiveFileBrowser');
+                return true;
+                
+            case 'createCsvFunction':
+                await vscode.commands.executeCommand('lipcoder.createCsvFunction');
+                return true;
+                
+            case 'checkCSVFiles':
+                await vscode.commands.executeCommand('lipcoder.checkCSVFiles');
+                return true;
+                
+            case 'analyzeCSVFile':
+                await vscode.commands.executeCommand('lipcoder.analyzeCSVFile');
+                return true;
+                
+            case 'findAnyFiles':
+                await vscode.commands.executeCommand('lipcoder.findAnyFiles');
+                return true;
+                
+            case 'openFileByName':
+                await vscode.commands.executeCommand('lipcoder.openFileByName');
+                return true;
+                
+            case 'analyzeFile':
+                await vscode.commands.executeCommand('lipcoder.analyzeFile');
+                return true;
+                
+            case 'generateBashScript':
+                await vscode.commands.executeCommand('lipcoder.generateBashScript');
+                return true;
+                
+            case 'previewBashScript':
+                await vscode.commands.executeCommand('lipcoder.previewBashScript');
+                return true;
+                
+            case 'breadcrumb':
+                await vscode.commands.executeCommand('lipcoder.breadcrumb');
+                return true;
+                
+            case 'symbolTree':
+                await vscode.commands.executeCommand('lipcoder.symbolTree');
+                return true;
+                
+            case 'whereAmI':
+                await vscode.commands.executeCommand('lipcoder.whereAmI');
+                return true;
+                
+            case 'vibeCoding':
+                if (result.parameters?.instruction) {
+                    await vscode.commands.executeCommand('lipcoder.vibeCoding', result.parameters.instruction);
+                    return true;
+                }
+                break;
+                
+            case 'codeAnalysis':
+                if (result.parameters?.question) {
+                    await vscode.commands.executeCommand('lipcoder.codeAnalysis', result.parameters.question);
+                    return true;
+                }
+                break;
+                
+            case 'selectLine':
+                if (result.parameters?.line) {
+                    const editor = vscode.window.activeTextEditor;
+                    if (editor) {
+                        const line = Math.max(0, Math.min(result.parameters.line - 1, editor.document.lineCount - 1));
+                        const lineRange = editor.document.lineAt(line).range;
+                        editor.selection = new vscode.Selection(lineRange.start, lineRange.end);
+                        editor.revealRange(lineRange);
+                        
+                        await speakTokenList([
+                            { tokens: ['Selected'], category: undefined },
+                            { tokens: ['line'], category: undefined },
+                            { tokens: [result.parameters.line.toString()], category: undefined }
+                        ]);
+                        return true;
+                    }
+                }
+                break;
+                
+            case 'copyLine':
+                await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+                await speakTokenList([
+                    { tokens: ['Copied'], category: undefined }
+                ]);
+                return true;
+                
+            case 'pasteLine':
+                await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+                await speakTokenList([
+                    { tokens: ['Pasted'], category: undefined }
+                ]);
+                return true;
+                
+            case 'deleteLine':
+                await vscode.commands.executeCommand('editor.action.deleteLines');
+                await speakTokenList([
+                    { tokens: ['Deleted'], category: undefined },
+                    { tokens: ['line'], category: undefined }
+                ]);
+                return true;
+                
+            case 'saveFile':
+                await vscode.commands.executeCommand('workbench.action.files.save');
+                await speakTokenList([
+                    { tokens: ['File'], category: undefined },
+                    { tokens: ['saved'], category: undefined }
+                ]);
+                return true;
+                
+            case 'closeTab':
+                await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+                await speakTokenList([
+                    { tokens: ['Tab'], category: undefined },
+                    { tokens: ['closed'], category: undefined }
+                ]);
+                return true;
+                
+            default:
+                logWarning(`[CommandRouter] Unknown realtime command: ${result.command}`);
+                await speakTokenList([
+                    { tokens: ['Command'], category: undefined },
+                    { tokens: ['not'], category: undefined },
+                    { tokens: ['implemented'], category: undefined }
+                ]);
+                return false;
+        }
+    } catch (error) {
+        logError(`[CommandRouter] Realtime command execution error: ${error}`);
+        await speakTokenList([
+            { tokens: ['Command'], category: undefined },
+            { tokens: ['failed'], category: undefined }
+        ]);
+        return false;
+    }
+    
+    return false;
+}
+*/
+
+ 

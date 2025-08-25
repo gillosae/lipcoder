@@ -1,13 +1,14 @@
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
 import { log } from '../utils';
-import { specialCharMap } from '../mapping';
+import { getSpecialCharSpoken } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { speakTokenList } from '../audio';
 import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
 import { isEditorActive } from '../ide/active';
 import { config } from '../config';
 import { logFeatureUsage } from '../activity_logger';
+import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 // Track the current execution to enable immediate cancellation
 let currentReadLineTokensExecution: Promise<void> | null = null;
@@ -28,6 +29,12 @@ function calculatePanning(column: number): number {
 
 async function executeReadLineTokens(editor: vscode.TextEditor, client: LanguageClient): Promise<void> {
     try {
+        // Check if we should suppress reading for debug console or other panels
+        if (shouldSuppressReadingEnhanced(editor)) {
+            log(`[readLineTokens] Suppressing reading for debug console or other panel`);
+            return;
+        }
+        
         // Check if ASR is currently recording - if so, don't start token reading
         if (getASRRecordingActive()) {
             log(`[readLineTokens] ASR is recording - skipping token reading to avoid interference`);
@@ -37,6 +44,7 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         isReadLineTokensRunning = true;
         
         // Set flag IMMEDIATELY to prevent interruption by inline suggestions
+        // and to signal that we're starting line token reading
         setLineTokenReadingActive(true);
         log(`[readLineTokens] Line token reading flag set at start`);
         
@@ -49,6 +57,9 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         const uri = editor.document.uri.toString();
         const line = editor.selection.active.line;
         const column = editor.selection.active.character;
+        
+        // Store the current line for race condition checking
+        const originalLine = line;
         
         // Check if we were cancelled before starting LSP request
         if (lineAbortController.signal.aborted) {
@@ -71,6 +82,16 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
             log(`[readLineTokens] Cancelled after LSP request`);
             return;
         }
+        
+        // Check if cursor moved to a different line while we were waiting for LSP response
+        const currentLine = editor.selection.active.line;
+        if (currentLine !== originalLine) {
+            log(`[readLineTokens] Cursor moved from line ${originalLine} to ${currentLine} during LSP request - aborting`);
+            return;
+        }
+        
+        // The abort controller signal is more reliable than the flag for detecting cancellation
+        // The flag can be reset by other operations, but the abort signal is definitive
         
         log(`[readLineTokens] 👺👺👺👺👺  received ${tokenData.length} tokens: ${JSON.stringify(tokenData)}`);
 
@@ -98,7 +119,7 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
             if (category === 'unknown') {
                 // Single character - check if it should use specialCharMap (TTS) or earcons
                 if (text.length === 1) {
-                    if (specialCharMap[text]) {
+                    if (getSpecialCharSpoken(text)) {
                         finalCategory = 'special'; // Will trigger TTS with specialCharMap
                     } else {
                         finalCategory = 'type'; // Will trigger earcon logic
@@ -127,7 +148,7 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         // Create a flattened sequence for logging
         const flatTokens = validChunks.flatMap(chunk => chunk.tokens);
         const spokenSeq = flatTokens
-            .map(tok => specialCharMap[tok] ? `(${specialCharMap[tok]})` : tok)
+            .map(tok => getSpecialCharSpoken(tok) ? `(${getSpecialCharSpoken(tok)})` : tok)
             .join(' ');
         log(`[readLineTokens]speak sequence: ${spokenSeq}`);
 
@@ -137,6 +158,16 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
                 log(`[readLineTokens] Cancelled before starting audio`);
                 return;
             }
+            
+            // Final cursor position check to prevent race conditions
+            const finalLine = editor.selection.active.line;
+            if (finalLine !== originalLine) {
+                log(`[readLineTokens] Cursor moved from line ${originalLine} to ${finalLine} before audio - aborting`);
+                return;
+            }
+            
+            // The abort controller and cursor position checks are sufficient
+            // The flag check here was too aggressive and prevented legitimate audio
             
             await speakTokenList(validChunks, lineAbortController.signal);
             log(`[readLineTokens] Token sequence completed successfully`);

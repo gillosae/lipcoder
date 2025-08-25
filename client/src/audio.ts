@@ -7,7 +7,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { Readable } from 'stream';
 import { log, logWarning, logInfo, logError, logSuccess } from './utils';
 import { config, sileroConfig, openaiTTSConfig } from './config';
-import { isAlphabet, isNumber, specialCharMap, isEarcon } from './mapping';
+import { isAlphabet, isNumber, getSpecialCharSpoken, isEarcon } from './mapping';
 import { logTTSStart, logAudioEvent } from './activity_logger';
 
 // Import from the new modules
@@ -16,6 +16,9 @@ import { genTokenAudio, playSpecial, isTTSRequired, getSpeakerForCategory } from
 
 // Import word logic for universal application
 import { splitWordChunks, splitCommentChunks } from './features/word_logic';
+
+// Import language detection for Korean optimization
+import { containsKorean } from './language_detection';
 
 // Re-export functions that other modules expect from audio.ts
 export { genTokenAudio, playSpecial } from './tts';
@@ -76,7 +79,21 @@ async function applyVolumeBoost(inputFilePath: string, volumeBoost: number): Pro
     // Generate cache key based on file and volume boost
     const inputBasename = path.basename(inputFilePath, path.extname(inputFilePath));
     const volumeKey = volumeBoost.toFixed(3).replace('.', '_');
-    const outputFileName = `${inputBasename}_vol${volumeKey}.wav`;
+    
+    // Handle long filenames by truncating or hashing to prevent "File name too long" errors
+    let safeBasename = inputBasename;
+    const maxBaseLength = 100; // Conservative limit to avoid filesystem issues
+    
+    if (inputBasename.length > maxBaseLength) {
+        // For very long filenames, use a hash of the original name plus a truncated version
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(inputBasename).digest('hex').substring(0, 8);
+        const truncated = inputBasename.substring(0, 50); // Keep first 50 chars for readability
+        safeBasename = `${truncated}_${hash}`;
+        log(`[volumeBoost] Long filename detected, using safe name: ${safeBasename}`);
+    }
+    
+    const outputFileName = `${safeBasename}_vol${volumeKey}.wav`;
     const outputFilePath = path.join(os.tmpdir(), 'lipcoder_volume', outputFileName);
     
     // Create cache directory if it doesn't exist
@@ -190,7 +207,21 @@ async function applyAudioProcessing(inputFilePath: string, playSpeed: number, vo
     const inputBasename = path.basename(inputFilePath, path.extname(inputFilePath));
     const speedKey = playSpeed.toFixed(3).replace('.', '_');
     const volumeKey = volumeBoost ? volumeBoost.toFixed(3).replace('.', '_') : '1_000';
-    const outputFileName = `${inputBasename}_speed${speedKey}_vol${volumeKey}.wav`;
+    
+    // Handle long filenames by truncating or hashing to prevent "File name too long" errors
+    let safeBasename = inputBasename;
+    const maxBaseLength = 100; // Conservative limit to avoid filesystem issues
+    
+    if (inputBasename.length > maxBaseLength) {
+        // For very long filenames, use a hash of the original name plus a truncated version
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(inputBasename).digest('hex').substring(0, 8);
+        const truncated = inputBasename.substring(0, 50); // Keep first 50 chars for readability
+        safeBasename = `${truncated}_${hash}`;
+        log(`[audioProcessing] Long filename detected, using safe name: ${safeBasename}`);
+    }
+    
+    const outputFileName = `${safeBasename}_speed${speedKey}_vol${volumeKey}.wav`;
     const outputFilePath = path.join(os.tmpdir(), 'lipcoder_audio_processing', outputFileName);
     
     // Create cache directory if it doesn't exist
@@ -575,8 +606,16 @@ class AudioPlayer {
             return;
         }
         
+        // OPTIMIZATION: Skip pitch-preserving for alphabet/number PCM files for faster playback
+        const isAlphabetOrNumber = filePath.includes('/alphabet/') || filePath.includes('/number/');
+        const shouldUsePitchPreserving = config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isAlphabetOrNumber;
+        
+        if (isAlphabetOrNumber && config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+            log(`[playPcmCached] ALPHABET/NUMBER OPTIMIZATION: Skipping pitch-preserving for faster playback: ${path.basename(filePath)}`);
+        }
+        
         // For pitch-preserving PCM playback, convert to WAV and use time stretching
-        if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+        if (shouldUsePitchPreserving) {
             log(`[playPcmCached] Using pitch-preserving time stretching for: ${path.basename(filePath)}`);
             try {
                 // Load PCM data and convert to temporary WAV
@@ -1107,17 +1146,19 @@ class AudioPlayer {
         });
     }
 
-    stopCurrentPlayback(): void {
+    stopCurrentPlayback(immediate: boolean = false): void {
         this.isStopping = true; // Prevent new audio from starting
         
         if (this.currentSpeaker) {
             try {
-                if (config.gentleAudioStopping) {
-                    // Gentler stopping: end the stream instead of destroying it abruptly
-                    this.currentSpeaker.end();
-                } else {
-                    // Original aggressive stopping
+                if (immediate || !config.gentleAudioStopping) {
+                    // Immediate/aggressive stopping: destroy the speaker immediately
+                    log(`[AudioPlayer] Using immediate/aggressive stopping for current speaker`);
                     this.currentSpeaker.destroy();
+                } else {
+                    // Gentler stopping: end the stream instead of destroying it abruptly
+                    log(`[AudioPlayer] Using gentle stopping for current speaker`);
+                    this.currentSpeaker.end();
                 }
             } catch {}
             this.currentSpeaker = null;
@@ -1155,7 +1196,7 @@ class AudioPlayer {
 
     stopAll(): void {
         stopEarconPlayback();
-        this.stopCurrentPlayback();
+        this.stopCurrentPlayback(true); // Use immediate stopping for emergency stops
         this.fallbackManager.killAll();
         
         // Clear any pending timeout and immediately reset stopping flag
@@ -1176,12 +1217,91 @@ class AudioPlayer {
         log('[AudioPlayer] Stopping state cleared - ready for new audio');
     }
 
+    private async createTruncatedKoreanTTS(wavFilePath: string): Promise<string> {
+        try {
+            // OPTIMIZATION: For Korean TTS, don't truncate - use the full audio for better user experience
+            // The truncation was causing Korean phrases to be cut off prematurely
+            log(`[createTruncatedKoreanTTS] Korean TTS optimization: using full audio instead of truncating`);
+            return wavFilePath; // Return original file without truncation
+            
+            // The original truncation logic is commented out to prevent Korean TTS cutoff
+            /*
+            // Create a truncated version that's only 0.5 seconds long for immediate stopping
+            const truncatedPath = wavFilePath.replace('.wav', '_truncated.wav');
+            
+            // Check if truncated version already exists and is newer than original
+            if (fs.existsSync(truncatedPath)) {
+                try {
+                    const originalStat = fs.statSync(wavFilePath);
+                    const truncatedStat = fs.statSync(truncatedPath);
+                    if (truncatedStat.mtime >= originalStat.mtime) {
+                        log(`[createTruncatedKoreanTTS] Using cached truncated Korean TTS: ${path.basename(truncatedPath)}`);
+                        return truncatedPath;
+                    }
+                } catch (statError) {
+                    // If stat fails, continue with regeneration
+                    log(`[createTruncatedKoreanTTS] Stat error on cached file, regenerating: ${statError}`);
+                }
+            }
+            
+            // Use FFmpeg to truncate the audio to 0.5 seconds
+            const { spawn } = require('child_process');
+            
+            return new Promise<string>((resolve, reject) => {
+                const ffmpeg = spawn('ffmpeg', [
+                    '-i', wavFilePath,
+                    '-t', '0.5', // Truncate to 0.5 seconds
+                    '-y', // Overwrite output
+                    truncatedPath
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                
+                let stderr = '';
+                ffmpeg.stderr.on('data', (data: Buffer) => {
+                    stderr += data.toString();
+                });
+                
+                ffmpeg.on('close', (code: number) => {
+                    if (code === 0) {
+                        log(`[createTruncatedKoreanTTS] Created truncated Korean TTS: ${path.basename(truncatedPath)}`);
+                        resolve(truncatedPath);
+                    } else {
+                        log(`[createTruncatedKoreanTTS] FFmpeg failed, using original file: ${stderr}`);
+                        resolve(wavFilePath); // Fallback to original
+                    }
+                });
+                
+                ffmpeg.on('error', (error: Error) => {
+                    log(`[createTruncatedKoreanTTS] FFmpeg error, using original file: ${error}`);
+                    resolve(wavFilePath); // Fallback to original
+                });
+            });
+            */
+        } catch (error) {
+            log(`[createTruncatedKoreanTTS] Error in Korean TTS optimization, using original: ${error}`);
+            return wavFilePath; // Fallback to original
+        }
+    }
+
     async playTtsAsPcm(wavFilePath: string, panning?: number): Promise<void> {
-        // Check if we're in the middle of stopping - abort immediately  
+        // ULTRA-AGGRESSIVE stopping check - abort immediately if stopping or line reading inactive
         if (this.isStopping) {
             log(`[playTtsAsPcm] Aborted - stopping in progress for: ${path.basename(wavFilePath)}`);
             return;
         }
+        
+        // Check if this is Korean TTS and optimize for full playback
+        let finalWavPath = wavFilePath;
+        const isKoreanTTS = wavFilePath.includes('openai_ko_ko') || wavFilePath.includes('korean');
+        if (isKoreanTTS) {
+            log(`[playTtsAsPcm] Korean TTS detected - optimizing for full phrase playback`);
+            const optimizeStartTime = Date.now();
+            finalWavPath = await this.createTruncatedKoreanTTS(wavFilePath);
+            const optimizeTime = Date.now() - optimizeStartTime;
+            log(`[playTtsAsPcm] Korean TTS optimization completed in ${optimizeTime}ms`);
+        }
+        
+        // Note: Removed overly aggressive line token reading check here
+        // The isStopping flag and abort signals should be sufficient
         
         log(`[playTtsAsPcm] SIMPLE FAST TTS playback: ${path.basename(wavFilePath)}, panning: ${panning}`);
         
@@ -1189,7 +1309,7 @@ class AudioPlayer {
         if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
             try {
                 log(`[playTtsAsPcm] Using pitch-preserving time stretching for playspeed ${config.playSpeed}x`);
-                const processedFilePath = await applyPitchPreservingTimeStretch(wavFilePath, config.playSpeed);
+                const processedFilePath = await applyPitchPreservingTimeStretch(finalWavPath, config.playSpeed);
                 
                 // Play the time-stretched file at normal rate since tempo is already adjusted
                 const wavData = fs.readFileSync(processedFilePath);
@@ -1222,8 +1342,8 @@ class AudioPlayer {
                 return new Promise<void>((resolve, reject) => {
                     this.stopCurrentPlayback();
                     
-                    // @ts-ignore: samplesPerFrame used for low-latency
-                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 512 } as any);
+                    // @ts-ignore: samplesPerFrame used for low-latency and immediate stopping
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 256, highWaterMark: 1024 } as any);
                     this.currentSpeaker = speaker;
                     
                     speaker.on('close', () => {
@@ -1232,7 +1352,7 @@ class AudioPlayer {
                     });
                     speaker.on('error', reject);
                     
-                    log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (pitch-preserving)`);
+                    log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (pitch-preserving with small buffer)`);
                     speaker.write(finalPcm);
                     speaker.end();
                 });
@@ -1246,7 +1366,7 @@ class AudioPlayer {
         // Original method with sample rate adjustment (changes pitch)
         try {
             // Read and parse WAV file directly
-            const wavData = fs.readFileSync(wavFilePath);
+            const wavData = fs.readFileSync(finalWavPath);
             const parsed = AudioUtils.parseWavFormat(wavData);
             
             let finalPcm = parsed.pcm;
@@ -1282,8 +1402,8 @@ class AudioPlayer {
             return new Promise<void>((resolve, reject) => {
                 this.stopCurrentPlayback();
                 
-                // @ts-ignore: samplesPerFrame used for low-latency
-                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 512 } as any);
+                // @ts-ignore: samplesPerFrame used for low-latency and immediate stopping
+                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 256, highWaterMark: 1024 } as any);
                 this.currentSpeaker = speaker;
                 
                 speaker.on('close', () => {
@@ -1292,7 +1412,7 @@ class AudioPlayer {
                 });
                 speaker.on('error', reject);
                 
-                log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (sample rate adjustment)`);
+                log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (sample rate adjustment with small buffer)`);
                 speaker.write(finalPcm);
                 speaker.end();
             });
@@ -1397,7 +1517,7 @@ class AudioPlayer {
 // GLOBAL AUDIO PLAYER INSTANCE
 // ===============================
 
-const audioPlayer = new AudioPlayer();
+export const audioPlayer = new AudioPlayer();
 
 // ===============================
 // PUBLIC API (maintaining backward compatibility)
@@ -1447,10 +1567,10 @@ export async function speakToken(
                     const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
                     await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
                 }
-            } else if (specialCharMap[token]) {
+            } else if (getSpecialCharSpoken(token)) {
                 // Special characters (like underbar, dot) that should be spoken
-                log(`[speakToken] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (no category)`);
-                const spokenForm = specialCharMap[token];
+                log(`[speakToken] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}" (no category)`);
+                const spokenForm = getSpecialCharSpoken(token)!;
                 const filePath = await genTokenAudio(spokenForm, 'special', { speaker: opts?.speaker ?? getSpeakerForCategory('special') });
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } else if (isTTSRequired(token)) {
@@ -1479,6 +1599,7 @@ export type TokenChunk = {
 export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal): Promise<void> {
     let aborted = false;
     let abortListener: (() => void) | null = null;
+    let ttsPregenPromises = new Map<string, Promise<string>>();
     
     // Clear stopping state at the start of legitimate audio sequence
     audioPlayer.clearStoppingState();
@@ -1487,7 +1608,18 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
     const fullText = chunks.map(chunk => chunk.tokens.join(' ')).join(' ');
     logTTSStart(fullText);
     
-    log(`[speakTokenList] Starting with ${chunks.length} chunks, signal aborted: ${signal?.aborted}`);
+    // KOREAN TTS PROTECTION: Check if this is Korean text and enable enhanced protection
+    const isKoreanTTS = chunks.some(chunk => 
+        chunk.tokens.some(token => containsKorean(token))
+    );
+    
+    if (isKoreanTTS) {
+        log(`[speakTokenList] Korean TTS detected - enabling enhanced protection against interruptions`);
+        // Set a flag to indicate Korean TTS is active for other systems to respect
+        (global as any).koreanTTSActive = true;
+    }
+    
+    log(`[speakTokenList] Starting with ${chunks.length} chunks, signal aborted: ${signal?.aborted}, Korean TTS: ${isKoreanTTS}`);
     
     if (signal) {
         if (signal.aborted) {
@@ -1496,8 +1628,11 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         }
         
         abortListener = () => { 
-            log(`[speakTokenList] ABORT SIGNAL RECEIVED - reading will stop`);
-            aborted = true; 
+            log(`[speakTokenList] ABORT SIGNAL RECEIVED - immediately stopping all audio`);
+            aborted = true;
+            // Immediately stop current audio playback to prevent Korean TTS from finishing current chunk
+            audioPlayer.stopCurrentPlayback(true); // Force immediate stopping
+            log(`[speakTokenList] Current audio playback stopped immediately with aggressive mode`);
         };
         signal.addEventListener('abort', abortListener, { once: true });
     }
@@ -1535,8 +1670,14 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 } else if (category === 'comment_text') {
                     // For comment text, keep as single token for direct TTS processing
                     // This allows the entire comment to be processed as one unit with language detection
-                    expandedTokens.push(token);
-                    log(`[speakTokenList] Comment text "${token}" → keeping as single unit for direct TTS`);
+                    // OPTIMIZATION: For Korean comment text, keep even longer phrases together
+                    if (containsKorean(token)) {
+                        expandedTokens.push(token);
+                        log(`[speakTokenList] Korean comment text "${token}" → keeping as single unit for optimized TTS`);
+                    } else {
+                        expandedTokens.push(token);
+                        log(`[speakTokenList] Comment text "${token}" → keeping as single unit for direct TTS`);
+                    }
                 } else if (category === 'comment_symbol' || category === 'comment_number') {
                     // Comment symbols and numbers should be processed individually (earcons/TTS)
                     expandedTokens.push(token);
@@ -1559,12 +1700,62 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         const processedTokenCount = processedChunks.reduce((total, chunk) => total + chunk.tokens.length, 0);
         log(`[speakTokenList] Word logic applied: ${chunks.length} chunks (${originalTokenCount} tokens) → ${processedChunks.length} chunks (${processedTokenCount} tokens)`);
         
-        // Use processed chunks for the rest of the function
-        chunks = processedChunks;
+        // KOREAN OPTIMIZATION: Consolidate consecutive Korean comment_text chunks to reduce TTS overhead
+        const optimizedChunks: TokenChunk[] = [];
+        let i = 0;
+        while (i < processedChunks.length) {
+            const currentChunk = processedChunks[i];
+            
+            // Check if this is a Korean comment_text chunk that can be consolidated
+            if (currentChunk.category === 'comment_text' && 
+                currentChunk.tokens.length === 1 && 
+                containsKorean(currentChunk.tokens[0])) {
+                
+                // Look ahead for consecutive Korean comment_text chunks
+                const koreanTokens: string[] = [currentChunk.tokens[0]];
+                let j = i + 1;
+                
+                while (j < processedChunks.length && 
+                       processedChunks[j].category === 'comment_text' &&
+                       processedChunks[j].tokens.length === 1 &&
+                       containsKorean(processedChunks[j].tokens[0])) {
+                    koreanTokens.push(processedChunks[j].tokens[0]);
+                    j++;
+                }
+                
+                // If we found multiple consecutive Korean chunks, consolidate them
+                if (koreanTokens.length > 1) {
+                    const consolidatedText = koreanTokens.join(' ');
+                    optimizedChunks.push({
+                        tokens: [consolidatedText],
+                        category: 'comment_text',
+                        panning: currentChunk.panning
+                    });
+                    log(`[speakTokenList] Korean optimization: consolidated ${koreanTokens.length} chunks into "${consolidatedText}"`);
+                    i = j; // Skip the consolidated chunks
+                } else {
+                    // Single Korean chunk, keep as-is
+                    optimizedChunks.push(currentChunk);
+                    i++;
+                }
+            } else {
+                // Non-Korean or non-comment chunk, keep as-is
+                optimizedChunks.push(currentChunk);
+                i++;
+            }
+        }
+        
+        const optimizedTokenCount = optimizedChunks.reduce((total, chunk) => total + chunk.tokens.length, 0);
+        if (optimizedChunks.length < processedChunks.length) {
+            log(`[speakTokenList] Korean consolidation: ${processedChunks.length} chunks → ${optimizedChunks.length} chunks (${optimizedTokenCount} tokens)`);
+        }
+        
+        // Use optimized chunks for the rest of the function
+        chunks = optimizedChunks;
         
         // PARALLEL TTS PRE-GENERATION: Use both workers simultaneously
         log(`[speakTokenList] Pre-generating TTS for all tokens in parallel...`);
-        const ttsPregenPromises = new Map<string, Promise<string>>();
+        ttsPregenPromises.clear(); // Clear any previous promises
         
         for (const { tokens, category } of chunks) {
             for (const token of tokens) {
@@ -1578,21 +1769,21 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     // Tokens with meaningful categories
                     if (!ttsPregenPromises.has(token)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}"`);
-                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category), abortSignal: signal }));
                     }
-                } else if (specialCharMap[token]) {
+                } else if (getSpecialCharSpoken(token)) {
                     // Special characters need their spoken form pre-generated
-                    const spokenForm = specialCharMap[token];
+                    const spokenForm = getSpecialCharSpoken(token)!;
                     const specialKey = `special_${token}`;
                     if (!ttsPregenPromises.has(specialKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for special character: "${token}" -> "${spokenForm}"`);
-                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') }));
+                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal }));
                     }
                 } else if (isTTSRequired(token)) {
                     // Other tokens that need TTS
                     if (!ttsPregenPromises.has(token)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
-                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) }));
+                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category), abortSignal: signal }));
                     }
                 }
             }
@@ -1622,11 +1813,14 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 log(`[speakTokenList] About to process token ${tokenIndex + 1}/${tokens.length}: "${token}"`);
                 
                 try {
-                    // Double-check abort signal right before audio playback
+                    // TRIPLE-check abort signal right before audio playback (especially important for Korean TTS)
                     if (signal?.aborted || aborted) {
                         log(`[speakTokenList] ABORTED right before playing token: "${token}"`);
                         return;
                     }
+                    
+                    // Note: Removed overly aggressive line token reading check here
+                    // The abort signal mechanism should be sufficient for stopping
                     
                     // Clear stopping state immediately before each token to prevent false aborts
                     audioPlayer.clearStoppingState();
@@ -1636,9 +1830,9 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                         // Earcons (brackets, quotes, etc.) use PCM files - highest priority
                         log(`[speakTokenList] Playing EARCON for: "${token}" (category: ${category})`);
                         await playEarcon(token, panning);
-                    } else if (specialCharMap[token]) {
+                    } else if (getSpecialCharSpoken(token)) {
                         // Special characters that should be spoken (even with categories)
-                        log(`[speakTokenList] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (category: ${category})`);
+                        log(`[speakTokenList] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}" (category: ${category})`);
                         const specialKey = `special_${token}`;
                         if (ttsPregenPromises.has(specialKey)) {
                             log(`[speakTokenList] Using PRE-GENERATED TTS for special character: "${token}"`);
@@ -1646,8 +1840,8 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                         } else {
                             // Fallback to immediate generation
-                            const spokenForm = specialCharMap[token];
-                            const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
+                            const spokenForm = getSpecialCharSpoken(token)!;
+                            const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal });
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                         }
                     } else if (category && category !== 'default' && category !== 'other') {
@@ -1658,12 +1852,75 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                         // Check if we have a pre-generated TTS file
                         if (ttsPregenPromises.has(token)) {
                             log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (${category})`);
-                            const ttsFilePath = await ttsPregenPromises.get(token)!;
-                            await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                            
+                            // Check abort signal before waiting for pre-generated TTS
+                            if (signal?.aborted || aborted) {
+                                log(`[speakTokenList] ABORTED before waiting for pre-generated TTS: "${token}"`);
+                                return;
+                            }
+                            
+                            try {
+                                const ttsFilePath = await ttsPregenPromises.get(token)!;
+                                
+                                // Check abort signal after TTS generation completes
+                                if (signal?.aborted || aborted) {
+                                    log(`[speakTokenList] ABORTED after pre-generated TTS completed: "${token}"`);
+                                    return;
+                                }
+                                
+                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                
+                                // Check abort signal immediately after audio playback (critical for Korean TTS)
+                                if (signal?.aborted || aborted) {
+                                    log(`[speakTokenList] ABORTED immediately after pre-generated audio playback: "${token}"`);
+                                    audioPlayer.stopCurrentPlayback(true); // Force immediate stop of any remaining audio
+                                    return;
+                                }
+                            } catch (error) {
+                                // Handle abort errors gracefully
+                                if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                    log(`[speakTokenList] Pre-generated TTS aborted for token: "${token}"`);
+                                    return;
+                                }
+                                // Re-throw non-abort errors
+                                throw error;
+                            }
                         } else {
                             // Generate new TTS with category voice
-                            const ttsFilePath = await genTokenAudio(token, category, { speaker: categoryVoice });
-                            await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                            log(`[speakTokenList] Generating NEW TTS for: "${token}" (${category}) - checking abort frequently`);
+                            
+                            // Check abort signal before TTS generation
+                            if (signal?.aborted || aborted) {
+                                log(`[speakTokenList] ABORTED before TTS generation: "${token}"`);
+                                return;
+                            }
+                            
+                            try {
+                                const ttsFilePath = await genTokenAudio(token, category, { speaker: categoryVoice, abortSignal: signal });
+                                
+                                // Check abort signal after TTS generation (especially important for Korean TTS)
+                                if (signal?.aborted || aborted) {
+                                    log(`[speakTokenList] ABORTED after TTS generation completed: "${token}"`);
+                                    return;
+                                }
+                                
+                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                
+                                // Check abort signal immediately after audio playback (critical for Korean TTS)
+                                if (signal?.aborted || aborted) {
+                                    log(`[speakTokenList] ABORTED immediately after new TTS audio playback: "${token}"`);
+                                    audioPlayer.stopCurrentPlayback(true); // Force immediate stop of any remaining audio
+                                    return;
+                                }
+                            } catch (error) {
+                                // Handle abort errors gracefully
+                                if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                    log(`[speakTokenList] New TTS generation aborted for token: "${token}"`);
+                                    return;
+                                }
+                                // Re-throw non-abort errors
+                                throw error;
+                            }
                         }
                     } else {
                         // No meaningful category - determine by token characteristics
@@ -1688,29 +1945,61 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                                 // Fallback to TTS if PCM file missing
                                 await speakTokenImmediate(token, category, { panning });
                             }
-                        } else if (specialCharMap[token]) {
+                        } else if (getSpecialCharSpoken(token)) {
                             // Special characters (like underbar, dot) that should be spoken
-                            log(`[speakTokenList] Using TTS for special character: "${token}" -> "${specialCharMap[token]}" (no category)`);
+                            log(`[speakTokenList] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}" (no category)`);
                             const specialKey = `special_${token}`;
                             if (ttsPregenPromises.has(specialKey)) {
                                 log(`[speakTokenList] Using PRE-GENERATED TTS for special character: "${token}"`);
-                                const ttsFilePath = await ttsPregenPromises.get(specialKey)!;
-                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                try {
+                                    const ttsFilePath = await ttsPregenPromises.get(specialKey)!;
+                                    await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                } catch (error) {
+                                    if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                        log(`[speakTokenList] Pre-generated special character TTS aborted for token: "${token}"`);
+                                        return;
+                                    }
+                                    throw error;
+                                }
                             } else {
                                 // Fallback to immediate generation
-                                const spokenForm = specialCharMap[token];
-                                const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
-                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                try {
+                                    const spokenForm = getSpecialCharSpoken(token)!;
+                                    const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal });
+                                    await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                } catch (error) {
+                                    if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                        log(`[speakTokenList] Special character TTS generation aborted for token: "${token}"`);
+                                        return;
+                                    }
+                                    throw error;
+                                }
                             }
                         } else if (isTTSRequired(token)) {
                             // Everything else that needs TTS
                             if (ttsPregenPromises.has(token)) {
                                 log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (no category)`);
-                                const ttsFilePath = await ttsPregenPromises.get(token)!;
-                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                try {
+                                    const ttsFilePath = await ttsPregenPromises.get(token)!;
+                                    await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                } catch (error) {
+                                    if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                        log(`[speakTokenList] Pre-generated TTS aborted for token: "${token}" (no category)`);
+                                        return;
+                                    }
+                                    throw error;
+                                }
                             } else {
                                 log(`[speakTokenList] Generating NEW TTS for: "${token}" (no category)`);
-                                await speakTokenImmediate(token, category, { panning });
+                                try {
+                                    await speakTokenImmediate(token, category, { panning });
+                                } catch (error) {
+                                    if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
+                                        log(`[speakTokenList] Immediate TTS generation aborted for token: "${token}"`);
+                                        return;
+                                    }
+                                    throw error;
+                                }
                             }
                         } else {
                             log(`[speakTokenList] Skipping empty or whitespace token: "${token}"`);
@@ -1732,6 +2021,28 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         if (signal && abortListener) {
             signal.removeEventListener('abort', abortListener);
         }
+        
+        // Clean up any remaining unresolved TTS promises to prevent unhandled rejections
+        if (ttsPregenPromises.size > 0) {
+            log(`[speakTokenList] Cleaning up ${ttsPregenPromises.size} remaining TTS promises`);
+            for (const [key, promise] of ttsPregenPromises) {
+                promise.catch((error: any) => {
+                    // Silently handle aborted promises to prevent unhandled rejections
+                    if (error instanceof Error && error.message.includes('aborted')) {
+                        log(`[speakTokenList] Cleaned up aborted TTS promise for: ${key}`);
+                    } else {
+                        log(`[speakTokenList] Cleaned up TTS promise error for ${key}: ${error}`);
+                    }
+                });
+            }
+        }
+        
+        // KOREAN TTS PROTECTION: Clear the protection flag
+        if (isKoreanTTS) {
+            (global as any).koreanTTSActive = false;
+            log(`[speakTokenList] Korean TTS protection disabled`);
+        }
+        
         log(`[speakTokenList] Finished (cleanup completed)`);
     }
 }
@@ -1781,10 +2092,10 @@ async function speakTokenImmediate(
                 const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             }
-        } else if (specialCharMap[token]) {
+        } else if (getSpecialCharSpoken(token)) {
             // Special characters
-            log(`[speakTokenImmediate] Using TTS for special character: "${token}" -> "${specialCharMap[token]}"`);
-            const spokenForm = specialCharMap[token];
+            log(`[speakTokenImmediate] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}"`);
+            const spokenForm = getSpecialCharSpoken(token)!;
             const filePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
             await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
         } else if (isTTSRequired(token)) {

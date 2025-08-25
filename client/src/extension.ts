@@ -4,7 +4,7 @@ import { createAudioMap } from './mapping';
 import { preloadEverything } from './preload';
 import { config, initConfig } from './config';
 import { installDependencies } from './install_dependencies';
-import { log, logWarning, logSuccess, logError, logMemory } from './utils';
+import { log, logWarning, logSuccess, logError, logMemory, initializeLogging } from './utils';
 
 import { registerEchoTest } from './features/echo_test';
 import { registerWhereAmI } from './features/where_am_i';
@@ -20,18 +20,23 @@ import { registerSymbolTree } from './features/symbol_tree';
 import { registerSwitchPanel } from './features/switch_panel';
 import { registerFunctionList } from './features/function_list';
 import { registerFileTree } from './features/file_tree';
+import { registerFileSearchExplorer } from './features/file_search_explorer';
+import { registerCSVFileChecker } from './features/csv_file_checker';
+import { registerUniversalFileChecker } from './features/universal_file_checker';
+import { registerLLMBashGenerator } from './features/llm_bash_generator';
 import { registerTerminalReader } from './features/terminal';
 import { registerFormatCode } from './features/format_code';
 import { registerNavExplorer } from './features/nav_explorer';
 import { registerNavEditor } from './features/nav_editor';
+import { registerEditorWordNav } from './features/editor_word_nav';
 import { registerPlaySpeed } from './features/playspeed';
 
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
+import { registerASRCodeEditing } from './features/asr_code_editing';
 import { registerCodeAnalysis } from './features/code_analysis';
-// import { registerToggleASR } from './features/toggle_asr';
-// import { registerPushToTalkASR } from './features/push_to_talk_asr';
+import { registerLLMQuestion } from './features/llm_question';
 import { registerEnhancedPushToTalkASR } from './features/enhanced_push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
 import { registerTTSBackendSwitch } from './features/tts_backend_switch';
@@ -39,14 +44,25 @@ import { registerLLMBackendSwitch } from './features/llm_backend_switch';
 import { registerOpenFile } from './features/open_file';
 import { registerSyntaxErrors } from './features/syntax_errors';
 import { registerTestKoreanTTS } from './features/test_korean_tts';
+import { registerTestXTTSInference } from './features/test_xtts_inference';
+import { registerDebugOutput } from './features/debug_output';
+import { registerClipboardAudio } from './features/clipboard_audio';
 import { serverManager } from './server_manager';
 import { activityLogger, logFeatureUsage } from './activity_logger';
+import { initializeEditorTracking } from './features/last_editor_tracker';
+import { initializeTabTracking } from './features/tab_tracker';
+import { registerTestTabTracker } from './features/test_tab_tracker';
+
+import { getConversationalProcessor } from './conversational_asr';
+import { getConversationalPopup } from './conversational_popup';
 
 // Memory monitoring
 let memoryMonitorInterval: NodeJS.Timeout | null = null;
 
 function startMemoryMonitoring(): void {
-    if (memoryMonitorInterval) return;
+    if (memoryMonitorInterval) {
+        return;
+    }
     
     let lastMemoryUsage = process.memoryUsage();
     let logCounter = 0;
@@ -95,6 +111,9 @@ function stopMemoryMonitoring(): void {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    // Initialize logging first so debug output is visible
+    initializeLogging();
+    
     // Store context for global cleanup
     (global as any).lipcoderContext = context;
     
@@ -111,6 +130,53 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 1.2) Load configuration from VS Code settings ─────────────────────────────────────
 	const { loadConfigFromSettings } = require('./config');
 	loadConfigFromSettings();
+
+	// 1.3) Initialize editor tracking for terminal ASR support ──────────────────────────
+	initializeEditorTracking(context);
+	
+	// 1.3.1) Initialize last editor tracking for fallback support ──────────────────────
+	const { initializeLastEditorTracking } = require('./ide/active');
+	initializeLastEditorTracking(context);
+	
+	// 1.4) Initialize tab tracking for tab-aware file opening ───────────────────────────
+	initializeTabTracking(context);
+	
+	// 1.5) Realtime command router removed - using comprehensive CommandRouter instead
+	
+	// 1.6) Initialize conversational ASR system ─────────────────────────────────────────
+	try {
+		log('🤖 Starting conversational ASR system initialization...');
+		
+		// Initialize conversational processor
+		try {
+			log('🔄 Creating conversational processor...');
+			const processor = getConversationalProcessor();
+			log('✅ Conversational processor created successfully');
+		} catch (processorError) {
+			logError(`❌ Failed to create conversational processor: ${processorError}`);
+			throw processorError;
+		}
+		
+		// Initialize conversational popup
+		try {
+			log('🔄 Creating conversational popup...');
+			const popup = getConversationalPopup();
+			log('✅ Conversational popup created successfully');
+		} catch (popupError) {
+			logError(`❌ Failed to create conversational popup: ${popupError}`);
+			throw popupError;
+		}
+		
+		log('✅ Conversational ASR system fully initialized');
+	} catch (error) {
+		logError(`❌ Failed to initialize conversational ASR system: ${error}`);
+		if (error instanceof Error) {
+			logError(`❌ Error message: ${error.message}`);
+			logError(`❌ Error stack: ${error.stack}`);
+		}
+		// Don't throw - let extension continue without conversational features
+		logWarning('⚠️ Extension will continue without conversational features');
+	}
 
 	// 1.5) Clean old corrupted cache files on startup ───────────────────────────────────
 	try {
@@ -158,7 +224,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// 3) TTS setup ───────────────────────────────────────────────────────────────────────
 	await loadDictionaryWord();
-	setBackend(TTSBackend.Silero);
+	    setBackend(TTSBackend.SileroGPT);
 
 	// 3) Pre-generate earcons into cache ────────────────────────────
 	preloadEverything(context);
@@ -166,72 +232,184 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 4) Build the unified audioMap ─────────────────────────────────────────────
 	console.log('[EXTENSION] About to create audioMap...');
 	const audioMap = createAudioMap(context);
-	console.log('[EXTENSION] AudioMap created, underscore path:', audioMap['_']);
+	console.log('[EXTENSION] AudioMap created, underscore path:', audioMap.get('_'));
 
 	// 5) Start LanguageClient ──────────────────────────────────────────────────
 	const client = startLanguageClient(context);
 
 	// 6) Register commands ───────────────────────────────────────────────────────
-	registerEchoTest(context, client);
-	registerWhereAmI(context, client);
-	registerBreadcrumb(context, client);
-	registerReadLineTokens(context, client);
-	registerPlaySpeed(context);
-	registerReadFunctionTokens(context, client);
-	registerStopReading(context);
-	registerToggleTypingSpeech(context, client);
-	registerCurrentLine(context);
-	registerSymbolTree(context);
-	registerSwitchPanel(context);
-	registerFunctionList(context);
-	registerFileTree(context);
-	registerTerminalReader(context);
-	registerFormatCode(context);
-	registerNavExplorer(context);
-	registerNavEditor(context, audioMap);
-	registerSetAPIKey(context);
-	registerChatCompletions(context);
-	registerVibeCodingCommands(context);
-	registerCodeAnalysis(context);
-	// registerToggleASR(context);  // Disabled in favor of enhanced version
-	// registerPushToTalkASR(context);  // Disabled in favor of enhanced version
-	registerEnhancedPushToTalkASR(context);
-	registerTogglePanning(context);
-	registerTTSBackendSwitch(context);
-	registerLLMBackendSwitch(context);
-	registerOpenFile(context);
-	registerSyntaxErrors(context);
-	registerTestKoreanTTS(context);
+	try {
+		log('📝 Registering core commands...');
+		registerEchoTest(context, client);
+		log('✅ registerEchoTest completed');
+		
+		registerWhereAmI(context, client);
+		log('✅ registerWhereAmI completed');
+		
+		registerBreadcrumb(context, client);
+		log('✅ registerBreadcrumb completed');
+		
+		registerReadLineTokens(context, client);
+		log('✅ registerReadLineTokens completed');
+		
+		registerPlaySpeed(context);
+		log('✅ registerPlaySpeed completed');
+		
+		registerReadFunctionTokens(context, client);
+		log('✅ registerReadFunctionTokens completed');
+		
+		registerStopReading(context);
+		log('✅ registerStopReading completed');
+		
+		registerToggleTypingSpeech(context, client);
+		log('✅ registerToggleTypingSpeech completed');
+		
+		registerCurrentLine(context);
+		log('✅ registerCurrentLine completed');
+		
+		registerSymbolTree(context);
+		log('✅ registerSymbolTree completed');
+		
+		registerSwitchPanel(context);
+		log('✅ registerSwitchPanel completed');
+		
+		registerFunctionList(context);
+		log('✅ registerFunctionList completed');
+		
+		registerFileTree(context);
+		log('✅ registerFileTree completed');
+		
+		registerFileSearchExplorer(context);
+		log('✅ registerFileSearchExplorer completed');
+		
+		registerCSVFileChecker(context);
+		log('✅ registerCSVFileChecker completed');
+		
+		registerUniversalFileChecker(context);
+		log('✅ registerUniversalFileChecker completed');
+		
+		registerLLMBashGenerator(context);
+		log('✅ registerLLMBashGenerator completed');
+		
+		registerTerminalReader(context);
+		log('✅ registerTerminalReader completed');
+		
+		registerFormatCode(context);
+		log('✅ registerFormatCode completed');
+		
+		registerNavExplorer(context);
+		log('✅ registerNavExplorer completed');
+		
+		registerNavEditor(context, audioMap);
+		log('✅ registerNavEditor completed');
+		
+		registerEditorWordNav(context);
+		log('✅ registerEditorWordNav completed');
+		
+		registerSetAPIKey(context);
+		log('✅ registerSetAPIKey completed');
+		
+		registerChatCompletions(context);
+		log('✅ registerChatCompletions completed');
+		
+		registerVibeCodingCommands(context);
+		log('✅ registerVibeCodingCommands completed');
+		
+		registerASRCodeEditing(context);
+		log('✅ registerASRCodeEditing completed');
+		
+		registerCodeAnalysis(context);
+		log('✅ registerCodeAnalysis completed');
+		
+		registerLLMQuestion(context);
+		log('✅ registerLLMQuestion completed');
+
+		log('📝 Registering ASR and advanced commands...');
+		registerEnhancedPushToTalkASR(context);
+		log('✅ registerEnhancedPushToTalkASR completed');
+		
+		registerTogglePanning(context);
+		log('✅ registerTogglePanning completed');
+		
+		registerTTSBackendSwitch(context);
+		log('✅ registerTTSBackendSwitch completed');
+		
+		registerLLMBackendSwitch(context);
+		log('✅ registerLLMBackendSwitch completed');
+		
+		registerOpenFile(context);
+		log('✅ registerOpenFile completed');
+		
+		registerSyntaxErrors(context);
+		log('✅ registerSyntaxErrors completed');
+		
+		registerTestKoreanTTS(context);
+		log('✅ registerTestKoreanTTS completed');
+		
+		registerTestXTTSInference(context);
+		log('✅ registerTestXTTSInference completed');
+		
+	} catch (error) {
+		logError(`❌ Command registration failed: ${error}`);
+		if (error instanceof Error) {
+			logError(`❌ Registration error message: ${error.message}`);
+			logError(`❌ Registration error stack: ${error.stack}`);
+		}
+		throw error; // Re-throw to see the full error
+	}
+	
+	log('📝 Registering remaining commands...');
+	registerDebugOutput(context);
+	log('✅ registerDebugOutput completed');
+	
+	registerClipboardAudio(context);
+	log('✅ registerClipboardAudio completed');
+	
+	registerTestTabTracker(context);
+	log('✅ registerTestTabTracker completed');
 
 	// Add command to restart language server
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.restartLanguageServer', async () => {
-			try {
-				vscode.window.showInformationMessage('Restarting LipCoder Language Server...');
-				const newClient = await restartLanguageClient(context);
-				if (newClient) {
-					vscode.window.showInformationMessage('LipCoder Language Server restarted successfully! Tokenization changes are now active.');
-				} else {
-					vscode.window.showErrorMessage('Failed to restart LipCoder Language Server. Check the output for details.');
+	try {
+		log('📝 Registering restart language server command...');
+		context.subscriptions.push(
+			vscode.commands.registerCommand('lipcoder.restartLanguageServer', async () => {
+				try {
+					vscode.window.showInformationMessage('Restarting LipCoder Language Server...');
+					const newClient = await restartLanguageClient(context);
+					if (newClient) {
+						vscode.window.showInformationMessage('LipCoder Language Server restarted successfully! Tokenization changes are now active.');
+					} else {
+						vscode.window.showErrorMessage('Failed to restart LipCoder Language Server. Check the output for details.');
+					}
+				} catch (error) {
+					vscode.window.showErrorMessage(`Error restarting language server: ${error}`);
 				}
-			} catch (error) {
-				vscode.window.showErrorMessage(`Error restarting language server: ${error}`);
-			}
-		})
-	);
+			})
+		);
+		log('✅ Restart language server command registered');
 
-	// Add command to test thinking audio
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.testThinkingAudio', async () => {
-			try {
-				const { testThinkingAudio } = await import('./audio.js');
-				await testThinkingAudio();
-				vscode.window.showInformationMessage('Thinking audio test completed!');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Thinking audio test failed: ${error}`);
-			}
-		})
-	);
+		// Add command to test thinking audio
+		log('📝 Registering test thinking audio command...');
+		context.subscriptions.push(
+			vscode.commands.registerCommand('lipcoder.testThinkingAudio', async () => {
+				try {
+					const { testThinkingAudio } = await import('./audio.js');
+					await testThinkingAudio();
+					vscode.window.showInformationMessage('Thinking audio test completed!');
+				} catch (error) {
+					vscode.window.showErrorMessage(`Thinking audio test failed: ${error}`);
+				}
+			})
+		);
+		log('✅ Test thinking audio command registered');
+	} catch (error) {
+		logError(`❌ Failed to register additional commands: ${error}`);
+		if (error instanceof Error) {
+			logError(`❌ Additional commands error message: ${error.message}`);
+			logError(`❌ Additional commands error stack: ${error.stack}`);
+		}
+		throw error; // Re-throw to see the full error
+	}
 
 	// Add command to test comment voice
 	context.subscriptions.push(
@@ -473,6 +651,15 @@ export async function deactivate() {
 
 		// Stop memory monitoring
 		stopMemoryMonitoring();
+		
+		// Clean up conversational ASR system
+		try {
+			const { disposeConversationalPopup } = await import('./conversational_popup.js');
+			disposeConversationalPopup();
+			logSuccess('✅ Conversational ASR system disposed');
+		} catch (error) {
+			logError(`❌ Failed to dispose conversational ASR system: ${error}`);
+		}
 	
 	// Stop all servers
 	try {
@@ -520,28 +707,17 @@ export async function deactivate() {
 			logError(`❌ Failed to cleanup language client: ${err}`);
 		}
 		
-		// Clean up all ASRClient instances
-		const asrModules = [
-			'./features/asr_streaming',
-			'./features/toggle_asr', 
-			'./features/push_to_talk_asr'
-		];
-		
-		asrModules.forEach((modulePath, index) => {
-			try {
-				const module = require(modulePath);
-				const client = module.getASRClient();
-				if (client) {
-					if (client.getRecordingStatus()) {
-						client.stopStreaming();
-					}
-					client.dispose();
-					logSuccess(`✅ ASR client ${index + 1} cleaned up`);
-				}
-			} catch (err) {
-				logError(`❌ Failed to cleanup ASR client ${index + 1}: ${err}`);
+		// Clean up Enhanced Push-to-Talk ASR client
+		try {
+			const enhancedASRModule = require('./features/enhanced_push_to_talk_asr');
+			// Enhanced ASR has its own cleanup function
+			if (typeof enhancedASRModule.cleanupASRResources === 'function') {
+				enhancedASRModule.cleanupASRResources();
+				logSuccess('✅ Enhanced Push-to-Talk ASR cleaned up');
 			}
-		});
+		} catch (err) {
+			logError(`❌ Failed to cleanup Enhanced Push-to-Talk ASR: ${err}`);
+		}
 		
 		// Clean up LLM resources
 		try {

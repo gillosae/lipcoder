@@ -1,8 +1,8 @@
 {
   "name": "lipcoder",
   "displayName": "LipCoder",
-  "publisher": "your-publisher-id",
-  "description": "",
+  "publisher": "lipcoder-dev",
+  "description": "LipCoder - Audio-Enhanced Code Editor",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.98.2"
@@ -156,6 +156,10 @@
       {
         "command": "lipcoder.setupTerminalDemo",
         "title": "LipCoder: Setup Terminal Demo Content"
+      },
+      {
+        "command": "lipcoder.toggleTerminalReadingMode",
+        "title": "LipCoder: Toggle Terminal Reading Mode"
       },
       {
         "command": "lipcoder.formatCode",
@@ -397,13 +401,33 @@
         "category": "TTS"
       },
       {
-        "command": "lipcoder.switchToSilero",
-        "title": "LipCoder: Switch to Silero TTS",
+        "command": "lipcoder.switchToSileroGPT",
+        "title": "LipCoder: Silero (English) + GPT (Korean)",
         "category": "TTS"
       },
       {
-        "command": "lipcoder.switchToEspeak",
-        "title": "LipCoder: Switch to espeak-ng TTS",
+        "command": "lipcoder.switchToEspeakGPT",
+        "title": "LipCoder: Espeak (English) + GPT (Korean)",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.switchToXTTSV2",
+        "title": "LipCoder: XTTS-v2 (Universal Korean + English)",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.ensureMMSTTS",
+        "title": "LipCoder: Ensure MMS-TTS Server Running",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.restartKoreanTTS",
+        "title": "🇰🇷 LipCoder: Restart Korean TTS Server",
+        "category": "TTS"
+      },
+      {
+        "command": "lipcoder.showKoreanTTSStatus",
+        "title": "🇰🇷 LipCoder: Show Korean TTS Status",
         "category": "TTS"
       },
       {
@@ -470,13 +494,103 @@
         "command": "lipcoder.testKoreanTTS",
         "title": "Test Korean TTS",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.terminalWordRight",
+        "title": "LipCoder: Terminal Word Right (Option+Right Arrow)",
+        "category": "Terminal"
+      },
+      {
+        "command": "lipcoder.terminalWordLeft",
+        "title": "LipCoder: Terminal Word Left (Option+Left Arrow)",
+        "category": "Terminal"
+      },
+      {
+        "command": "lipcoder.editorWordRight",
+        "title": "LipCoder: Editor Word Right (Option+Right Arrow)",
+        "category": "Editor"
+      },
+      {
+        "command": "lipcoder.editorWordLeft",
+        "title": "LipCoder: Editor Word Left (Option+Left Arrow)",
+        "category": "Editor"
+      },
+      {
+        "command": "lipcoder.showDebugOutput",
+        "title": "LipCoder: Show Debug Output",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.openDeveloperConsole",
+        "title": "LipCoder: Open Developer Console",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.clearDebugOutput",
+        "title": "LipCoder: Clear Debug Output",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.testLogging",
+        "title": "LipCoder: Test Logging System",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.showAllOutputChannels",
+        "title": "LipCoder: Show All Output Channels",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.copy",
+        "title": "LipCoder: Copy with Audio Feedback",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.cut",
+        "title": "LipCoder: Cut with Audio Feedback",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.잘라내기",
+        "title": "LipCoder: 잘라내기 (Cut) with Audio Feedback",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.paste",
+        "title": "LipCoder: Paste with Audio Feedback",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.testCopySound",
+        "title": "LipCoder: Test Copy Sound",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.testPasteSound",
+        "title": "LipCoder: Test Paste Sound",
+        "category": "Clipboard"
+      },
+      {
+        "command": "lipcoder.startRealtimeCommands",
+        "title": "🎤 Start Realtime Voice Commands",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.stopRealtimeCommands",
+        "title": "🛑 Stop Realtime Voice Commands",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.toggleRealtimeCommands",
+        "title": "🔄 Toggle Realtime Voice Commands",
+        "category": "LipCoder"
       }
     ],
     "keybindings": [
       {
         "command": "lipcoder.stopReadLineTokens",
-        "key": "ctrl+alt+s",
-        "mac": "ctrl+alt+s",
+        "key": "ctrl+.",
+        "mac": "cmd+.",
         "when": "editorTextFocus"
       },
       {
@@ -506,7 +620,7 @@
       },
       {
         "key": "ctrl+h",
-        "command": "lipcoder.terminalReadHistory",
+        "command": "lipcoder.toggleTerminalReadingMode",
         "when": "terminalFocus"
       },
       {
@@ -588,6 +702,36 @@
         "command": "lipcoder.rejectDiff",
         "key": "ctrl+shift+n",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.terminalWordRight",
+        "key": "alt+right",
+        "mac": "alt+right",
+        "when": "terminalFocus"
+      },
+      {
+        "command": "lipcoder.terminalWordLeft",
+        "key": "alt+left",
+        "mac": "alt+left",
+        "when": "terminalFocus"
+      },
+      {
+        "command": "lipcoder.editorWordRight",
+        "key": "alt+right",
+        "mac": "alt+right",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.editorWordLeft",
+        "key": "alt+left",
+        "mac": "alt+left",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.showKoreanTTSStatus",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -651,6 +795,35 @@
           "minimum": 0.1,
           "maximum": 3.0,
           "description": "Volume boost multiplier for Korean TTS (1.0 = no change, 1.3 = 30% louder). Only affects Korean text when using OpenAI TTS."
+        },
+        "lipcoder.ttsBackend": {
+          "type": "string",
+          "enum": ["silero-gpt", "espeak-gpt", "xtts-v2"],
+          "default": "silero-gpt",
+          "description": "Choose the combined TTS backend: 'silero-gpt' for Silero (English) + GPT (Korean), 'espeak-gpt' for Espeak (English) + GPT (Korean), 'xtts-v2' for XTTS-v2 (both languages)."
+        },
+        "lipcoder.xttsV2ServerUrl": {
+          "type": "string",
+          "default": "http://localhost:5006/tts",
+          "description": "URL of the XTTS-v2 server for Korean and English text-to-speech."
+        },
+        "lipcoder.xttsV2SampleRate": {
+          "type": "number",
+          "default": 24000,
+          "enum": [16000, 24000],
+          "description": "Sample rate for XTTS-v2 audio output (16000 or 24000 Hz)."
+        },
+        "lipcoder.xttsV2VolumeBoost": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.1,
+          "maximum": 3.0,
+          "description": "Volume boost multiplier for XTTS-v2 audio (1.0 = no change, 1.5 = 50% louder)."
+        },
+        "lipcoder.xttsV2SpeakerWav": {
+          "type": "string",
+          "default": "",
+          "description": "Path to speaker reference WAV file for voice cloning with XTTS-v2 (optional)."
         }
       }
     }

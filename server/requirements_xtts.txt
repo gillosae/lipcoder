@@ -1,0 +1,12 @@
+# XTTS-v2 TTS Server Requirements
+TTS>=0.22.0
+torch>=2.0.0
+torchaudio>=2.0.0
+soundfile>=0.12.1
+librosa>=0.10.0
+flask>=2.3.0
+uvicorn>=0.23.0
+asgiref>=3.7.0
+numpy==1.22.0
+pandas<2.0,>=1.4
+scipy>=1.9.0

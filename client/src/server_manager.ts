@@ -39,6 +39,12 @@ class ServerManager {
             script: 'start_asr.sh',
             defaultPort: 5004
         });
+        
+        this.servers.set('xtts_v2', {
+            name: 'XTTS-v2 Server',
+            script: 'start_xtts_v2.sh',
+            defaultPort: 5006  // Use unique port for XTTS-v2
+        });
     }
 
 
@@ -199,11 +205,12 @@ class ServerManager {
         
         try {
             await Promise.all([
-                this.startServer('tts'),  // Start with Silero as default
-                this.startServer('asr')   // Always start ASR
+                this.startServer('tts'),      // Start with Silero as default for English
+                this.startServer('xtts_v2'),  // Start XTTS-v2 for Korean
+                this.startServer('asr')       // Always start ASR
                 // Don't start espeak_tts by default - it will be started when user switches
             ]);
-            logSuccess('✅ Default servers started successfully');
+            logSuccess('✅ Default servers started successfully (Silero + XTTS-v2 + ASR)');
         } catch (error) {
             logError(`Failed to start servers: ${error}`);
             // Clean up any partially started servers
@@ -274,8 +281,8 @@ class ServerManager {
     }
 
     // Switch TTS backend by stopping current and starting new one
-    async switchTTSBackend(newBackend: 'silero' | 'espeak'): Promise<void> {
-        const currentTTSServers = ['tts', 'espeak_tts'];
+    async switchTTSBackend(newBackend: 'silero' | 'espeak' | 'xtts-v2'): Promise<void> {
+        const currentTTSServers = ['tts', 'espeak_tts', 'xtts_v2'];
         
         log(`[ServerManager] Switching TTS backend to: ${newBackend}`);
         
@@ -290,7 +297,17 @@ class ServerManager {
         await Promise.all(stopPromises);
         
         // Start the new TTS server
-        const targetServer = newBackend === 'silero' ? 'tts' : 'espeak_tts';
+        let targetServer: string;
+        if (newBackend === 'silero') {
+            targetServer = 'tts';
+        } else if (newBackend === 'espeak') {
+            targetServer = 'espeak_tts';
+        } else if (newBackend === 'xtts-v2') {
+            targetServer = 'xtts_v2';
+        } else {
+            throw new Error(`Unknown TTS backend: ${newBackend}`);
+        }
+        
         await this.startIndividualServer(targetServer);
         
         logSuccess(`✅ TTS backend switched to ${newBackend}`);

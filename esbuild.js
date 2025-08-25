@@ -34,9 +34,13 @@ async function main() {
 		sourcemap: !production,
 		sourcesContent: false,
 		platform: 'node',
+		target: 'node16',
 		outfile: 'dist/client/extension.js',
 		external: ['vscode', 'node-pty', 'node-pty-prebuilt-multiarch'],
 		logLevel: 'silent',
+		define: {
+			'process.env.NODE_ENV': production ? '"production"' : '"development"'
+		},
 		plugins: [
 			/* add to the end of plugins array */
 			esbuildProblemMatcherPlugin,

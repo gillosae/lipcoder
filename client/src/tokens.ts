@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from './config';
-import { SPECIAL_CHAR_FILES } from './mapping';
+import { SPECIAL_CHAR_FILES, MULTI_CHAR_FILES } from './mapping';
 
 
 // ── Preload Earcons into Memory ──────────────────────────────────────────────
@@ -10,18 +10,18 @@ export const earconTokens = [
     ' ', "'", '"',
     '{', '}', '<', '>', '[', ']', '(', ')',
     ';', '\\',
-    // Characters that have earcon files in special directory (user prefers earcons for these)
-    '+', '&', '*', '@', '`', '^', '$', '!', '%', '?', '#', '~', '₩'
-    // Removed from earcons (user prefers TTS): ',', '.', '_', ':', '-', '=', '/'
+    // Characters that have earcon files in special directory
+    '+', '&', '*', '@', '`', '^', '$', '!', '%', '?', '#', '~', '₩',
+    // Characters moved from TTS to PCM files for better performance
+    '.', ',', ':', '-', '_', '=', '/', '|',
+    // Multi-character sequences
+    '//', '<=', '>=', '==', '!=', '===', '!==', '&&', '||', '++', '--', '+=', '-=', '*=', '/=', '=>'
 ];
 
 // ── Earcon lookup ─────────────────────────────────────────────────────────────
 export function getTokenSound(token: string): string | null {
     if (token === ' ') {
         return path.join(config.audioPath(), 'earcon', 'space.pcm');
-    }
-    if (token === '\\') {
-        return path.join(config.audioPath(), 'special', 'backslash.pcm');
     }
     if (getTokenSound.singleQuote === undefined) {
         getTokenSound.singleQuote = true;
@@ -56,6 +56,11 @@ export function getTokenSound(token: string): string | null {
     // Check special folder using the imported mapping
     if (SPECIAL_CHAR_FILES[token]) {
         return path.join(config.audioPath(), 'special', SPECIAL_CHAR_FILES[token]);
+    }
+    
+    // Check multi-character sequences
+    if (MULTI_CHAR_FILES[token]) {
+        return path.join(config.audioPath(), 'special', MULTI_CHAR_FILES[token]);
     }
     
     return null;

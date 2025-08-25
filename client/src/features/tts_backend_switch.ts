@@ -1,67 +1,126 @@
 import * as vscode from 'vscode';
-import { setBackend, TTSBackend, currentBackend, sileroConfig, espeakConfig, openaiTTSConfig } from '../config';
+import { setBackend, TTSBackend, currentBackend, sileroConfig, espeakConfig, openaiTTSConfig, xttsV2Config } from '../config';
 import { log, logSuccess, logWarning } from '../utils';
 import { serverManager } from '../server_manager';
 
 export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
     
-    // Command to switch to Silero TTS
-    const switchToSileroCommand = vscode.commands.registerCommand('lipcoder.switchToSilero', async () => {
+    // Command to switch to Silero+GPT TTS (Silero for English, GPT for Korean)
+    const switchToSileroGPTCommand = vscode.commands.registerCommand('lipcoder.switchToSileroGPT', async () => {
         try {
-            log('[TTS Backend] Switching to Silero TTS...');
+            log('[TTS Backend] Switching to Silero+GPT TTS...');
             
-            // First switch the TTS servers (kill current, start new)
+            // Start both Silero and ensure OpenAI is configured
             await serverManager.switchTTSBackend('silero');
             
-            // Then update the config
-            setBackend(TTSBackend.Silero);
+            // Update the config to combined backend
+            setBackend(TTSBackend.SileroGPT);
             
-            log('[TTS Backend] Successfully switched to Silero TTS');
-            vscode.window.showInformationMessage('✅ TTS Backend switched to Silero');
-            logSuccess(`TTS Backend: Silero (${sileroConfig.modelId}, speaker: ${sileroConfig.defaultSpeaker})`);
+            log('[TTS Backend] Successfully switched to Silero+GPT TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: Silero (English) + GPT (Korean)');
+            logSuccess(`TTS Backend: Silero+GPT (Silero: ${sileroConfig.modelId}, GPT: ${openaiTTSConfig.voice})`);
         } catch (error) {
-            logWarning(`Failed to switch to Silero TTS: ${error}`);
-            vscode.window.showErrorMessage(`Failed to switch to Silero TTS: ${error}`);
+            logWarning(`Failed to switch to Silero+GPT TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to Silero+GPT TTS: ${error}`);
         }
     });
 
-    // Command to switch to espeak-ng TTS
-    const switchToEspeakCommand = vscode.commands.registerCommand('lipcoder.switchToEspeak', async () => {
+    // Command to switch to Espeak+GPT TTS (Espeak for English, GPT for Korean)
+    const switchToEspeakGPTCommand = vscode.commands.registerCommand('lipcoder.switchToEspeakGPT', async () => {
         try {
-            log('[TTS Backend] Switching to espeak-ng TTS...');
+            log('[TTS Backend] Switching to Espeak+GPT TTS...');
             
-            // First switch the TTS servers (kill current, start new)
+            // Start Espeak server
             await serverManager.switchTTSBackend('espeak');
             
-            // Then update the config
-            setBackend(TTSBackend.Espeak);
+            // Update the config to combined backend
+            setBackend(TTSBackend.EspeakGPT);
             
-            log('[TTS Backend] Successfully switched to espeak-ng TTS');
-            vscode.window.showInformationMessage('✅ TTS Backend switched to espeak-ng');
-            logSuccess(`TTS Backend: espeak-ng (voice: ${espeakConfig.defaultVoice}, speed: ${espeakConfig.speed})`);
+            log('[TTS Backend] Successfully switched to Espeak+GPT TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: Espeak (English) + GPT (Korean)');
+            logSuccess(`TTS Backend: Espeak+GPT (Espeak: ${espeakConfig.defaultVoice}, GPT: ${openaiTTSConfig.voice})`);
         } catch (error) {
-            logWarning(`Failed to switch to espeak-ng TTS: ${error}`);
-            vscode.window.showErrorMessage(`Failed to switch to espeak-ng TTS: ${error}`);
+            logWarning(`Failed to switch to Espeak+GPT TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to Espeak+GPT TTS: ${error}`);
         }
     });
 
-    // Command to switch to OpenAI TTS
-    const switchToOpenAICommand = vscode.commands.registerCommand('lipcoder.switchToOpenAI', async () => {
+    // Command to switch to XTTS-v2 TTS (for both Korean and English)
+    const switchToXTTSV2Command = vscode.commands.registerCommand('lipcoder.switchToXTTSV2', async () => {
         try {
-            log('[TTS Backend] Switching to OpenAI TTS...');
+            log('[TTS Backend] Switching to XTTS-v2 TTS...');
             
-            // OpenAI TTS doesn't need a server, it uses direct API calls
-            // So we don't need to call serverManager.switchTTSBackend
+            // Start XTTS-v2 server
+            await serverManager.switchTTSBackend('xtts-v2');
             
-            // Update the config
-            setBackend(TTSBackend.OpenAI);
+            // Update the config to XTTS-v2 backend
+            setBackend(TTSBackend.XTTSV2);
             
-            log('[TTS Backend] Successfully switched to OpenAI TTS');
-            vscode.window.showInformationMessage('✅ TTS Backend switched to OpenAI (Korean)');
-            logSuccess(`TTS Backend: OpenAI (model: ${openaiTTSConfig.model}, voice: ${openaiTTSConfig.voice}, language: ${openaiTTSConfig.language})`);
+            log('[TTS Backend] Successfully switched to XTTS-v2 TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: XTTS-v2 (Korean + English)');
+            logSuccess(`TTS Backend: XTTS-v2 (model: ${xttsV2Config.model}, supports both Korean and English)`);
         } catch (error) {
-            logWarning(`Failed to switch to OpenAI TTS: ${error}`);
-            vscode.window.showErrorMessage(`Failed to switch to OpenAI TTS: ${error}`);
+            logWarning(`Failed to switch to XTTS-v2 TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to XTTS-v2 TTS: ${error}`);
+        }
+    });
+
+    // Command to ensure MMS-TTS server is running (but don't change main backend)
+    const ensureMMSTTSCommand = vscode.commands.registerCommand('lipcoder.ensureMMSTTS', async () => {
+        try {
+            log('[MMS-TTS] Ensuring MMS-TTS server is running for Korean text...');
+            
+            // Just start MMS-TTS server, don't change main backend
+            await serverManager.startIndividualServer('mms_tts');
+            
+            // Don't change currentBackend - keep it for English text
+            
+            log('[MMS-TTS] MMS-TTS server is now running for Korean text');
+            vscode.window.showInformationMessage('✅ MMS-TTS server started for Korean text - English backend unchanged');
+            logSuccess(`XTTS-v2: Server running for Korean text (model: ${xttsV2Config.model}). English text uses ${currentBackend}.`);
+        } catch (error) {
+            logWarning(`Failed to start MMS-TTS server: ${error}`);
+            vscode.window.showErrorMessage(`Failed to start MMS-TTS server: ${error}`);
+        }
+    });
+
+    // Command to restart Korean TTS server (if needed)
+    const restartKoreanTTSCommand = vscode.commands.registerCommand('lipcoder.restartKoreanTTS', async () => {
+        try {
+            log('[Korean TTS] Restarting MMS-TTS server...');
+            
+            // Stop and restart MMS-TTS server
+            await serverManager.stopIndividualServer('mms_tts');
+            await serverManager.startIndividualServer('mms_tts');
+            
+            log('[Korean TTS] Successfully restarted MMS-TTS server');
+            vscode.window.showInformationMessage('🇰🇷 Korean TTS server restarted (MMS-TTS)');
+            logSuccess(`Korean TTS: XTTS-v2 server restarted (model: ${xttsV2Config.model})`);
+        } catch (error) {
+            logWarning(`Failed to restart Korean TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to restart Korean TTS: ${error}`);
+        }
+    });
+
+    // Command to show Korean TTS status
+    const showKoreanTTSStatusCommand = vscode.commands.registerCommand('lipcoder.showKoreanTTSStatus', async () => {
+        try {
+            const serverStatus = serverManager.getServerStatus();
+            const mmsTTSRunning = serverStatus['mms_tts']?.running || false;
+            const mmsTTSPort = serverStatus['mms_tts']?.port || 'N/A';
+            
+            const statusMessage = `Korean TTS Status:
+• MMS-TTS Server: ${mmsTTSRunning ? 'Running' : 'Stopped'}
+• Port: ${mmsTTSPort}
+• Model: ${xttsV2Config.model}
+• Behavior: Korean text uses ${mmsTTSRunning ? 'MMS-TTS (fast)' : 'GPT TTS (fallback)'}
+• English TTS: ${currentBackend} (unchanged)`;
+            
+            log(`[Korean TTS Status] ${statusMessage.replace(/\n/g, ', ')}`);
+            vscode.window.showInformationMessage(statusMessage);
+        } catch (error) {
+            logWarning(`Failed to get Korean TTS status: ${error}`);
+            vscode.window.showErrorMessage(`Failed to get Korean TTS status: ${error}`);
         }
     });
 
@@ -73,13 +132,24 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const serverStatus = serverManager.getServerStatus();
         const sileroRunning = serverStatus['tts']?.running || false;
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
+        const xttsV2Running = serverStatus['xtts_v2']?.running || false;
         
-        if (currentBackend === TTSBackend.Silero) {
-            statusMessage = `Current TTS Backend: Silero ${sileroRunning ? '(Running)' : '(Stopped)'}\nModel: ${sileroConfig.modelId}\nSpeaker: ${sileroConfig.defaultSpeaker}\nSample Rate: ${sileroConfig.sampleRate}Hz\nPort: ${serverStatus['tts']?.port || 'N/A'}`;
-        } else if (currentBackend === TTSBackend.Espeak) {
-            statusMessage = `Current TTS Backend: espeak-ng ${espeakRunning ? '(Running)' : '(Stopped)'}\nVoice: ${espeakConfig.defaultVoice}\nSpeed: ${espeakConfig.speed} WPM\nPitch: ${espeakConfig.pitch}\nSample Rate: ${espeakConfig.sampleRate}Hz\nPort: ${serverStatus['espeak_tts']?.port || 'N/A'}`;
-        } else if (currentBackend === TTSBackend.OpenAI) {
-            statusMessage = `Current TTS Backend: OpenAI (API-based)\nModel: ${openaiTTSConfig.model}\nVoice: ${openaiTTSConfig.voice}\nLanguage: ${openaiTTSConfig.language}\nSpeed: ${openaiTTSConfig.speed}x\nAPI Key: ${openaiTTSConfig.apiKey ? 'Configured' : 'Not configured'}`;
+        if (currentBackend === TTSBackend.SileroGPT) {
+            statusMessage = `Current TTS Backend: Silero + GPT
+• Silero (English): ${sileroRunning ? 'Running' : 'Stopped'} - Model: ${sileroConfig.modelId}, Speaker: ${sileroConfig.defaultSpeaker}
+• GPT (Korean): API-based - Voice: ${openaiTTSConfig.voice}, Speed: ${openaiTTSConfig.speed}x
+• Port: ${serverStatus['tts']?.port || 'N/A'}`;
+        } else if (currentBackend === TTSBackend.EspeakGPT) {
+            statusMessage = `Current TTS Backend: Espeak + GPT
+• Espeak (English): ${espeakRunning ? 'Running' : 'Stopped'} - Voice: ${espeakConfig.defaultVoice}, Speed: ${espeakConfig.speed} WPM
+• GPT (Korean): API-based - Voice: ${openaiTTSConfig.voice}, Speed: ${openaiTTSConfig.speed}x
+• Port: ${serverStatus['espeak_tts']?.port || 'N/A'}`;
+        } else if (currentBackend === TTSBackend.XTTSV2) {
+            statusMessage = `Current TTS Backend: XTTS-v2 (Universal)
+• XTTS-v2 (Korean + English): ${xttsV2Running ? 'Running' : 'Stopped'}
+• Model: ${xttsV2Config.model}
+• Sample Rate: ${xttsV2Config.sampleRate}Hz
+• Port: ${serverStatus['xtts_v2']?.port || 'N/A'}`;
         } else {
             statusMessage = `Current TTS Backend: ${currentBackend} (unknown)`;
         }
@@ -93,25 +163,26 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const serverStatus = serverManager.getServerStatus();
         const sileroRunning = serverStatus['tts']?.running || false;
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
+        const xttsV2Running = serverStatus['xtts_v2']?.running || false;
         
         const items = [
             {
-                label: 'Silero TTS',
-                description: `Neural TTS with multiple voices (current: ${sileroConfig.defaultSpeaker}) ${sileroRunning ? '- Running' : '- Stopped'}`,
-                detail: 'High-quality neural text-to-speech with voice variety',
-                backend: TTSBackend.Silero
+                label: '🔄 Silero + GPT',
+                description: `Silero (English) + GPT (Korean) ${sileroRunning ? '- Silero Running' : '- Silero Stopped'}`,
+                detail: 'Neural TTS for English, Premium GPT TTS for Korean - Best balance of quality and speed',
+                backend: TTSBackend.SileroGPT
             },
             {
-                label: 'espeak-ng TTS',  
-                description: `Fast system TTS (current: ${espeakConfig.defaultVoice}) ${espeakRunning ? '- Running' : '- Stopped'}`,
-                detail: 'Lightweight and fast text-to-speech engine',
-                backend: TTSBackend.Espeak
+                label: '⚡ Espeak + GPT',  
+                description: `Espeak (English) + GPT (Korean) ${espeakRunning ? '- Espeak Running' : '- Espeak Stopped'}`,
+                detail: 'Fast system TTS for English, Premium GPT TTS for Korean - Fastest option',
+                backend: TTSBackend.EspeakGPT
             },
             {
-                label: 'OpenAI TTS (Korean)',
-                description: `Cloud-based Korean TTS (current: ${openaiTTSConfig.voice}) ${openaiTTSConfig.apiKey ? '- Ready' : '- API key needed'}`,
-                detail: 'High-quality Korean text-to-speech via OpenAI API',
-                backend: TTSBackend.OpenAI
+                label: '🎯 XTTS-v2 (Universal)',
+                description: `XTTS-v2 for both Korean and English ${xttsV2Running ? '- Running' : '- Stopped'}`,
+                detail: 'High-quality neural TTS with voice cloning support for both languages',
+                backend: TTSBackend.XTTSV2
             }
         ];
 
@@ -126,16 +197,16 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
             title: 'Choose Text-to-Speech Engine'
         });
 
-        if (selected && selected.backend !== currentBackend) {
+        if (selected && selected.backend && selected.backend !== currentBackend) {
             try {
                 log(`[TTS Backend] User selected: ${selected.backend}`);
                 
-                if (selected.backend === TTSBackend.Silero) {
-                    await vscode.commands.executeCommand('lipcoder.switchToSilero');
-                } else if (selected.backend === TTSBackend.Espeak) {
-                    await vscode.commands.executeCommand('lipcoder.switchToEspeak');
-                } else if (selected.backend === TTSBackend.OpenAI) {
-                    await vscode.commands.executeCommand('lipcoder.switchToOpenAI');
+                if (selected.backend === TTSBackend.SileroGPT) {
+                    await vscode.commands.executeCommand('lipcoder.switchToSileroGPT');
+                } else if (selected.backend === TTSBackend.EspeakGPT) {
+                    await vscode.commands.executeCommand('lipcoder.switchToEspeakGPT');
+                } else if (selected.backend === TTSBackend.XTTSV2) {
+                    await vscode.commands.executeCommand('lipcoder.switchToXTTSV2');
                 }
                 
             } catch (error) {
@@ -144,14 +215,17 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
             }
         } else if (selected && selected.backend === currentBackend) {
             vscode.window.showInformationMessage(`Already using ${selected.label.replace('$(check) ', '')}`);
+        } else if (selected && !selected.backend) {
+            // User selected the Korean TTS note - show Korean TTS status
+            await vscode.commands.executeCommand('lipcoder.showKoreanTTSStatus');
         }
     });
 
     // Register all commands
     context.subscriptions.push(
-        switchToSileroCommand,
-        switchToEspeakCommand,
-        switchToOpenAICommand,
+        switchToSileroGPTCommand,
+        switchToEspeakGPTCommand,
+        switchToXTTSV2Command,
         showTTSStatusCommand,
         selectTTSBackendCommand
     );

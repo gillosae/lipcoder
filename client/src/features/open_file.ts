@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import { speakTokenList } from '../audio';
+import { openFileTabAware } from './last_editor_tracker';
 
 export function registerOpenFile(context: ExtensionContext) {
     context.subscriptions.push(
@@ -181,13 +182,16 @@ export function registerOpenFile(context: ExtensionContext) {
                     targetFile = selected.uri;
                 }
 
-                // Open the file
-                const document = await vscode.workspace.openTextDocument(targetFile);
-                await vscode.window.showTextDocument(document);
+                // Open the file using tab-aware logic
+                const editor = await openFileTabAware(targetFile.fsPath);
 
                 // Provide audio feedback
                 const fileName = path.basename(targetFile.fsPath);
-                await speakTokenList([{ tokens: [`Opened ${fileName}`], category: undefined }]);
+                if (editor) {
+                    await speakTokenList([{ tokens: [`Opened ${fileName}`], category: undefined }]);
+                } else {
+                    await speakTokenList([{ tokens: [`Failed to open ${fileName}`], category: undefined }]);
+                }
 
             } catch (error) {
                 console.error('Error opening file:', error);

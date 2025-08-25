@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { numberMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { log, logSuccess } from '../utils';
+import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 /**
  * Clean up current line resources
@@ -18,6 +19,11 @@ let lastPreloadedLine: number | undefined;
 export function registerCurrentLine(context: ExtensionContext) {
     // Track the event listener for proper disposal
     const selectionListener = vscode.window.onDidChangeTextEditorSelection(async e => {
+        // Check if we should suppress reading for debug console or other panels
+        if (shouldSuppressReadingEnhanced(e.textEditor)) {
+            return;
+        }
+        
         // Note: Preloading is now handled automatically by speakTokenList when needed
         // This listener could be removed if preloading is no longer required
     });

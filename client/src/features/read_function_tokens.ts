@@ -5,6 +5,7 @@ import { log } from '../utils';
 import { speakTokenList } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { config } from '../config';
+import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 // Helper function to calculate panning based on column position
 function calculatePanning(column: number): number {
@@ -26,9 +27,16 @@ export function registerReadFunctionTokens(
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readFunctionTokens', async (editorArg?: vscode.TextEditor) => {
             try {
-                const editor = editorArg ?? vscode.window.activeTextEditor;
-                if (!editor || editor.document.uri.scheme !== 'file') {
-                    vscode.window.showWarningMessage('No active file editor!');
+                const { isEditorActive } = require('../ide/active');
+                const editor = editorArg ?? isEditorActive();
+                if (!editor) {
+                    vscode.window.setStatusBarMessage('No active file editor - please open a code file', 3000);
+                    return;
+                }
+                
+                // Check if we should suppress reading for debug console or other panels
+                if (shouldSuppressReadingEnhanced(editor)) {
+                    log(`[readFunctionTokens] Suppressing reading for debug console or other panel`);
                     return;
                 }
                 // Stop any ongoing audio

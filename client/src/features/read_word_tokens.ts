@@ -3,6 +3,7 @@ import { speakTokenList } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
+import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 const bufferMap = new Map<string, string>();
 
@@ -23,6 +24,12 @@ export async function readWordTokens(
     event: vscode.TextDocumentChangeEvent,
     changes: readonly vscode.TextDocumentContentChangeEvent[],
 ) {
+    // Check if we should suppress reading for debug console or other panels
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && shouldSuppressReadingEnhanced(activeEditor)) {
+        return;
+    }
+    
     const uri = event.document.uri.toString();
     let buf = bufferMap.get(uri) || '';
 

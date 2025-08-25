@@ -1,4 +1,5 @@
 import { log, logError, logWarning, logSuccess, logInfo } from './utils';
+import { handleASRErrorSimple } from './asr_error_handler';
 import { serverManager } from './server_manager';
 
 export interface ASRChunk {
@@ -13,6 +14,7 @@ export interface ASROptions {
     serverUrl?: string; // Silero ASR server URL
     onTranscription?: (chunk: ASRChunk) => void; // Callback for each transcription
     onError?: (error: Error) => void; // Error callback
+    onASRReady?: () => void; // Callback when ASR is actually ready and working
 }
 
 export class ASRClient {
@@ -49,7 +51,9 @@ export class ASRClient {
      * Dispose of all resources and clean up memory
      */
     dispose(): void {
-        if (this.disposed) return;
+        if (this.disposed) {
+            return;
+        }
         
         logWarning('[ASR] Disposing ASRClient resources...');
         
@@ -158,6 +162,11 @@ export class ASRClient {
             
             // Set up audio chunk processing
             this.setupAudioChunkProcessing();
+            
+            // Play ASR start sound now that microphone is actually working
+            if (this.options.onASRReady) {
+                this.options.onASRReady();
+            }
             
         } catch (error) {
             logError(`[ASR] Error starting microphone stream: ${error}`);
@@ -298,6 +307,9 @@ export class ASRClient {
             logError(`[ASR] Error processing real audio chunk: ${error}`);
             if (this.options.onError) {
                 this.options.onError(error as Error);
+            } else {
+                // Fallback to simple error handler if no callback provided
+                await handleASRErrorSimple(error as Error, 'ASR Client');
             }
         }
     }
@@ -501,6 +513,9 @@ export class ASRClient {
             logError(`[ASR] Error simulating audio processing: ${error}`);
             if (this.options.onError) {
                 this.options.onError(error as Error);
+            } else {
+                // Fallback to simple error handler if no callback provided
+                await handleASRErrorSimple(error as Error, 'ASR Simulation');
             }
         }
     }

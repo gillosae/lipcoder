@@ -37,7 +37,13 @@ type ColorName = keyof typeof Colors;
 export function log(message: string, color?: ColorName): void {
     const colorCode = color ? Colors[color] : '';
     const resetCode = color ? Colors.Reset : '';
-    console.log(`${colorCode}${message}${resetCode}`);
+    const formattedMessage = `${colorCode}${message}${resetCode}`;
+    
+    // Log to console (Developer Console)
+    console.log(formattedMessage);
+    
+    // Also log to the LipCoder output channel
+    lipcoderLog.appendLine(`[${new Date().toISOString()}] ${message}`);
 }
 
 /**
@@ -77,4 +83,15 @@ export function logInfo(message: string): void {
 
 export function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Initialize logging and show the output channel
+ */
+export function initializeLogging(): void {
+    // Show the LipCoder output channel so it appears in the dropdown
+    lipcoderLog.show(true);
+    
+    // Log startup message
+    log('[LipCoder] Logging initialized - debug output ready', 'BrightGreen');
 }

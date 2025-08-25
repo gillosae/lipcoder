@@ -112,7 +112,7 @@ async function initializeSyntaxErrorNavigation(editorArg?: vscode.TextEditor): P
     
     if (!editor) {
         log('[SyntaxErrors] No editor found after all fallbacks');
-        vscode.window.showWarningMessage('No active editor found. Please open a code file first.');
+        vscode.window.setStatusBarMessage('No active editor - please open a code file first', 3000);
         return false;
     }
     
@@ -154,7 +154,7 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
     }
     
     if (!editor) {
-        vscode.window.showWarningMessage('No active editor found. Please open a code file first.');
+        vscode.window.setStatusBarMessage('No active editor - please open a code file first', 3000);
         return;
     }
     

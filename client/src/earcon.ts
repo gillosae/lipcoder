@@ -5,7 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { getTokenSound } from './tokens';
 import { log, logWarning, logMemory } from './utils';
 import { config } from './config';
-import { isEarcon, specialCharMap } from './mapping';
+import { isEarcon, getSpecialCharSpoken } from './mapping';
 import * as os from 'os';
 
 // Standard PCM format for earcon playback  
@@ -85,7 +85,7 @@ export function findTokenSound(token: string): string | null {
     if (fs.existsSync(numPath)) return numPath;
 
     // Special‐tokens folder: map single-char token to its spoken name
-    const specialName = specialCharMap[token];
+    const specialName = getSpecialCharSpoken(token);
     if (specialName) {
         // First check the "special" folder (underbar, equals, etc.)
         const specialFile = path.join(config.specialPath(), `${specialName}.pcm`);
@@ -94,6 +94,10 @@ export function findTokenSound(token: string): string | null {
         const fallbackEarcon = path.join(config.earconPath(), `${specialName}.pcm`);
         if (fs.existsSync(fallbackEarcon)) return fallbackEarcon;
     }
+
+    // Check alert folder for special alert sounds (copy, paste, etc.)
+    const alertFile = path.join(config.alertPath(), `${token}.pcm`);
+    if (fs.existsSync(alertFile)) return alertFile;
 
     return null;
 }
@@ -147,6 +151,8 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
     // Exception: Only optimize space character specifically for minimal delay
     const isSpaceToken = token === ' ';
     
+    // For earcons, use pitch-preserving time stretching when playspeed is not 1.0
+    // This ensures earcons play at correct speed while preserving pitch
     if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isSpaceToken) {
         log(`[playEarcon] Using pitch-preserving time stretching for earcon "${token}"`);
         
@@ -156,7 +162,7 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
             cleanupEarconCache();
             
             try {
-                const data = fs.readFileSync(file);
+                const data = fs.readFileSync(file!); // file is guaranteed to be non-null here
                 earconRaw[token] = data;
                 earconAccessTimes[token] = Date.now();
                 log(`[playEarcon] Successfully loaded earcon data for "${token}": ${data.length} bytes`);
@@ -170,7 +176,13 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         }
         
         // Convert PCM to temporary WAV file for FFmpeg processing
-        const tempWavPath = path.join(os.tmpdir(), `earcon_${token}_${Date.now()}.wav`);
+        const tempDir = path.join(os.tmpdir(), 'lipcoder_earcon');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        // Create safe filename by replacing special characters
+        const safeToken = token.replace(/[^a-zA-Z0-9]/g, '_');
+        const tempWavPath = path.join(tempDir, `earcon_${safeToken}_${Date.now()}.wav`);
         try {
             // Create WAV header for the PCM data
             const pcmData = earconRaw[token];
@@ -224,7 +236,7 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
     if (isSpaceToken) {
         // Direct read for immediate playback - skip cache for minimal delay
         try {
-            rawData = fs.readFileSync(file);
+            rawData = fs.readFileSync(file!); // file is guaranteed to be non-null here
             log(`[playEarcon] DIRECT READ for space earcon: ${rawData.length} bytes`);
         } catch (err) {
             log(`[playEarcon] Failed to read space earcon file ${file}: ${err}`);
@@ -238,7 +250,7 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
             cleanupEarconCache();
             
             try {
-                const data = fs.readFileSync(file);
+                const data = fs.readFileSync(file!); // file is guaranteed to be non-null here
                 earconRaw[token] = data;
                 earconAccessTimes[token] = Date.now();
                 log(`[playEarcon] Successfully loaded earcon data for "${token}": ${data.length} bytes`);
@@ -267,13 +279,14 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         // Stop any current earcon playback
         stopEarconPlayback();
         
-        // Apply global playspeed to earcon playback (changes pitch)
-        const adjustedFormat = { ...format, sampleRate: Math.floor(format.sampleRate * config.playSpeed) };
+        // When pitch-preserving fails, earcons should still play at normal speed
+        // Don't apply global playspeed to earcons - they should provide immediate feedback
+        const adjustedFormat = { ...format };
         
         if (isSpaceToken) {
             log(`[playEarcon] FAST SPACE: sample rate ${adjustedFormat.sampleRate}Hz for ultra-low latency`);
         } else {
-            log(`[playEarcon] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
+            log(`[playEarcon] Using normal sample rate ${adjustedFormat.sampleRate}Hz for immediate earcon feedback`);
         }
         
         // Use smaller buffer for space earcon to reduce latency

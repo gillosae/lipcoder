@@ -12,9 +12,27 @@ export enum DetectedLanguage {
 }
 
 /**
- * Detect if text contains Korean characters
+ * Detect if text contains Korean characters (optimized for alphabet performance)
  */
 export function containsKorean(text: string): boolean {
+    // ULTRA-FAST pre-check for single ASCII letters (common case for alphabet)
+    if (text.length === 1) {
+        const charCode = text.charCodeAt(0);
+        // ASCII letters (A-Z, a-z) - definitely not Korean
+        if ((charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122)) {
+            return false;
+        }
+        // ASCII digits and common symbols - definitely not Korean
+        if (charCode >= 32 && charCode <= 126) {
+            return false;
+        }
+    }
+    
+    // Fast pre-check: if text is short and only contains ASCII, skip regex
+    if (text.length <= 3 && /^[\x00-\x7F]*$/.test(text)) {
+        return false;
+    }
+    
     // Korean Unicode ranges:
     // Hangul Syllables: U+AC00-U+D7AF
     // Hangul Jamo: U+1100-U+11FF
@@ -52,16 +70,38 @@ export function countEnglishChars(text: string): number {
     return matches ? matches.length : 0;
 }
 
+// Language detection cache to avoid repeated regex operations
+const languageCache = new Map<string, DetectedLanguage>();
+const CACHE_MAX_SIZE = 1000;
+
 /**
- * Detect the primary language of a text string
+ * Detect the primary language of a text string with caching (optimized for alphabet)
  */
 export function detectLanguage(text: string): DetectedLanguage {
     if (!text || text.trim().length === 0) {
         return DetectedLanguage.Unknown;
     }
     
+    // OPTIMIZATION: Skip caching for single ASCII characters (alphabet/digits/symbols)
+    // This avoids cache overhead for the most common case
+    if (text.length === 1) {
+        const charCode = text.charCodeAt(0);
+        // ASCII letters, digits, and symbols - definitely English
+        if (charCode >= 32 && charCode <= 126) {
+            return DetectedLanguage.English;
+        }
+    }
+    
+    // Check cache for longer strings
+    const cached = languageCache.get(text);
+    if (cached !== undefined) {
+        return cached;
+    }
+    
     const hasKorean = containsKorean(text);
     const hasEnglish = containsEnglish(text);
+    
+    let result: DetectedLanguage;
     
     // If both languages are present, determine which is dominant
     if (hasKorean && hasEnglish) {
@@ -74,35 +114,46 @@ export function detectLanguage(text: string): DetectedLanguage {
             const koreanRatio = koreanCount / totalChars;
             if (koreanRatio > 0.3) {
                 log(`[detectLanguage] Mixed text detected, Korean dominant (${(koreanRatio * 100).toFixed(1)}%): "${text.substring(0, 50)}..."`);
-                return DetectedLanguage.Korean;
+                result = DetectedLanguage.Korean;
             } else {
                 log(`[detectLanguage] Mixed text detected, English dominant (${((1 - koreanRatio) * 100).toFixed(1)}%): "${text.substring(0, 50)}..."`);
-                return DetectedLanguage.English;
+                result = DetectedLanguage.English;
             }
+        } else {
+            result = DetectedLanguage.Mixed;
         }
-        return DetectedLanguage.Mixed;
     }
-    
     // Single language detection
-    if (hasKorean) {
+    else if (hasKorean) {
         log(`[detectLanguage] Korean detected: "${text.substring(0, 50)}..."`);
-        return DetectedLanguage.Korean;
+        result = DetectedLanguage.Korean;
     }
-    
-    if (hasEnglish) {
+    else if (hasEnglish) {
         log(`[detectLanguage] English detected: "${text.substring(0, 50)}..."`);
-        return DetectedLanguage.English;
+        result = DetectedLanguage.English;
     }
-    
     // If no letters detected, check for numbers and symbols
     // Default to English for programming symbols, numbers, etc.
-    if (/[\d\s\p{P}\p{S}]/u.test(text)) {
+    else if (/[\d\s\p{P}\p{S}]/u.test(text)) {
         log(`[detectLanguage] Numbers/symbols detected, defaulting to English: "${text.substring(0, 50)}..."`);
-        return DetectedLanguage.English;
+        result = DetectedLanguage.English;
+    }
+    else {
+        log(`[detectLanguage] Unknown language: "${text.substring(0, 50)}..."`);
+        result = DetectedLanguage.Unknown;
     }
     
-    log(`[detectLanguage] Unknown language: "${text.substring(0, 50)}..."`);
-    return DetectedLanguage.Unknown;
+    // Cache the result with size limit
+    if (languageCache.size >= CACHE_MAX_SIZE) {
+        // Remove oldest entries (simple FIFO)
+        const firstKey = languageCache.keys().next().value;
+        if (firstKey !== undefined) {
+            languageCache.delete(firstKey);
+        }
+    }
+    languageCache.set(text, result);
+    
+    return result;
 }
 
 /**

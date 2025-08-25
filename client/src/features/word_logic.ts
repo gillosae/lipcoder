@@ -26,41 +26,35 @@ function isKoreanText(text: string): boolean {
 }
 
 /**
- * Split Korean text into meaningful chunks
- * Korean text should generally be kept as whole words/phrases
+ * Split Korean text into meaningful chunks (optimized for TTS performance)
+ * Korean text should generally be kept as whole phrases to reduce TTS overhead
  */
 function splitKoreanText(text: string): string[] {
-    // For Korean text, we want to keep words together
-    // Split on whitespace and punctuation, but keep Korean characters together
+    // For Korean text, keep longer phrases together to reduce TTS processing overhead
+    // Only split on major punctuation, not on whitespace
     const result: string[] = [];
-    let currentKoreanWord = '';
+    let currentPhrase = '';
     
     for (let i = 0; i < text.length; i++) {
         const char = text[i];
         
-        if (containsKorean(char)) {
-            // Korean character - add to current word
-            currentKoreanWord += char;
-        } else if (/\s/.test(char)) {
-            // Whitespace - end current Korean word if any
-            if (currentKoreanWord) {
-                result.push(currentKoreanWord);
-                currentKoreanWord = '';
-            }
-            // Skip whitespace
-        } else {
-            // Non-Korean, non-whitespace character (punctuation, numbers, etc.)
-            if (currentKoreanWord) {
-                result.push(currentKoreanWord);
-                currentKoreanWord = '';
+        // Split only on major punctuation that indicates sentence boundaries
+        if (/[.!?;]/.test(char)) {
+            // Major punctuation - end current phrase if any
+            if (currentPhrase.trim()) {
+                result.push(currentPhrase.trim());
+                currentPhrase = '';
             }
             result.push(char);
+        } else {
+            // Keep everything else together (Korean chars, whitespace, minor punctuation)
+            currentPhrase += char;
         }
     }
     
-    // Add final Korean word if any
-    if (currentKoreanWord) {
-        result.push(currentKoreanWord);
+    // Add final phrase if any
+    if (currentPhrase.trim()) {
+        result.push(currentPhrase.trim());
     }
     
     return result.filter(Boolean);
@@ -71,7 +65,7 @@ export function isCamelCase(id: string) {
     return /[a-z][A-Z]/.test(id);
 }
 export function splitCamel(id: string): string[] {
-    return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) || [id];
+    return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g) || [id];
 }
 
 
@@ -135,8 +129,11 @@ export function splitWordChunks(text: string): string[] {
                     else {
                         result.push(run);
                     }
+                } else if (/^\d+$/.test(run)) {
+                    // 4. Digit runs: keep as complete numbers for better TTS pronunciation
+                    result.push(run);
                 } else {
-                    // 4. Digit runs and special runs: split into individual characters
+                    // 4. Special runs: split into individual characters
                     for (const ch of run) result.push(ch);
                 }
             }

@@ -3,9 +3,7 @@
   "version": "1.0.0",
   "main": "../dist/client/extension.js",
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:typescript",
-    "onLanguage:python"
+    "*"
   ],
   "contributes": {
     "languages": [
@@ -60,7 +58,7 @@
       },
       {
         "key": "ctrl+shift+a",
-        "command": "lipcoder.stopASRCommandMode", 
+        "command": "lipcoder.stopASRCommandMode",
         "when": "lipcoder.isRecording"
       },
       {
@@ -94,7 +92,10 @@
         },
         "lipcoder.asrBackend": {
           "type": "string",
-          "enum": ["silero", "gpt4o-transcribe"],
+          "enum": [
+            "silero",
+            "gpt4o-transcribe"
+          ],
           "default": "gpt4o-transcribe",
           "description": "ASR backend to use for speech recognition. GPT-4o backend uses Whisper for reliable transcription and requires an API key."
         },
@@ -295,6 +296,31 @@
         "command": "lipcoder.debugASRState",
         "title": "Debug ASR State",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testXTTSInference",
+        "title": "🎤 Test XTTS Synthesis",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.quickEnglishXTTS",
+        "title": "🇺🇸 Quick English XTTS Test",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.quickKoreanXTTS",
+        "title": "🇰🇷 Quick Korean XTTS Test",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.checkXTTSStatus",
+        "title": "📊 Check XTTS Server Status",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.clearXTTSCache",
+        "title": "🗑️ Clear XTTS Cache",
+        "category": "LipCoder"
       }
     ]
   },
@@ -312,13 +338,15 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "diff": "^8.0.2",
     "form-data": "^4.0.4",
     "node-fetch": "^2.7.0",
     "node-microphone": "^0.1.6",
     "node-pty": "^1.0.0",
     "openai": "^4.3.0",
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

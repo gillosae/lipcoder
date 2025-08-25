@@ -28,8 +28,12 @@ interface CodeContext {
  * Main function to analyze code based on natural language questions
  */
 export async function analyzeCodeWithQuestion(question: string): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    log(`[CodeAnalysis] 🚀 ANALYZE CODE WITH QUESTION CALLED: "${question}"`);
+    
+    const { isEditorActive } = require('../ide/active');
+    const editor = isEditorActive();
     if (!editor) {
+        log(`[CodeAnalysis] 🚀 No active editor found`);
         await showAndSpeakResult({
             question,
             answer: "No active editor found. Please open a code file first."
@@ -38,19 +42,21 @@ export async function analyzeCodeWithQuestion(question: string): Promise<void> {
     }
 
     try {
-        log(`[CodeAnalysis] Analyzing question: "${question}"`);
+        log(`[CodeAnalysis] 🚀 Analyzing question: "${question}"`);
         
         // Get code context
         const context = await getCodeContext(editor);
+        log(`[CodeAnalysis] 🚀 Got context for file: ${context.fileName}`);
         
         // Analyze the question and generate response
         const result = await analyzeCodeQuestion(question, context);
+        log(`[CodeAnalysis] 🚀 Got analysis result: "${result.answer}"`);
         
         // Show and speak the result
         await showAndSpeakResult(result);
         
     } catch (error) {
-        logError(`[CodeAnalysis] Error analyzing code: ${error}`);
+        logError(`[CodeAnalysis] 🚨 Error analyzing code: ${error}`);
         await showAndSpeakResult({
             question,
             answer: `Sorry, I encountered an error while analyzing the code: ${error}`
@@ -284,6 +290,10 @@ async function performBasicAnalysis(question: string, context: CodeContext): Pro
 async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
     const { question, answer, details, statistics } = result;
     
+    log(`[CodeAnalysis] 📋 SHOW AND SPEAK RESULT CALLED`);
+    log(`[CodeAnalysis] 📋 Question: "${question}"`);
+    log(`[CodeAnalysis] 📋 Answer: "${answer}"`);
+    
     // Prepare display message
     let displayMessage = answer;
     if (details) {
@@ -294,9 +304,11 @@ async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
     }
     
     // Show non-modal notification popup (bottom-right corner)
+    log(`[CodeAnalysis] 📋 Showing popup with message: "${displayMessage}"`);
     vscode.window.showInformationMessage(displayMessage);
     
     // Speak the answer as plain text
+    log(`[CodeAnalysis] 📋 About to call speakAnalysisResult...`);
     await speakAnalysisResult(answer);
     
     logSuccess(`[CodeAnalysis] Analysis completed for: "${question}"`);
@@ -307,18 +319,70 @@ async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
  */
 async function speakAnalysisResult(answer: string): Promise<void> {
     try {
-        log(`[CodeAnalysis] Speaking result: "${answer}"`);
+        log(`[CodeAnalysis] 🔊 ATTEMPTING TO SPEAK: "${answer}"`);
         
-        // Speak as simple plain text without code reading tokens
-        const chunks: TokenChunk[] = [{
-            tokens: [answer],
-            category: undefined  // No category = plain text TTS
-        }];
+        // Try multiple approaches to ensure speech works
         
-        await speakTokenList(chunks);
+        // Method 1: Use comment category (known to work)
+        log(`[CodeAnalysis] 🔊 Method 1: Trying with comment category...`);
+        try {
+            const chunks1: TokenChunk[] = [{
+                tokens: [answer],
+                category: 'comment'  // Use comment category which should work
+            }];
+            
+            log(`[CodeAnalysis] 🔊 Calling speakTokenList with comment category: ${JSON.stringify(chunks1)}`);
+            await speakTokenList(chunks1);
+            log(`[CodeAnalysis] 🔊 Method 1 (comment category) completed successfully`);
+            return; // Success, exit early
+        } catch (method1Error) {
+            logError(`[CodeAnalysis] 🚨 Method 1 failed: ${method1Error}`);
+        }
+        
+        // Method 2: Use undefined category (original approach)
+        log(`[CodeAnalysis] 🔊 Method 2: Trying with undefined category...`);
+        try {
+            const chunks2: TokenChunk[] = [{
+                tokens: [answer],
+                category: undefined  // No category = plain text TTS
+            }];
+            
+            log(`[CodeAnalysis] 🔊 Calling speakTokenList with undefined category: ${JSON.stringify(chunks2)}`);
+            await speakTokenList(chunks2);
+            log(`[CodeAnalysis] 🔊 Method 2 (undefined category) completed successfully`);
+            return; // Success, exit early
+        } catch (method2Error) {
+            logError(`[CodeAnalysis] 🚨 Method 2 failed: ${method2Error}`);
+        }
+        
+        // Method 3: Direct TTS call
+        log(`[CodeAnalysis] 🔊 Method 3: Trying direct TTS generation...`);
+        try {
+            const { genTokenAudio } = await import('../tts.js');
+            const audioPath = await genTokenAudio(answer, undefined);
+            log(`[CodeAnalysis] 🔊 Direct TTS generated audio at: ${audioPath}`);
+            
+            const { playWave } = await import('../audio.js');
+            await playWave(audioPath);
+            log(`[CodeAnalysis] 🔊 Method 3 (direct TTS) completed successfully`);
+            return; // Success, exit early
+        } catch (method3Error) {
+            logError(`[CodeAnalysis] 🚨 Method 3 failed: ${method3Error}`);
+        }
+        
+        throw new Error('All speech methods failed');
         
     } catch (error) {
-        logError(`[CodeAnalysis] Error speaking result: ${error}`);
+        logError(`[CodeAnalysis] 🚨 ALL SPEECH METHODS FAILED: ${error}`);
+        logError(`[CodeAnalysis] 🚨 Error stack: ${error instanceof Error ? error.stack : 'No stack'}`);
+        
+        // Try fallback speech method
+        try {
+            log(`[CodeAnalysis] 🔊 Trying fallback notification...`);
+            vscode.window.showInformationMessage(`Speaking: ${answer}`);
+        } catch (fallbackError) {
+            logError(`[CodeAnalysis] 🚨 Fallback also failed: ${fallbackError}`);
+        }
     }
 }
 
