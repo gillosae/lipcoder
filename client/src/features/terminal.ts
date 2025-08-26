@@ -22,7 +22,12 @@ let hasNodePty = false;
 let fallbackTerminal: vscode.Terminal | null = null;
 let currentPtyProcess: any = null;
 let terminalOutputBuffer: string[] = []; // Enhanced buffer for better output tracking
+
 let currentInputBuffer = ''; // Current command being typed
+
+// Live echo/complete tracking
+let awaitingCompletion = false;       // set when user presses TAB
+let echoCaptureActive = false;        // transient while shell redraws/completes current line
 
 // Terminal-specific audio control
 let terminalAbortController = new AbortController();
@@ -42,6 +47,11 @@ let commandOutputBuffer: Array<{type: 'input' | 'output', content: string, times
 let suggestionDialogActive = false;
 let pendingSuggestions: CodeExecutionSuggestion[] = [];
 let lastSuggestionTime = 0;
+
+// === In-terminal Reading Overlay (ANSI alt-screen) hooks ===
+let openReadingAltScreen: (() => void) | null = null;
+let refreshReadingAltScreen: (() => void) | null = null;
+let closeReadingAltScreen: (() => void) | null = null;
 
 /**
  * Check if terminal suggestion dialog is currently active
@@ -155,7 +165,7 @@ async function speakTerminalTokens(chunks: TokenChunk[], description: string): P
 function addToTerminalBuffer(type: 'input' | 'output', content: string): void {
     const entry = {
         type,
-        content: content.trim(),
+        content: content.trimStart(),
         timestamp: new Date()
     };
     
@@ -185,27 +195,34 @@ function addToTerminalBuffer(type: 'input' | 'output', content: string): void {
     logSuccess(`[Terminal] Added ${type}: "${content.trim()}"`);
 }
 
-/**
- * Show reading mode UI indicator
- */
-function showReadingModeUI(): void {
-    const totalLines = terminalBuffer.length;
-    const currentPos = Math.max(0, currentLineIndex + 1);
-    const currentEntry = terminalBuffer[currentLineIndex];
-    const entryType = currentEntry ? currentEntry.type : 'unknown';
+// /**
+//  * Show reading mode UI indicator
+//  */
+// function showReadingModeUI(): void {
+//     const totalLines = terminalBuffer.length;
+//     const currentPos = Math.max(0, currentLineIndex + 1);
+//     const currentEntry = terminalBuffer[currentLineIndex];
+//     const entryType = currentEntry ? currentEntry.type : 'unknown';
     
-    vscode.window.showInformationMessage(
-        `Reading Mode: Line ${currentPos}/${totalLines} (${entryType})`,
-        { modal: false }
-    );
-}
+//     vscode.window.showInformationMessage(
+//         `Reading Mode: Line ${currentPos}/${totalLines} (${entryType})`,
+//         { modal: false }
+//     );
+// }
 
-/**
- * Hide reading mode UI
- */
+// /**
+//  * Hide reading mode UI
+//  */
+// function hideReadingModeUI(): void {
+//     // Clear any existing status messages
+//     vscode.window.setStatusBarMessage('', 1);
+// }
+function showReadingModeUI(): void {
+    if (openReadingAltScreen) openReadingAltScreen();
+    if (refreshReadingAltScreen) refreshReadingAltScreen();
+}
 function hideReadingModeUI(): void {
-    // Clear any existing status messages
-    vscode.window.setStatusBarMessage('', 1);
+    if (closeReadingAltScreen) closeReadingAltScreen();
 }
 
 /**
@@ -264,6 +281,12 @@ function parseTerminalLineToTokens(line: string): TokenChunk[] {
     }
     
     return chunks;
+}
+
+const SPOKEN_PREFIX_MODE: 'en-short' | 'ko' = 'en-short'; // 'ko'로 바꾸면 한국어로 읽음
+function getSpokenPrefix(t: 'input' | 'output'): string {
+  if (SPOKEN_PREFIX_MODE === 'ko') return t === 'input' ? '입력' : '출력';
+  return t === 'input' ? 'in' : 'out';
 }
 
 /**
@@ -1004,6 +1027,8 @@ function cleanupTerminalResources(): void {
     compositionBuffer = '';
     
     hideReadingModeUI();
+
+    if (closeReadingAltScreen) closeReadingAltScreen();
     
     logSuccess('[Terminal] Terminal resources cleaned up');
 }
@@ -1028,24 +1053,25 @@ function getCurrentScreenContent(): string[] {
  * Clean terminal line from ANSI sequences and unwanted characters
  */
 function cleanTerminalLine(line: string): string {
+    // Strip ANSI/OSC/control chars only. DO NOT inject or rearrange spaces/tokens.
+    // This avoids artifacts like "university .py" or ".pypython" that came from previous regex inserts.
     let cleaned = line
-        .replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '') // Remove ANSI escape sequences (including ?2004l)
-        .replace(/\u001b\]0;.*?\u0007/g, '') // Remove terminal title sequences
-        .replace(/\u001b\[[\d;]*[a-zA-Z]/g, '') // Remove additional ANSI sequences
-        .replace(/\r/g, '') // Remove carriage returns
-        .replace(/[\x00-\x1F\x7F]/g, ''); // Remove other control characters
-    
-    // Fix spacing issues - add spaces between words that got concatenated
-    cleaned = cleaned
-        .replace(/([a-zA-Z0-9])([A-Z][a-z])/g, '$1 $2') // Add space before camelCase
-        .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space between lowercase and uppercase
-        .replace(/([a-zA-Z0-9])(\.[a-zA-Z])/g, '$1 $2') // Add space before file extensions
-        .replace(/([a-zA-Z0-9])(package)/g, '$1 package') // Add space before 'package'
-        .replace(/([a-zA-Z0-9])(src|tests|node_modules)/g, '$1 $2') // Add space before common folder names
-        .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
-        .trim();
-    
-    return cleaned;
+        // Remove CSI/SGR etc.
+        .replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '')
+        // Remove OSC title sequences
+        .replace(/\u001b\]0;.*?\u0007/g, '')
+        // Extra ANSI fallbacks
+        .replace(/\u001b\[[\d;]*[a-zA-Z]/g, '')
+        // Carriage returns
+        .replace(/\r/g, '')
+        // Other control characters (keep tabs; they are part of spacing)
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+        // Zero-width / BOM
+        .replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+    // IMPORTANT: Do not "fix" spacing (no camelCase or extension spacing). Preserve original tokens.
+    // Do not trim: keep spacing exactly as emitted by the shell.
+    return cleaned; // keep spacing exactly as emitted by the shell
 }
 
 /**
@@ -1181,14 +1207,14 @@ function updateScreenBuffer(data: string): void {
     
     // Only process when we have complete lines (ending with newline)
     if (data.includes('\n') || data.includes('\r')) {
-        // Split into lines and clean ANSI sequences
-        const lines = fullBuffer.split(/\r?\n/);
+        // Split on either \n or \r (many shells use lone CR for line submission/redraw)
+        const lines = fullBuffer.split(/[\r\n]+/);
         
         // Clear the buffer since we're processing it
         terminalOutputBuffer = [];
         
         // Keep the last incomplete line in buffer if any
-        if (lines.length > 0 && !fullBuffer.endsWith('\n') && !fullBuffer.endsWith('\r')) {
+        if (lines.length > 0 && !/[\r\n]$/.test(fullBuffer)) {
             terminalOutputBuffer.push(lines.pop() || '');
         }
         
@@ -1273,8 +1299,263 @@ function createPtyTerminal(pty: any): void {
     const writeEmitter = new vscode.EventEmitter<string>();
     const closeEmitter = new vscode.EventEmitter<void>();
 
+    // === Terminal dimensions tracking for proper layout ===
+    let termCols = 100; // sensible default; will be updated by setDimensions
+    let termRows = 30;
+
+    function setTermSize(cols?: number, rows?: number) {
+        if (typeof cols === 'number' && cols > 10) termCols = cols;
+        if (typeof rows === 'number' && rows > 0) termRows = rows;
+    }
+
+    // ANSI + East-Asian width aware helpers (for perfect alignment)
+    const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g; // CSI + final byte
+    function stripAnsi(s: string): string { return s.replace(ANSI_RE, ''); }
+    // very small wcwidth approximation: treat common CJK ranges as width 2
+    const CJK_RE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+    function charWidth(ch: string): number {
+        if (!ch) return 0;
+        // surrogate pairs handled as one char by iter over codepoints below
+        return CJK_RE.test(ch) ? 2 : 1;
+    }
+    function visWidth(s: string): number {
+        let w = 0;
+        const plain = stripAnsi(s);
+        for (const ch of plain) w += charWidth(ch);
+        return w;
+    }
+    /**
+     * padEndCutAnsiExact: returns a string whose VISIBLE width is EXACTLY `width`.
+     * - Preserves ANSI when not truncated
+     * - On truncation, returns plain text with ellipsis and then pads to exact width
+     */
+    function padEndCutAnsiExact(s: string, width: number): string {
+        if (width <= 0) return '';
+        const plain = stripAnsi(s);
+        // fast path when no truncation needed
+        let w = 0;
+        for (const ch of plain) { w += charWidth(ch); }
+        if (w === width) return s; // keep ANSI
+        if (w < width) {
+            // pad spaces to reach exact width
+            return s + ' '.repeat(width - w);
+        }
+        // truncate to width-1 and add ellipsis (so user sees it's cut)
+        let out = '';
+        let acc = 0;
+        for (const ch of plain) {
+            const cw = charWidth(ch);
+            if (acc + cw >= Math.max(1, width)) break; // leave space for ellipsis
+            out += ch;
+            acc += cw;
+        }
+        // ensure out width <= width-1
+        const ell = '…';
+        let outW = 0; for (const ch of out) outW += charWidth(ch);
+        if (outW > Math.max(0, width - 1)) {
+            // trim one more char if needed
+            while (out && outW > Math.max(0, width - 1)) {
+                const last = out.slice(0, -1);
+                out = last;
+                outW = 0; for (const ch of out) outW += charWidth(ch);
+            }
+        }
+        // pad (shouldn't need, but for safety)
+        const pad = Math.max(0, width - 1 - outW);
+        return out + ' '.repeat(pad) + ell; // plain by design on truncation
+    }
+
+
+    // Display-only: very conservative spacing restoration so multi-column ls does not look glued
+    // Never mutate the stored buffer; use only when rendering.
+    function softVisualSpacing(s: string): string {
+        if (!s) return s;
+        let out = s;
+        // Case 1 (safer): only split after a KNOWN extension when immediately followed by a letter (e.g., ".txtsrc" -> ".txt src", ".pyuniversity" -> ".py university")
+        out = out.replace(/\.(txt|py|ts|js|jsx|tsx|json|md|csv|log|yml|yaml|ini|cfg|toml|sh|zsh|bash|env|lock)(?=[A-Za-z])/g, '.$1 ');
+        // Case 2: known directory tokens that might appear glued to the next word ("srcuni" -> "src uni")
+        out = out.replace(/\b(src|bin|dist|build|lib|include|node_modules)(?=[A-Za-z])/g, '$1 ');
+        // Case 3: very common filename that may glue to previous token
+        // e.g., "datarequirements.txt" -> "data requirements.txt"
+        out = out.replace(/([A-Za-z0-9])(?=requirements\.(txt|in)\b)/g, '$1 ');
+        // Case 4: if a directory token got separated from its slash ("src /university.py"), merge the space back
+        out = out.replace(/([A-Za-z0-9_-])\s+\/(?=[^/])/g, '$1/');
+        // Case 5: split when a known dir token is glued to previous letters ("asdfsdfdfddata" -> "asdfsdfdfd data")
+        out = out.replace(/([A-Za-z0-9])(?=(src|bin|dist|build|lib|include|node_modules|data)\b)/g, '$1 ');
+        return out;
+    }
+
+    // === Reading overlay (ANSI alt screen) helpers ===
+    let altScreenActive = false;
+    let pendingShellOutput: string[] = []; // 읽기 모드 동안 화면엔 안 찍고 여기에만 쌓음
+
+    // ANSI helpers
+    const CSI = "\u001b[";
+    const SGR = (codes: string) => `${CSI}${codes}m`;
+    const reset = SGR("0");
+    const dim = SGR("2");
+    const inverse = SGR("7");
+    const bold = SGR("1");
+    const fgCyan = SGR("38;5;45");
+    const fgGreen = SGR("38;5;34");
+    const fgBlue = SGR("38;5;33");
+    const fgGray = SGR("38;5;246");
+    const bgSel = SGR("48;5;236");
+    const bgBox = SGR("48;5;250"); // bright light gray background for active line
+    const fgBox = SGR("38;5;16");  // dark fg for contrast on the bright box
+
+    function termWrite(s: string) { writeEmitter.fire(s); }
+    function clearScreen() { termWrite("\u001b[2J\u001b[H"); }
+
+    function renderReadingOverlay(): void {
+        if (!altScreenActive) return;
+        clearScreen();
+
+        const total = terminalBuffer.length;
+        const pos = Math.max(0, currentLineIndex);
+
+        // compute layout sizes
+        const colPadding = 2; // spaces between meta and content
+        const digits = String(Math.max(1, total)).length;
+        const metaFixed = 1 + digits + 1 /*# +ln +space*/ + 3 /*IN/OUT*/ + 1 /*space*/ + 8 /*hh:mm:ss fixed*/;
+        const safeCols = Math.max(30, termCols || 100);
+        const contentWidth = Math.max(10, safeCols - metaFixed - colPadding);
+
+        // window around current line
+        const windowSize = Math.max(8, Math.min(28, termRows - 4));
+        const start = Math.max(0, pos - Math.floor(windowSize / 2));
+        const end = Math.min(total, start + windowSize);
+        const actualStart = Math.max(0, end - windowSize);
+
+        // header (left-aligned, trimmed)
+        const rangeText = `${actualStart + 1}-${end} of ${total}`;
+        const hint = `↑/↓ line · ⌥←/→ word · Esc/Ctrl+H exit`;
+        const headerLeft = `${bold}${fgCyan}Reading Mode${reset}`;
+        const headerRight = `${fgGray}${rangeText}${reset}    ${dim}${hint}${reset}`;
+        const header = padEndCutAnsiExact(headerLeft + '  ' + headerRight, safeCols);
+        termWrite(header + "\n\n");
+
+        // rows (left-aligned, fixed meta width, bright box for active line)
+        for (let i = actualStart; i < end; i++) {
+            const entry = terminalBuffer[i];
+            const isActive = i === pos;
+
+            const ln = String(i + 1).padStart(digits, ' ');
+            const badge = entry.type === 'input' ? `${bold}${fgGreen}IN${reset}` : `${bold}${fgBlue}OUT${reset}`;
+            const ts = entry.timestamp.toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); // always HH:MM:SS
+
+            // meta column: "#<ln> IN hh:mm:ss" (ANSI-colored but width-normalized)
+            const metaAnsi = `${dim}#${ln}${reset} ${badge} ${dim}${ts}${reset}`;
+            const metaOut = padEndCutAnsiExact(metaAnsi, metaFixed);
+
+            // content column (plain text, truncated with ellipsis)
+            let content = (entry.content || '').replace(/[\u0000-\u001F\u007F]/g, '');
+            // Read-mode only: make tabs visible as 4 spaces for stable columns
+            content = content.replace(/\t/g, '    ');
+            // Display-only spacing fix so things like "datarequirements.txtsrc" read correctly
+            content = softVisualSpacing(content);
+            content = padEndCutAnsiExact(content, contentWidth);
+
+            const spacer = ' '.repeat(colPadding);
+            const linePlain = metaOut + spacer + content; // compose left-aligned row
+            const row = padEndCutAnsiExact(linePlain, safeCols);
+
+            if (isActive) {
+                // bright box across the whole row (no inverse)
+                termWrite(`${bgBox}${fgBox}${row}${reset}\n`);
+            } else {
+                termWrite(`${row}\n`);
+            }
+        }
+
+        const footer = `${dim}Tip: 읽기 모드 동안 출력은 버퍼링되며, 종료 시 원래 화면으로 복귀합니다.${reset}`;
+        termWrite("\n" + padEndCutAnsiExact(footer, safeCols) + "\n");
+    }
+
+    function enterAltScreen() {
+        if (altScreenActive) return;
+        altScreenActive = true;
+        // alt-screen 진입, 화면 클리어, 커서 숨김
+        termWrite("\u001b[?1049h\u001b[2J\u001b[H\u001b[?25l");
+        renderReadingOverlay();
+    }
+
+    function exitAltScreen() {
+        if (!altScreenActive) return;
+        // flush buffered shell output gathered during reading mode
+        if (pendingShellOutput.length > 0) {
+            termWrite(pendingShellOutput.join(''));
+            pendingShellOutput = [];
+        }
+        // 커서 표시, alt-screen 종료 (원 화면 복귀)
+        termWrite("\u001b[?25h\u001b[?1049l");
+        altScreenActive = false;
+        termWrite(`${dim}Exited Reading Mode${reset}\r\n`);
+    }
+
+    // 바깥 커맨드에서 접근 가능하도록 노출
+    openReadingAltScreen = () => enterAltScreen();
+    refreshReadingAltScreen = () => renderReadingOverlay();
+    closeReadingAltScreen = () => exitAltScreen();
+
+
+
     // Capture output and update screen buffer
     ptyProcess.onData((data: string) => {
+        // 1) While in Reading Mode, buffer to pending and parse as before
+        if (isReadingMode) {
+            pendingShellOutput.push(data);
+            updateScreenBuffer(data);
+            return;
+        }
+
+        // 2) Live-capture shell echo for TAB completion and inline edits
+        //    When TAB is pressed, many shells print the completed tail or redraw the line.
+        //    We approximate by:
+        //      - starting capture when awaitingCompletion is true (after TAB)
+        //      - appending visible chars to currentInputBuffer until newline
+        try {
+            const plain = data
+                .replace(/\u001b\]0;.*?\u0007/g, '')      // strip OSC title
+                .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '') // strip CSI
+                .replace(/\u0007/g, '');                   // bell
+
+            // start capture only when TAB was just pressed
+            if (awaitingCompletion) {
+                echoCaptureActive = true;
+            }
+
+            if (echoCaptureActive) {
+                // Collect printable chars from this chunk (excluding CR/LF)
+                let added = '';
+                for (const ch of plain) {
+                    const code = ch.charCodeAt(0);
+                    if (ch === '\n') { echoCaptureActive = false; break; }
+                    if (ch === '\r') { continue; }
+                    if (code === 0x7f) { // shell backspace
+                        if (currentInputBuffer.length > 0) currentInputBuffer = currentInputBuffer.slice(0, -1);
+                        continue;
+                    }
+                    if (code >= 32) added += ch;
+                }
+                if (added) {
+                    // Avoid duplicating what the user may have typed concurrently
+                    const max = Math.min(currentInputBuffer.length, added.length);
+                    let overlap = 0;
+                    for (let len = max; len > 0; len--) {
+                        if (currentInputBuffer.endsWith(added.slice(0, len))) { overlap = len; break; }
+                    }
+                    currentInputBuffer += added.slice(overlap);
+                }
+            }
+            // stop capture if a newline was included in this chunk
+            if (plain.includes('\n')) {
+                echoCaptureActive = false;
+            }
+        } catch {}
+        awaitingCompletion = false; // one-shot
+
+        // 3) Always write to terminal and parse for history
         writeEmitter.fire(data);
         updateScreenBuffer(data);
     });
@@ -1283,17 +1564,25 @@ function createPtyTerminal(pty: any): void {
     const ptyTerminal = {
         onDidWrite: writeEmitter.event,
         onDidClose: closeEmitter.event,
-        
+
         open: () => {
             logSuccess('[Terminal] PTY terminal with screen buffer opened');
         },
-        
+
         close: () => {
             logWarning('[Terminal] PTY terminal closed');
             ptyProcess.kill();
             closeEmitter.fire();
         },
-        
+
+        setDimensions: (dim: vscode.TerminalDimensions) => {
+            if (!dim) return;
+            setTermSize(dim.columns, dim.rows);
+            if (altScreenActive) renderReadingOverlay();
+            // keep the real PTY in sync to avoid wrapping mismatch
+            try { if (ptyProcess && typeof ptyProcess.resize === 'function') ptyProcess.resize(dim.columns, dim.rows); } catch {}
+        },
+
         handleInput: async (input: string) => {
             // Handle Korean input composition
             const processedInput = handleKoreanComposition(input);
@@ -1338,23 +1627,39 @@ function createPtyTerminal(pty: any): void {
                 await vscode.commands.executeCommand('lipcoder.toggleTerminalReadingMode');
                 return;
             }
-            
+
+            // Track shell completion (TAB)
+            if (finalInput === '\t') { // TAB: let the shell complete and capture its echo
+                awaitingCompletion = true;
+            }
+
+            // Ctrl+C: cancel current input (do not submit it)
+            if (finalInput === '\u0003') { // ETX
+                currentInputBuffer = '';
+                echoCaptureActive = false;
+                awaitingCompletion = false;
+                // let the shell handle SIGINT; we just ensure buffer separation
+                ptyProcess.write(input);
+                return;
+            }
+
             // Handle regular input
             stopAllAudio();
-            
+
             // Track input for buffer
             if (finalInput === '\r' || finalInput === '\n') {
+                echoCaptureActive = false; // finalize echo capture on submit
                 // Command submitted - add to input buffer and clear recent output noise
                 if (currentInputBuffer.trim().length > 0) {
                     const command = currentInputBuffer.trim();
-                    
+
                     // Clear any recent noise from buffer before adding the command
                     // Remove last few entries if they look like command echoes or prompts
                     let removedCount = 0;
                     while (terminalBuffer.length > 0 && removedCount < 5) { // Limit removal to prevent over-cleaning
                         const lastEntry = terminalBuffer[terminalBuffer.length - 1];
-                        if (lastEntry.type === 'output' && 
-                            (lastEntry.content.includes(command) || 
+                        if (lastEntry.type === 'output' &&
+                            (lastEntry.content.includes(command) ||
                              lastEntry.content.length < 3 ||
                              isPromptLine(lastEntry.content) ||
                              lastEntry.content.includes('nnpm') || // Fix duplicate 'n' in npm
@@ -1368,19 +1673,19 @@ function createPtyTerminal(pty: any): void {
                             break;
                         }
                     }
-                    
+
                     // Only add command if it's not a duplicate of the last input
                     const lastInput = terminalBuffer.slice().reverse().find(entry => entry.type === 'input');
                     if (!lastInput || lastInput.content !== command) {
                         addToTerminalBuffer('input', command);
                         log(`[Terminal] Command executed: "${command}"`);
-                        
+
                         // Start monitoring for command output to provide summary
                         startCommandOutputMonitoring();
                     } else {
                         log(`[Terminal] Duplicate command ignored: "${command}"`);
                     }
-                    
+
                     currentInputBuffer = '';
                 }
             } else if (finalInput === '\u007f' || finalInput === '\b') {
@@ -1392,10 +1697,10 @@ function createPtyTerminal(pty: any): void {
                 // Regular character (including Korean characters)
                 currentInputBuffer += finalInput;
             }
-            
+
             // Pass through to terminal (use original input for PTY)
             ptyProcess.write(input);
-            
+
             // Simple character echo for typing feedback
             if (isValidInputCharacter(finalInput) && finalInput !== '\r' && finalInput !== '\n') {
                 const chunks: TokenChunk[] = [{
@@ -1481,9 +1786,13 @@ export function registerTerminalReader(context: ExtensionContext) {
             isReadingMode = !isReadingMode;
             
             if (isReadingMode) {
-                // Entering reading mode
-                if (currentLineIndex < 0 || currentLineIndex >= terminalBuffer.length) {
-                    currentLineIndex = terminalBuffer.length - 1; // Start at the last line
+                // Entering reading mode: ALWAYS start from the most recent INPUT line; fallback to last line
+                {
+                    let idx = -1;
+                    for (let i = terminalBuffer.length - 1; i >= 0; i--) {
+                    if (terminalBuffer[i].type === 'input') { idx = i; break; }
+                    }
+                    currentLineIndex = (idx >= 0) ? idx : (terminalBuffer.length - 1);
                 }
                 
                 // Log the entire terminal buffer to console
@@ -1498,6 +1807,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                 log(`Total entries: ${terminalBuffer.length}, Current position: ${currentLineIndex + 1}`);
                 
                 showReadingModeUI();
+
+                if (openReadingAltScreen) openReadingAltScreen();
                 
                 const enterReadingEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
                 await playWave(enterReadingEarcon, { isEarcon: true, immediate: true }).catch(console.error);
@@ -1513,13 +1824,15 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const currentEntry = terminalBuffer[currentLineIndex];
                 if (currentEntry) {
                     const lineTokens = parseTerminalLineToTokens(currentEntry.content);
-                    const prefix = currentEntry.type === 'input' ? 'Input' : 'Output';
-                    const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${currentLineIndex + 1}:`], category: undefined };
-                    await speakTokenList([lineNumberChunk, ...lineTokens]);
+                    const prefix = getSpokenPrefix(currentEntry.type);
+                    const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${currentLineIndex + 1}`], category: undefined };
+                    await speakTerminalTokens([lineNumberChunk, ...lineTokens], 'Read current line');
                 }
             } else {
                 // Exiting reading mode
                 hideReadingModeUI();
+
+                if (closeReadingAltScreen) closeReadingAltScreen();
                 
                 const exitReadingEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
                 await playWave(exitReadingEarcon, { isEarcon: true, immediate: true }).catch(console.error);
@@ -1604,6 +1917,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             if (isReadingMode) {
                 showReadingModeUI();
             }
+            if (isReadingMode && refreshReadingAltScreen) refreshReadingAltScreen();
             
             // Play navigation earcon
             const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
@@ -1612,14 +1926,14 @@ export function registerTerminalReader(context: ExtensionContext) {
             await new Promise(resolve => setTimeout(resolve, 100));
             
             if (!currentEntry || currentEntry.content.trim().length === 0) {
-                const prefix = currentEntry?.type === 'input' ? 'Input' : 'Output';
-                await speakTokenList([{ tokens: [`${prefix} line ${lineNumber}: empty`], category: undefined }]);
+                const prefix = getSpokenPrefix((currentEntry?.type as ('input'|'output')) || 'output');
+                await speakTerminalTokens([{ tokens: [`${prefix} line ${lineNumber} empty`], category: undefined }], 'History line (empty)');
             } else {
                 // Parse the terminal line into proper tokens with earcons
                 const lineTokens = parseTerminalLineToTokens(currentEntry.content);
-                const prefix = currentEntry.type === 'input' ? 'Input' : 'Output';
-                const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${lineNumber}:`], category: undefined };
-                await speakTokenList([lineNumberChunk, ...lineTokens]);
+                const prefix = getSpokenPrefix(currentEntry.type);
+                const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${lineNumber}`], category: undefined };
+                await speakTerminalTokens([lineNumberChunk, ...lineTokens], 'History line');
             }
         }),
 
@@ -1659,6 +1973,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             if (isReadingMode) {
                 showReadingModeUI();
             }
+            if (isReadingMode && refreshReadingAltScreen) refreshReadingAltScreen();
             
             // Play navigation earcon
             const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
@@ -1667,14 +1982,14 @@ export function registerTerminalReader(context: ExtensionContext) {
             await new Promise(resolve => setTimeout(resolve, 100));
             
             if (!currentEntry || currentEntry.content.trim().length === 0) {
-                const prefix = currentEntry?.type === 'input' ? 'Input' : 'Output';
-                await speakTokenList([{ tokens: [`${prefix} line ${lineNumber}: empty`], category: undefined }]);
+                const prefix = getSpokenPrefix((currentEntry?.type as ('input'|'output')) || 'output');
+                await speakTerminalTokens([{ tokens: [`${prefix} line ${lineNumber} empty`], category: undefined }], 'History line (empty)');
             } else {
                 // Parse the terminal line into proper tokens with earcons
                 const lineTokens = parseTerminalLineToTokens(currentEntry.content);
-                const prefix = currentEntry.type === 'input' ? 'Input' : 'Output';
-                const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${lineNumber}:`], category: undefined };
-                await speakTokenList([lineNumberChunk, ...lineTokens]);
+                const prefix = getSpokenPrefix(currentEntry.type);
+                const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${lineNumber}`], category: undefined };
+                await speakTerminalTokens([lineNumberChunk, ...lineTokens], 'History line');
             }
         }),
 
@@ -1688,6 +2003,8 @@ export function registerTerminalReader(context: ExtensionContext) {
             currentInputBuffer = '';
             isReadingMode = false;
             hideReadingModeUI();
+
+            if (closeReadingAltScreen) closeReadingAltScreen();
             
             const clearEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
             await playWave(clearEarcon, { isEarcon: true, immediate: true }).catch(console.error);

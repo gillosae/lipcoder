@@ -265,17 +265,21 @@ export function splitWordChunks(text: string): string[] {
                     const lower = run.toLowerCase();
                     // 3. Letter runs of length 2
                     if (run.length === 2) {
-                        if (twoLenExceptions.has(lower)) {
+                        if (twoLenExceptions.has(lower) || isDictionaryWord(lower)) {
+                            // keep whole (avoid spelling out letters for common short words like "to", "of", etc.)
                             result.push(run);
                         } else {
+                            // fallback: spell letters
                             for (const ch of run) result.push(ch);
                         }
                     }
                     // 3. Letter runs of length 3
                     else if (run.length === 3) {
-                        if (isDictionaryWord(lower) && !threeLenExceptions.has(lower)) {
+                        if (threeLenExceptions.has(lower) || isDictionaryWord(lower)) {
+                            // keep whole (read as a word) — covers "out", "not" even in upper-case input
                             result.push(run);
                         } else {
+                            // fallback: spell letters
                             for (const ch of run) result.push(ch);
                         }
                     }

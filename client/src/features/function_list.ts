@@ -4,7 +4,7 @@ import { log } from '../utils';
 import { playWave, speakTokenList, TokenChunk, clearAudioStoppingState } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
-import { splitWordChunks } from './word_logic';
+
 import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
@@ -87,26 +87,25 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos));
                     // Comprehensive audio stopping to handle all types including underbar sounds
+                    log(`[FunctionList] Manual navigation - stopping audio for function: ${label}`);
                     stopAllAudio();
                     // Clear audio stopping state immediately to allow new audio to start right away
                     clearAudioStoppingState();
                     // Explicitly stop earcons to ensure they don't overlap
                     stopEarconPlayback();
-                    // Small delay to ensure all audio (including underbar PCM files) is fully stopped
-                    await new Promise(resolve => setTimeout(resolve, 50));
                     // Play indent earcon for nesting depth
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     
-                    // Use fast word chunking like code reading for function names
+                    // Use fast variable processing like code reading for function names
                     const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
-                    const wordTokens = splitWordChunks(functionName);
-                    const chunks: TokenChunk[] = wordTokens.map(token => ({ 
-                        tokens: [token], 
-                        category: 'variable' // Use 'variable' category for fast PCM playback
-                    }));
+                    // speakTokenList will automatically call splitWordChunks for 'variable' category
+                    const chunks: TokenChunk[] = [{ 
+                        tokens: [functionName], 
+                        category: 'variable' // This triggers fast PCM processing with automatic word chunking
+                    }];
                     speakTokenList(chunks);
                 }
             });
@@ -123,16 +122,11 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     
-                    // Use fast word chunking for the confirmation message
+                    // Use fast variable processing for the confirmation message
                     const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces
-                    const wordTokens = splitWordChunks(functionName);
-                    const functionChunks: TokenChunk[] = wordTokens.map(token => ({ 
-                        tokens: [token], 
-                        category: 'variable' 
-                    }));
                     const chunks: TokenChunk[] = [
                         { tokens: ['moved', 'to', 'function'], category: undefined },
-                        ...functionChunks,
+                        { tokens: [functionName], category: 'variable' }, // Auto word chunking
                         { tokens: ['line', (line + 1).toString()], category: undefined }
                     ];
                     speakTokenList(chunks);
@@ -161,7 +155,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
             // Wait a bit before starting auto-iteration to avoid simultaneous speech
             let idx = 0;
             autoTimer = setTimeout(() => {
-                autoTimer = setInterval(async () => {
+                autoTimer = setInterval(() => {
                     if (idx >= quickPick.items.length) {
                         clearInterval(autoTimer!);
                         autoTimer = null;
@@ -169,13 +163,14 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                         return;
                     }
                     // Comprehensive audio stopping to handle all types including underbar sounds
+                    log(`[FunctionList] Auto navigation - stopping audio, moving to index ${idx}`);
                     stopAllAudio();
                     // Clear audio stopping state immediately to allow new audio to start right away
                     clearAudioStoppingState();
                     // Explicitly stop earcons to ensure they don't overlap
                     stopEarconPlayback();
-                    // Small delay to ensure all audio (including underbar PCM files) is fully stopped
-                    await new Promise(resolve => setTimeout(resolve, 50));
+                    
+                    // Trigger next item immediately - stopping should be synchronous
                     quickPick.activeItems = [quickPick.items[idx]];
                     idx++;
                 }, 1000);
