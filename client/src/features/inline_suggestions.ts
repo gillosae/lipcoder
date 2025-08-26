@@ -4,7 +4,7 @@ import * as path from 'path';
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { callLLMForCompletion, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
 import { playWave, speakTokenList, TokenChunk, playEarcon, isAudioPlaying } from '../audio';
-import { stopAllAudio, getLineTokenReadingActive } from './stop_reading';
+import { stopAllAudio, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
 
@@ -29,10 +29,10 @@ function cleanupInlineSuggestions(): void {
  */
 export function registerInlineSuggestions(context: vscode.ExtensionContext) {
 
-    // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading OR audio playing
+    // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading OR audio playing OR ASR recording
     const periodicCheck = setInterval(() => {
         const koreanTTSActive = (global as any).koreanTTSActive || false;
-        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
+        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
             // Hide suggestions
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             
@@ -58,9 +58,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             clearTimeout(idleTimer);
         }
         
-        // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active
+        // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active OR ASR is recording
         const koreanTTSActive = (global as any).koreanTTSActive || false;
-        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
+        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
             vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
             if (koreanTTSActive) {
                 log(`[InlineSuggestions] Skipping due to Korean TTS protection`);
@@ -69,11 +69,13 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
         }
         
         idleTimer = setTimeout(() => {
-            // Don't trigger suggestions if line token reading is active OR audio is playing OR Korean TTS is active
+            // Don't trigger suggestions if line token reading is active OR audio is playing OR Korean TTS is active OR ASR is recording
             const koreanTTSActive = (global as any).koreanTTSActive || false;
-            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive) {
+            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
                 if (koreanTTSActive) {
                     log(`[InlineSuggestions] Skipping idle trigger during Korean TTS playback`);
+                } else if (getASRRecordingActive()) {
+                    log(`[InlineSuggestions] Skipping idle trigger during ASR recording`);
                 } else {
                     log(`[InlineSuggestions] Skipping idle trigger during line token reading or audio playback`);
                 }

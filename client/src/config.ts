@@ -377,6 +377,7 @@ export const config = {
     panningEnabled: true,        // enable positional panning for tokens (legacy)
     globalPanningEnabled: true,  // enable global panning system for ALL audio
     gentleAudioStopping: true,   // reduce aggressive audio stopping to minimize crackling
+    backspaceEarconEnabled: false, // enable/disable backspace earcon playback
 
     // Audio Minimap Configuration
     audioMinimapEnabled: true,   // enable audio minimap when cursor moves quickly
@@ -401,6 +402,7 @@ export const config = {
     panningEnabled: boolean;
     globalPanningEnabled: boolean;
     gentleAudioStopping: boolean;
+    backspaceEarconEnabled: boolean;
     audioMinimapEnabled: boolean;
     audioMinimapSpeedThreshold: number;
     audioMinimapTimeout: number;

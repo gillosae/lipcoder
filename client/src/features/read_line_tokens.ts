@@ -9,6 +9,7 @@ import { isEditorActive } from '../ide/active';
 import { config } from '../config';
 import { logFeatureUsage } from '../activity_logger';
 import { shouldSuppressReadingEnhanced } from './debug_console_detection';
+import { splitWordChunks } from './word_logic';
 
 // Track the current execution to enable immediate cancellation
 let currentReadLineTokensExecution: Promise<void> | null = null;
@@ -130,7 +131,32 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
                 }
             }
             
-            validChunks.push({ tokens: [text], category: finalCategory, panning: tokenPanning });
+            // Apply mixed text parsing for literal tokens that might contain Korean + English + earcons
+            if (finalCategory === 'literal' && (text.includes('{') && text.includes('}') || 
+                (/[\u3131-\u3163\uac00-\ud7a3]/.test(text) && /[✓✗→←↑↓★☆♠♣♥♦()[\]{}<>"'`,.;:_=+&*@^$!%?#~₩\-/|\\]/.test(text)))) {
+                log(`[readLineTokens] Applying mixed text parsing to literal: "${text}"`);
+                const mixedParts = splitWordChunks(text);
+                
+                for (const part of mixedParts) {
+                    let partCategory = finalCategory;
+                    
+                    // Determine category for each part
+                    if (part.startsWith('{') && part.endsWith('}')) {
+                        partCategory = 'variable'; // Python expressions as variables
+                    } else if (part.length === 1 && /[✓✗→←↑↓★☆♠♣♥♦()[\]{}<>"'`,.;:_=+&*@^$!%?#~₩\-/|\\]/.test(part)) {
+                        partCategory = 'type'; // Earcon characters
+                    } else if (/[\u3131-\u3163\uac00-\ud7a3]/.test(part)) {
+                        partCategory = 'literal'; // Korean text stays as literal
+                    } else {
+                        partCategory = 'variable'; // English text as variable
+                    }
+                    
+                    validChunks.push({ tokens: [part], category: partCategory, panning: tokenPanning });
+                    log(`[readLineTokens] Mixed part: "${part}" → category: ${partCategory}`);
+                }
+            } else {
+                validChunks.push({ tokens: [text], category: finalCategory, panning: tokenPanning });
+            }
             
             // Update column position (simplified - assumes each character is one column)
             currentColumn += text.length;

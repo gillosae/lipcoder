@@ -108,6 +108,16 @@
     },
     "commands": [
       {
+        "command": "lipcoder.continueWithSuggestions",
+        "title": "Continue with Suggestions",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.testSuggestionStorage",
+        "title": "Test Suggestion Storage",
+        "category": "LipCoder"
+      },
+      {
         "command": "lipcoder.startASRStreaming",
         "title": "Start ASR Streaming",
         "category": "LipCoder"

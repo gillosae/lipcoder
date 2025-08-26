@@ -10,6 +10,7 @@ import { stopAllAudio, setASRRecordingActive } from './stop_reading';
 import { speakTokenList, TokenChunk } from '../audio';
 import { playEarcon } from '../earcon';
 import { handleASRError } from '../asr_error_handler';
+import { getLastActiveEditor, isEditorActive } from '../ide/active';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -154,7 +155,7 @@ function initializeASRClients(): void {
         
         log(`[Enhanced-ASR] Initializing ASR clients for backend: ${currentASRBackend}`);
         
-        // Always initialize both clients, but only use the selected one
+        // Pre-warm ASR clients for faster startup
         if (!asrClient) {
             try {
                 asrClient = new ASRClient({
@@ -303,22 +304,41 @@ function initializeASRClients(): void {
  * Handle transcription result with conversational flow
  */
 async function handleTranscription(text: string): Promise<void> {
+    const startTime = Date.now();
     log(`[Enhanced-ASR] ================================================`);
     log(`[Enhanced-ASR] Transcription received: "${text}" (Mode: ${currentASRMode})`);
     log(`[Enhanced-ASR] Text length: ${text.length}`);
-    log(`[Enhanced-ASR] Text bytes: ${JSON.stringify([...text].map(c => c.charCodeAt(0)))}`);
     log(`[Enhanced-ASR] Current mode: ${currentASRMode}`);
     log(`[Enhanced-ASR] Command router available: ${!!commandRouter}`);
     
-    // Update popup
+    // Update popup immediately for faster feedback
     if (asrPopup) {
         asrPopup.updateTranscription(text);
     }
     
-    // Output to channel
+    // Output to channel (non-blocking)
     if (outputChannel) {
         outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${text} (${currentASRMode} mode)`);
-        outputChannel.show(true);
+    }
+    
+    // Check for cached responses first for instant execution
+    try {
+        const { getCachedASRResponse } = await import('./asr_speed_optimizer.js');
+        const cachedResponse = getCachedASRResponse(text);
+        
+        if (cachedResponse) {
+            log(`[Enhanced-ASR] ⚡ Using cached response for instant execution`);
+            
+            // Execute cached command immediately
+            if (currentASRMode === ASRMode.Command) {
+                await vscode.commands.executeCommand(cachedResponse);
+                const processingTime = Date.now() - startTime;
+                log(`[Enhanced-ASR] ✅ Cached command executed in ${processingTime}ms`);
+                return;
+            }
+        }
+    } catch (error) {
+        log(`[Enhanced-ASR] Cache check failed, proceeding with normal flow: ${error}`);
     }
     
     // Process through conversational flow (unified approach)
@@ -333,12 +353,36 @@ async function handleTranscription(text: string): Promise<void> {
         const mode = currentASRMode === ASRMode.Command ? 'command' : 'write';
         const conversationalResponse = await processConversationalASR(text, { mode });
         
-        // Show conversational response with action options (unless it's a navigation command)
-        if (conversationalResponse.response && conversationalResponse.response.trim() !== "") {
+        // Cache successful command responses for future use
+        if (currentASRMode === ASRMode.Command && conversationalResponse.actions.length > 0) {
+            try {
+                const { cacheASRResponse } = await import('./asr_speed_optimizer.js');
+                const firstAction = conversationalResponse.actions[0];
+                if (firstAction.command) {
+                    cacheASRResponse(text, firstAction.command);
+                }
+            } catch (error) {
+                log(`[Enhanced-ASR] Failed to cache response: ${error}`);
+            }
+        }
+        
+        // Show conversational response with action options (only if there are actions to display)
+        const shouldShowPopup = conversationalResponse.response && 
+                               conversationalResponse.response.trim() !== "" && 
+                               conversationalResponse.actions.length > 0; // Only show popup if there are actions to display
+        
+        if (shouldShowPopup) {
             await showConversationalResponse(conversationalResponse);
-            log(`[Enhanced-ASR] ✅ Conversational processing complete: "${conversationalResponse.response}"`);
+            const processingTime = Date.now() - startTime;
+            log(`[Enhanced-ASR] ✅ Conversational processing complete in ${processingTime}ms: "${conversationalResponse.response}"`);
         } else {
-            log(`[Enhanced-ASR] ✅ Navigation command completed silently - no popup shown`);
+            const processingTime = Date.now() - startTime;
+            if (conversationalResponse.response && conversationalResponse.response.trim() !== "") {
+                // If there's a response but no actions (navigation/success feedback), just log it
+                log(`[Enhanced-ASR] ✅ Command completed with audio feedback in ${processingTime}ms: "${conversationalResponse.response}"`);
+            } else {
+                log(`[Enhanced-ASR] ✅ Command completed silently in ${processingTime}ms`);
+            }
         }
         
         // For write mode, if no specific actions were suggested, fall back to text insertion
@@ -363,6 +407,9 @@ async function handleTranscription(text: string): Promise<void> {
         } else {
             vscode.window.showInformationMessage(`ASR: ${text}`);
         }
+        
+        const processingTime = Date.now() - startTime;
+        log(`[Enhanced-ASR] Fallback processing completed in ${processingTime}ms`);
     }
 }
 
@@ -386,9 +433,9 @@ async function handleDirectTextInsertion(text: string): Promise<void> {
         }
     }
     
-    // Fallback to current active editor
+    // Fallback to current active editor using enhanced tracking
     if (!targetEditor) {
-        targetEditor = vscode.window.activeTextEditor;
+        targetEditor = isEditorActive() || undefined;
     }
     
     if (targetEditor) {
@@ -493,7 +540,8 @@ async function handleError(error: Error): Promise<void> {
  * Capture current editor context for command execution
  */
 function captureEditorContext(): EditorContext | null {
-    const editor = vscode.window.activeTextEditor;
+    // Use the enhanced editor tracking system for better fallback
+    const editor = isEditorActive();
     if (!editor) {
         return null;
     }
@@ -521,12 +569,33 @@ function getEditorContextWithFallback(): EditorContext | null {
         return currentContext;
     }
     
-    // Fallback to last known editor if it's still valid
+    // Use the enhanced last editor tracking as additional fallback
+    const lastEditor = getLastActiveEditor();
+    if (lastEditor) {
+        try {
+            // Check if the document is still open and valid
+            if (!lastEditor.document.isClosed) {
+                log('[Enhanced-ASR] Using last active editor from tracking system as fallback');
+                const fallbackContext = {
+                    editor: lastEditor,
+                    position: lastEditor.selection.active,
+                    selection: lastEditor.selection,
+                    documentUri: lastEditor.document.uri
+                };
+                lastKnownEditorContext = fallbackContext;
+                return fallbackContext;
+            }
+        } catch (error) {
+            log(`[Enhanced-ASR] Last active editor is no longer valid: ${error}`);
+        }
+    }
+    
+    // Fallback to last known editor context if it's still valid
     if (lastKnownEditorContext) {
         try {
             // Check if the document is still open and valid
             if (!lastKnownEditorContext.editor.document.isClosed) {
-                log('[Enhanced-ASR] Using last known editor context as fallback');
+                log('[Enhanced-ASR] Using last known editor context as final fallback');
                 return lastKnownEditorContext;
             }
         } catch (error) {

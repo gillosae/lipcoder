@@ -5,6 +5,7 @@ import { LineSeverityMap } from './line_severity';
 import { playWave, playEarcon, speakTokenList, TokenChunk } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { isEarcon, getSpecialCharSpoken } from '../mapping';
+import { findTokenSound } from '../earcon';
 import { log } from '../utils';
 import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
@@ -26,18 +27,22 @@ function calculatePanning(column: number): number {
 }
 
 export async function readTextTokens(
-    event: vscode.TextDocumentChangeEvent,
-    diagCache: Map<string, LineSeverityMap>,
-    changes: readonly vscode.TextDocumentContentChangeEvent[],
-    indentLevels: Map<string, number>,
-    tabSize: number,
-    skipNextIndent: boolean,
-    MAX_INDENT_UNITS: number,
-    audioMap: Record<string, string>,
+	event: vscode.TextDocumentChangeEvent,
+	diagCache: Map<string, LineSeverityMap>,
+	changes: readonly vscode.TextDocumentContentChangeEvent[],
+	indentLevels: Map<string, number>,
+	tabSize: number,
+	skipNextIndentObj: { value: boolean },
+	MAX_INDENT_UNITS: number,
+	audioMap: Record<string, string>,
 ): Promise<void> {
+	log(`[readTextTokens] CALLED with changes: ${changes.map(c => `"${c.text}"`).join(', ')}`);
+	log(`[readTextTokens] AudioMap received - "a": ${audioMap['a']}, "b": ${audioMap['b']}, keys: ${Object.keys(audioMap).length}`);
+    
     // Check if we should suppress reading for debug console or other panels
     const activeEditor = vscode.window.activeTextEditor;
     if (activeEditor && shouldSuppressReadingEnhanced(activeEditor)) {
+        log(`[readTextTokens] Suppressing reading for debug console or other panel`);
         return;
     }
     
@@ -61,6 +66,7 @@ export async function readTextTokens(
         // ── 1) ENTER FIRST: if *any* change is a newline, play it and bail ─────────
         // Detect Enter even when auto-indent is inserted (e.g., '\n    ')
         if (changes.some(c => c.text.startsWith('\n'))) {
+            log(`[readTextTokens] ENTER detected! Changes: ${changes.map(c => JSON.stringify(c.text)).join(', ')}`);
             stopAllAudio();
 
             // pick the right enter sound
@@ -68,6 +74,15 @@ export async function readTextTokens(
             const enterLine = newlineChange.range.start.line;
             const sevMap = diagCache.get(uri) || {};
             const sev = sevMap[enterLine] ?? vscode.DiagnosticSeverity.Hint;
+            
+            // DEBUG: Log diagnostic information
+            log(`[readTextTokens] ENTER EARCON DEBUG:`);
+            log(`[readTextTokens] - URI: ${uri}`);
+            log(`[readTextTokens] - Enter line: ${enterLine}`);
+            log(`[readTextTokens] - Diagnostic cache has ${Object.keys(sevMap).length} entries`);
+            log(`[readTextTokens] - Severity for line ${enterLine}: ${sev} (${vscode.DiagnosticSeverity[sev]})`);
+            log(`[readTextTokens] - All diagnostics for this file: ${JSON.stringify(sevMap)}`);
+            
             const fileMap = {
                 [vscode.DiagnosticSeverity.Error]: 'enter2.pcm',
                 [vscode.DiagnosticSeverity.Warning]: 'enter2.pcm',
@@ -75,65 +90,83 @@ export async function readTextTokens(
                 [vscode.DiagnosticSeverity.Hint]: 'enter.pcm',
             } as const;
             const enterFile = path.join(config.audioPath(), 'earcon', fileMap[sev]);
-            playWave(enterFile, { isEarcon: true, immediate: true });
+            log(`[readTextTokens] Selected earcon file: ${enterFile}`);
+            log(`[readTextTokens] File exists: ${require('fs').existsSync(enterFile)}`);
+            
+            playWave(enterFile, { 
+                isEarcon: true, 
+                immediate: true
+            }).then(() => {
+                log(`[readTextTokens] Enter earcon playback completed successfully`);
+            }).catch(err => {
+                log(`[readTextTokens] Enter earcon playback failed: ${err}`);
+            });
 
             // reset indent state so the following auto-indent spaces look fresh
             indentLevels.set(uri, 0);
-            skipNextIndent = true;
+            skipNextIndentObj.value = true;
             return;   // <<< bail out before indent logic
         }
 
         // ── 2) Handle indent for Tab, Backspace, and auto-indents ─────────────────
+        // Earcon mapping:
+        // - indent_0 to indent_4: Increasing indentation (based on current level)
+        // - indent_5 to indent_9: Decreasing indentation (current level + 5)
         const oldRaw = indentLevels.get(uri) ?? 0;
         const lineNum = changes[0].range.start.line;
         const lineText = event.document.lineAt(lineNum).text;
         const leading = (lineText.match(/^\s*/)?.[0] || '');
         const rawUnits = Math.floor(leading.length / tabSize);
 
-        if (skipNextIndent) {
-            skipNextIndent = false;
+        if (skipNextIndentObj.value) {
+            skipNextIndentObj.value = false;
             indentLevels.set(uri, rawUnits);
         } else {
-            const isBackspace = changes.some(c => c.text === '' && c.rangeLength === 1);
-            // detect Tab key when VSCode inserts literal '\t' or spaces equal to tabSize
-            const isTab = changes.some(c =>
-                c.text === '\t'
-                || (tabSize > 0 && c.text === ' '.repeat(tabSize))
-            );
-
-            if (isTab) {
-                // Manual Tab: indent_0 → indent_4
-                const idx = rawUnits > 4 ? 4 : rawUnits;
-                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
-                indentLevels.set(uri, rawUnits);
-
-            } else if (isBackspace) {
-                // Manual Backspace: indent_5 → indent_9
-                const idx = rawUnits + 5 > 9 ? 9 : rawUnits + 5;
-                playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
-                indentLevels.set(uri, rawUnits);
-
-            } else {
-                // Auto-indent: same as before
-                if (rawUnits > oldRaw) {
-                    const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits - 1;
-                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
-                } else if (rawUnits < oldRaw) {
-                    const idx = rawUnits > MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : rawUnits;
-                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { isEarcon: true, immediate: true });
+            // Calculate indentation change direction and amount
+            const indentChange = rawUnits - oldRaw;
+            
+            // Only play earcon if indentation actually changed
+            if (indentChange !== 0) {
+                if (indentChange > 0) {
+                    // Indentation increased: use indent_0 to indent_4 (current level)
+                    const idx = Math.min(rawUnits, 4);
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { 
+                        isEarcon: true, 
+                        immediate: true
+                    });
+                    log(`[IndentEarcon] Increased indentation: ${oldRaw} → ${rawUnits} (change: +${indentChange}), playing indent_${idx}.pcm`);
+                } else {
+                    // Indentation decreased: use indent_5 to indent_9 (current level + 5)
+                    const idx = Math.max(5, 9 - rawUnits);
+                    playWave(path.join(config.audioPath(), 'earcon', `indent_${idx}.pcm`), { 
+                        isEarcon: true, 
+                        immediate: true
+                    });
+                    log(`[IndentEarcon] Decreased indentation: ${oldRaw} → ${rawUnits} (change: ${indentChange}), playing indent_${idx}.pcm`);
                 }
-                indentLevels.set(uri, rawUnits);
             }
+            
+            indentLevels.set(uri, rawUnits);
         }
 
 
-        // ── 3) Finally, handle plain backspace (single-char delete) ───────────────
+        // ── 3) Handle plain backspace (single-char delete) FIRST ───────────────
         //    change.text==='' and exactly one character removed
         for (const change of changes) {
             if (change.text === '' && change.rangeLength === 1) {
+                log(`[read_text_tokens] Backspace detected: rangeLength=${change.rangeLength}, text="${change.text}"`);
                 stopAllAudio();
-                playWave(path.join(config.audioPath(), 'earcon', 'backspace.pcm'), { isEarcon: true, immediate: true });
-                break;
+                // Only play backspace earcon if enabled in config
+                if (config.backspaceEarconEnabled) {
+                    log(`[read_text_tokens] Playing backspace earcon`);
+                    playWave(path.join(config.audioPath(), 'earcon', 'backspace.pcm'), { 
+                        isEarcon: true, 
+                        immediate: true
+                    });
+                } else {
+                    log(`[read_text_tokens] Backspace earcon disabled in config`);
+                }
+                return; // Exit early to prevent further processing
             }
         }
 
@@ -151,18 +184,39 @@ export async function readTextTokens(
                 
                 // Remove redundant stopAllAudio() call here
                 try {
-                    if (audioMap[ch]) {
-                        playWave(audioMap[ch], { isEarcon: true, immediate: true, panning: charPanning });
-                    } else if (getSpecialCharSpoken(ch)) {
-                        // Remove redundant stopAllAudio() call here
-                        if (isEarcon(ch)) {
-                            await playEarcon(ch, charPanning);
-                        } else {
-                            await speakTokenList([{ tokens: [getSpecialCharSpoken(ch)!], category: 'special', panning: charPanning }]);
-                        }
-                    } else if (/^[a-zA-Z]$/.test(ch)) {
+                    if (/^[a-zA-Z]$/.test(ch)) {
+                        // Handle alphabet characters first with proper path construction
                         const tokenPath = audioMap[ch.toLowerCase()];
-                        if (tokenPath) playWave(tokenPath, { immediate: true, panning: charPanning });
+                        if (tokenPath) {
+                            const fullPath = path.join(config.alphabetPath(), tokenPath);
+                            console.log(`[read_text_tokens] Playing alphabet audio for grouped char "${ch}": ${fullPath}`);
+                            playWave(fullPath, { immediate: true, panning: charPanning });
+                        }
+                    } else if (audioMap[ch] && !/^[a-zA-Z]$/.test(ch)) {
+                        // Handle non-alphabet audioMap entries (numbers, special chars)
+                        // Use proper path resolution that checks both special and earcon directories
+                        const resolvedPath = findTokenSound(ch);
+                        if (resolvedPath) {
+                            playWave(resolvedPath, { 
+                                isEarcon: true, 
+                                immediate: true, 
+                                panning: charPanning
+                            });
+                        } else {
+                            // Fallback to earcon directory if findTokenSound doesn't find it
+                            const fallbackPath = path.join(config.audioPath(), 'earcon', audioMap[ch]);
+                            playWave(fallbackPath, { 
+                                isEarcon: true, 
+                                immediate: true, 
+                                panning: charPanning
+                            });
+                        }
+                    } else if (isEarcon(ch)) {
+                        // Handle earcon characters (brackets, parentheses, etc.)
+                        await playEarcon(ch, charPanning);
+                    } else if (getSpecialCharSpoken(ch)) {
+                        // Handle TTS for special characters
+                        await speakTokenList([{ tokens: [getSpecialCharSpoken(ch)!], category: 'special', panning: charPanning }]);
                     } else {
                         console.log('🚫 No audio found for grouped char:', ch);
                     }
@@ -176,26 +230,55 @@ export async function readTextTokens(
         const char = text;
         stopAllAudio();
         try {
-            console.log(`[read_text_tokens] Processing char: "${char}", audioMap: ${audioMap[char]}, specialCharMap: ${getSpecialCharSpoken(char)}, isEarcon: ${isEarcon(char)}`);
-            if (audioMap[char]) {
-                console.log(`[read_text_tokens] Using audioMap path for "${char}": ${audioMap[char]}`);
-                playWave(audioMap[char], { isEarcon: true, immediate: true, panning });
+            const specialCharSpoken = getSpecialCharSpoken(char);
+            const isEarconChar = isEarcon(char);
+            log(`[read_text_tokens] Processing single char: "${char}", audioMap[char]: ${audioMap[char]}, specialCharMap: ${specialCharSpoken}, isEarcon: ${isEarconChar}`);
+            if (/^[a-zA-Z]$/.test(char)) {
+                // Handle alphabet characters first with proper path construction
+                const tokenPath = audioMap[char.toLowerCase()];
+                log(`[read_text_tokens] Alphabet char "${char}" -> tokenPath: ${tokenPath}`);
+                if (tokenPath) {
+                    const fullPath = path.join(config.alphabetPath(), tokenPath);
+                    log(`[read_text_tokens] Playing alphabet audio for "${char}": ${fullPath}`);
+                    playWave(fullPath, { immediate: true, panning });
+                    return; // Prevent further processing to avoid double audio
+                } else {
+                    log(`[read_text_tokens] No tokenPath found for alphabet char "${char}"`);
+                }
+            } else if (audioMap[char] && !/^[a-zA-Z]$/.test(char)) {
+                // Handle non-alphabet audioMap entries (numbers, special chars)
+                console.log(`[read_text_tokens] Using audioMap for "${char}": ${audioMap[char]}`);
+                // Use proper path resolution that checks both special and earcon directories
+                const resolvedPath = findTokenSound(char);
+                if (resolvedPath) {
+                    log(`[read_text_tokens] Playing resolved audio for "${char}": ${resolvedPath}`);
+                    playWave(resolvedPath, { 
+                        isEarcon: true, 
+                        immediate: true, 
+                        panning
+                    });
+                } else {
+                    // Fallback to earcon directory if findTokenSound doesn't find it
+                    const fallbackPath = path.join(config.audioPath(), 'earcon', audioMap[char]);
+                    log(`[read_text_tokens] Using fallback path for "${char}": ${fallbackPath}`);
+                    playWave(fallbackPath, { 
+                        isEarcon: true, 
+                        immediate: true, 
+                        panning
+                    });
+                }
+                return; // Prevent further processing to avoid double audio
+            } else if (isEarcon(char)) {
+                // Handle earcon characters (brackets, parentheses, etc.)
+                log(`[read_text_tokens] Playing earcon for "${char}"`);
+                await playEarcon(char, panning);
                 return; // Prevent further processing to avoid double audio
             } else if (getSpecialCharSpoken(char)) {
-                console.log(`[read_text_tokens] Using specialCharMap path for "${char}"`);
-                // Remove redundant stopAllAudio() call here
-                if (isEarcon(char)) {
-                    await playEarcon(char, panning);
-                } else {
-                    await speakTokenList([{ tokens: [getSpecialCharSpoken(char)!], category: 'special', panning }]);
-                }
+                // Handle TTS for special characters
+                console.log(`[read_text_tokens] Using TTS for special char "${char}"`);
+                log(`[read_text_tokens] Playing TTS for special char "${char}"`);
+                await speakTokenList([{ tokens: [getSpecialCharSpoken(char)!], category: 'special', panning }]);
                 return; // Prevent further processing to avoid double audio
-            } else if (/^[a-zA-Z]$/.test(char)) {
-                const tokenPath = audioMap[char.toLowerCase()];
-                if (tokenPath) {
-                    playWave(tokenPath, { immediate: true, panning });
-                    return; // Prevent further processing to avoid double audio
-                }
             } else {
                 console.log('🚫 No audio found for char:', char);
             }

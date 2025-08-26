@@ -30,7 +30,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"/Users/gillosae/Desktop/lipcoder-test/lipcoder-test-py/boost1",
+				"/Users/gillosae/Desktop/lipcoder-test/boost1",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

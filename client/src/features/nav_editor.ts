@@ -42,10 +42,15 @@ function detectUndoOperation(changes: readonly vscode.TextDocumentContentChangeE
     // Pattern 2: Large single change (more than 50 characters or multiple lines)
     for (const change of changes) {
         const isLargeChange = change.text.length > 50 || change.rangeLength > 50;
+        
+        // IMPORTANT: Don't treat simple Enter presses as undo operations
+        // Enter creates a newline, but it's normal typing, not an undo
+        const isSimpleEnter = change.text === '\n' || change.text.startsWith('\n');
         const isMultiLineChange = change.text.includes('\n') || 
                                  (change.range.end.line - change.range.start.line) > 0;
         
-        if (isLargeChange || isMultiLineChange) {
+        // Only consider it an undo if it's a large change AND not a simple Enter press
+        if (isLargeChange || (isMultiLineChange && !isSimpleEnter)) {
             log(`[UndoDetection] Large/multiline change detected - likely undo (text: ${change.text.length} chars, range: ${change.rangeLength})`);
             return true;
         }
@@ -126,7 +131,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
     // Track recent typing to prevent double audio on cursor movement
     let lastTypingTime = 0;
-    const TYPING_DETECTION_WINDOW_MS = 100; // Consider cursor movements within 100ms of typing as typing-related
+    const TYPING_DETECTION_WINDOW_MS = 5; // Consider cursor movements within 5ms of typing as typing-related
     
     cursorTimeout = setTimeout(() => { 
         readyForCursor = true; 
@@ -192,25 +197,46 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     );
 
     // Track text change for narration
-    let skipNextIndent = false; // Flag to skip indent sound once after Enter
+    let skipNextIndentObj = { value: false }; // Flag to skip indent sound once after Enter
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((e) => {
             // Track typing time to prevent double audio
             lastTypingTime = Date.now();
             
+            // Skip settings.json and other VS Code configuration files
+            const fileName = e.document.fileName;
+            if (fileName.includes('settings.json') || 
+                fileName.includes('.vscode/') ||
+                fileName.includes('Application Support/Code/User/') ||
+                fileName.includes('Code/User/') ||
+                e.document.uri.scheme !== 'file' ||
+                e.document.languageId === 'jsonc') {
+                log(`[NavEditor] Skipping VS Code config file: ${fileName}`);
+                return;
+            }
+            
+            log(`[NavEditor] Document change detected: ${e.contentChanges.map(c => `"${c.text}"`).join(', ')}`);
+            
             // Skip automatic reading if suppressed (e.g., during vibe coding)
-            if (suppressAutomaticReading) return;
+            if (suppressAutomaticReading) {
+                log(`[NavEditor] Skipping - suppressAutomaticReading is true`);
+                return;
+            }
             
             // Check if we should suppress reading for debug console or other panels
             const activeEditor = vscode.window.activeTextEditor;
             if (activeEditor && shouldSuppressReadingEnhanced(activeEditor)) {
+                log(`[NavEditor] Skipping - shouldSuppressReadingEnhanced returned true`);
                 return;
             }
             
             // Detect undo operations and suppress TTS to prevent flooding
             const changes = e.contentChanges;
-            if (changes.length === 0) return;
+            if (changes.length === 0) {
+                log(`[NavEditor] Skipping - no content changes`);
+                return;
+            }
             
             // Detect potential undo operation based on change patterns
             const isLikelyUndo = detectUndoOperation(changes);
@@ -242,20 +268,34 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 }
             }
             
-            if (!config.typingSpeechEnabled) return;
+            if (!config.typingSpeechEnabled) {
+                log(`[NavEditor] Skipping - typingSpeechEnabled is false`);
+                return;
+            }
             const editor = vscode.window.activeTextEditor;
-            if (!editor || e.document !== editor.document) return;
+            if (!editor) {
+                log(`[NavEditor] Skipping - no active editor`);
+                return;
+            }
+            if (e.document !== editor.document) {
+                log(`[NavEditor] Skipping - document mismatch. Event doc: ${e.document.fileName}, Active doc: ${editor.document.fileName}`);
+                return;
+            }
+            
+            log(`[NavEditor] All checks passed, proceeding to token reading...`);
 
             if (useWordMode) {
+                log(`[NavEditor] Using WORD mode for typing: ${changes.map(c => c.text).join('')}`);
                 readWordTokens(e, changes);
             } else {
+                log(`[NavEditor] Using TOKEN mode for typing: ${changes.map(c => c.text).join('')}`);
                 readTextTokens(
                     e,
                     diagCache,
                     changes,
                     indentLevels,
                     tabSize,
-                    skipNextIndent,
+                    skipNextIndentObj,
                     MAX_INDENT_UNITS,
                     audioMap
                 );
@@ -405,13 +445,17 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
         vscode.window.onDidChangeTextEditorSelection((e) => {
             if (
                 !readyForCursor ||
-                e.kind !== vscode.TextEditorSelectionChangeKind.Keyboard ||
+                (e.kind !== vscode.TextEditorSelectionChangeKind.Keyboard && e.kind !== vscode.TextEditorSelectionChangeKind.Mouse) ||
                 e.selections.length !== 1 ||
                 isFileTreeReading()
-            ) return;
+            ) {
+                log(`[NavEditor] Skipping cursor navigation - readyForCursor: ${readyForCursor}, kind: ${e.kind}, selections: ${e.selections.length}, fileTreeReading: ${isFileTreeReading()}`);
+                return;
+            }
 
             // Check if we should suppress reading for debug console or other panels
             if (shouldSuppressReadingEnhanced(e.textEditor)) {
+                log(`[NavEditor] Skipping cursor navigation - suppressed for debug console`);
                 return;
             }
 
@@ -421,6 +465,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 // Skip if this cursor movement was caused by recent typing (prevents double audio)
                 const timeSinceTyping = Date.now() - lastTypingTime;
                 if (timeSinceTyping < TYPING_DETECTION_WINDOW_MS) {
+                    log(`[NavEditor] Skipping cursor navigation - recent typing detected (${timeSinceTyping}ms ago)`);
                     currentCursor = sel;
                     return;
                 }
@@ -436,7 +481,10 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                     : doc.getText(new vscode.Range(sel, old));
 
                 if (char) {
+                    log(`[NavEditor] Playing character navigation audio for: "${char}"`);
                     speakTokenList([{ tokens: [char], category: undefined }]);
+                } else {
+                    log(`[NavEditor] No character found for navigation`);
                 }
                 currentCursor = sel;
                 return;

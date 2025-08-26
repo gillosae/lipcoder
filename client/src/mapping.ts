@@ -41,7 +41,9 @@ export const numberMap: Record<string, string> = {
 // Earcon characters (punctuation that should use earcons instead of TTS)
 const EARCON_CHARS = new Set([
     '(', ')', '[', ']', '{', '}', '<', '>',
-    '"', "'", '`', ',', '.', ';', ':', 
+    '"', "'", '`', ',', '.', ';', ':', '_', '=',
+    '+', '&', '*', '@', '^', '$', '!', '%', '?', '#', '~', '₩',
+    '-', '/', '|', '\\',
     ' ', '\t', '\n'
 ]);
 
@@ -96,7 +98,8 @@ export function getSpecialCharSpoken(char: string): string | null {
     
     // Check single character mappings
     if (SPECIAL_CHAR_FILES[char]) {
-        return char; // Return the character itself
+        // Return the base filename without .pcm extension
+        return SPECIAL_CHAR_FILES[char].replace('.pcm', '');
     }
     
     // Special cases for common characters

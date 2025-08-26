@@ -398,6 +398,20 @@ connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: nu
     return tokens;
 });
 
+// Python keywords list
+const PYTHON_KEYWORDS = new Set([
+    'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 
+    'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 
+    'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'match', 
+    'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 
+    'with', 'yield', 'self'  // Adding 'self' as it's a common Python convention
+]);
+
+// Helper function to check if a token is a Python keyword
+function isPythonKeyword(token: string): boolean {
+    return PYTHON_KEYWORDS.has(token);
+}
+
 // Helper function to scan code tokens using TypeScript scanner
 function scanCodeTokens(codeText: string): Array<{ text: string; category: string }> {
     // Check if this looks like complex LaTeX-like syntax that needs special handling
@@ -415,7 +429,12 @@ function scanCodeTokens(codeText: string): Array<{ text: string; category: strin
         let category = 'other';
         
         if (kind === ts.SyntaxKind.Identifier) {
-            category = 'variable';
+            // Check if this identifier is a Python keyword
+            if (isPythonKeyword(tokenText)) {
+                category = 'keyword';
+            } else {
+                category = 'variable';
+            }
         } else if (kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
             // Separate quotes from string content 
             const stringContent = tokenText;
@@ -425,16 +444,12 @@ function scanCodeTokens(codeText: string): Array<{ text: string; category: strin
                 tokens.push({ text: stringContent[0], category: 'unknown' });
             }
             
-            // Add string content (without quotes) - check if it needs complex tokenization
+            // Add string content (without quotes) - always treat as literal content
             const innerContent = stringContent.slice(1, -1); // Remove quotes
             if (innerContent) {
-                if (innerContent.includes('\\') && (innerContent.includes('{') || innerContent.includes('_'))) {
-                    // Complex content inside string - tokenize individually
-                    const complexTokens = tokenizeComplexText(innerContent);
-                    tokens.push(...complexTokens);
-                } else {
-                    tokens.push({ text: innerContent, category: 'literal' });
-                }
+                // String content should always be treated as literal, regardless of complexity
+                // This prevents tokens inside strings from being cached with wrong categories
+                tokens.push({ text: innerContent, category: 'literal' });
             }
             
             // Add closing quote - let client decide categorization

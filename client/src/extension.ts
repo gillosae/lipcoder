@@ -55,6 +55,10 @@ import { registerTestTabTracker } from './features/test_tab_tracker';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
+import { initializeASROptimizations } from './features/asr_speed_optimizer';
+import { initializeLLMOptimizations } from './features/llm_speed_optimizer';
+import { registerSpeedTestCommand } from './features/speed_test_command';
+import { registerTestSuggestionStorage } from './features/test_suggestion_storage';
 
 // Memory monitoring
 let memoryMonitorInterval: NodeJS.Timeout | null = null;
@@ -143,7 +147,25 @@ export async function activate(context: vscode.ExtensionContext) {
 	
 	// 1.5) Realtime command router removed - using comprehensive CommandRouter instead
 	
-	// 1.6) Initialize conversational ASR system ─────────────────────────────────────────
+	// 1.6) Initialize speed optimizations ──────────────────────────────────────────────
+	try {
+		log('⚡ Initializing speed optimizations...');
+		
+		// Initialize ASR speed optimizations (pre-warming, caching)
+		initializeASROptimizations();
+		log('✅ ASR speed optimizations initialized');
+		
+		// Initialize LLM speed optimizations (caching, batching)
+		initializeLLMOptimizations();
+		log('✅ LLM speed optimizations initialized');
+		
+		log('✅ Speed optimizations fully initialized');
+	} catch (error) {
+		logError(`❌ Failed to initialize speed optimizations: ${error}`);
+		logWarning('⚠️ Extension will continue without speed optimizations');
+	}
+
+	// 1.7) Initialize conversational ASR system ─────────────────────────────────────────
 	try {
 		log('🤖 Starting conversational ASR system initialization...');
 		
@@ -231,8 +253,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// 4) Build the unified audioMap ─────────────────────────────────────────────
 	console.log('[EXTENSION] About to create audioMap...');
-	const audioMap = createAudioMap(context);
-	console.log('[EXTENSION] AudioMap created, underscore path:', audioMap.get('_'));
+	const audioMapObj = createAudioMap(context);
+	console.log('[EXTENSION] AudioMap created, underscore path:', audioMapObj.get('_'));
+	
+	// Convert Map to Record for compatibility with readTextTokens
+	const audioMap: Record<string, string> = {};
+	for (const [key, value] of audioMapObj.entries()) {
+		audioMap[key] = value;
+	}
+	console.log('[EXTENSION] AudioMap converted to Record, alphabet "a":', audioMap['a']);
+	console.log('[EXTENSION] AudioMap converted to Record, alphabet "b":', audioMap['b']);
+	console.log('[EXTENSION] AudioMap keys count:', Object.keys(audioMap).length);
 
 	// 5) Start LanguageClient ──────────────────────────────────────────────────
 	const client = startLanguageClient(context);
@@ -367,6 +398,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	
 	registerTestTabTracker(context);
 	log('✅ registerTestTabTracker completed');
+	
+	registerSpeedTestCommand(context);
+	log('✅ registerSpeedTestCommand completed');
+
+	registerTestSuggestionStorage(context);
+	log('✅ registerTestSuggestionStorage completed');
 
 	// Add command to restart language server
 	try {
@@ -410,6 +447,39 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 		throw error; // Re-throw to see the full error
 	}
+
+	// Add command to continue with saved suggestions
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.continueWithSuggestions', async () => {
+			try {
+				const { showCurrentSuggestions, hasCurrentSuggestions } = await import('./features/suggestion_storage.js');
+				
+				if (!hasCurrentSuggestions()) {
+					vscode.window.showInformationMessage('No saved suggestions available. Use ASR commands to generate suggestions first.');
+					return;
+				}
+				
+				const selectedAction = await showCurrentSuggestions();
+				if (selectedAction) {
+					// Execute the selected action
+					const { getConversationalProcessor } = await import('./conversational_asr.js');
+					const processor = getConversationalProcessor();
+					if (processor && 'executeSuggestionAction' in processor) {
+						await (processor as any).executeSuggestionAction(selectedAction);
+						// Silent execution - no popup message
+					} else {
+						// Fallback execution
+						const { activateVibeCoding } = await import('./features/vibe_coding.js');
+						if (selectedAction.command === 'vibe_coding' && selectedAction.parameters?.instruction) {
+							await activateVibeCoding(selectedAction.parameters.instruction);
+						}
+					}
+				}
+			} catch (error) {
+				vscode.window.showErrorMessage(`Continue with suggestions failed: ${error}`);
+			}
+		})
+	);
 
 	// Add command to test comment voice
 	context.subscriptions.push(
@@ -539,6 +609,20 @@ export async function activate(context: vscode.ExtensionContext) {
 				
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to analyze metrics: ${error}`);
+			}
+		})
+	);
+
+	// Add command to toggle backspace earcon
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.toggleBackspaceEarcon', async () => {
+			try {
+				config.backspaceEarconEnabled = !config.backspaceEarconEnabled;
+				const status = config.backspaceEarconEnabled ? 'enabled' : 'disabled';
+				vscode.window.showInformationMessage(`Backspace earcon ${status}`);
+				log(`[Extension] Backspace earcon ${status}`);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to toggle backspace earcon: ${error}`);
 			}
 		})
 	);
@@ -717,6 +801,17 @@ export async function deactivate() {
 			}
 		} catch (err) {
 			logError(`❌ Failed to cleanup Enhanced Push-to-Talk ASR: ${err}`);
+		}
+		
+		// Clean up speed optimizers
+		try {
+			const { disposeASROptimizer } = require('./features/asr_speed_optimizer');
+			const { disposeLLMOptimizer } = require('./features/llm_speed_optimizer');
+			disposeASROptimizer();
+			disposeLLMOptimizer();
+			logSuccess('✅ Speed optimizers cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup speed optimizers: ${err}`);
 		}
 		
 		// Clean up LLM resources

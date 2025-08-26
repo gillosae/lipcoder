@@ -78,7 +78,161 @@ export function splitCamel(id: string): string[] {
  *    otherwise split into individual letters.
  * 4. Digit runs and special runs are split into individual characters.
  */
+/**
+ * Split mixed text into Korean, English, earcons, and Python expressions
+ */
+function splitMixedText(text: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let i = 0;
+    let inExpression = false;
+    let braceDepth = 0;
+    
+    while (i < text.length) {
+        const char = text[i];
+        
+        if (char === '{' && !inExpression) {
+            // Start of f-string expression
+            if (current) {
+                // Process the accumulated text before the expression
+                result.push(...splitTextByLanguageAndEarcons(current));
+                current = '';
+            }
+            inExpression = true;
+            braceDepth = 1;
+            current = char;
+        } else if (char === '{' && inExpression) {
+            // Nested brace in expression
+            braceDepth++;
+            current += char;
+        } else if (char === '}' && inExpression) {
+            braceDepth--;
+            current += char;
+            if (braceDepth === 0) {
+                // End of f-string expression - treat as English
+                result.push(current);
+                current = '';
+                inExpression = false;
+            }
+        } else {
+            current += char;
+        }
+        i++;
+    }
+    
+    if (current) {
+        if (inExpression) {
+            // Unclosed expression - treat as English
+            result.push(current);
+        } else {
+            // Regular text - split by language and earcons
+            result.push(...splitTextByLanguageAndEarcons(current));
+        }
+    }
+    
+    log(`[splitMixedText] input="${text}" → parts=${JSON.stringify(result)}`);
+    return result;
+}
+
+/**
+ * Split text by language (Korean/English) and earcons
+ */
+function splitTextByLanguageAndEarcons(text: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let currentIsKorean: boolean | null = null;
+    
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        
+        // Check if character is an earcon
+        if (isEarconChar(char)) {
+            // Flush current text
+            if (current) {
+                result.push(current);
+                current = '';
+                currentIsKorean = null;
+            }
+            // Add earcon as separate token
+            result.push(char);
+            continue;
+        }
+        
+        // Check if character is Korean
+        const charIsKorean = /[\u3131-\u3163\uac00-\ud7a3]/.test(char);
+        
+        if (currentIsKorean === null) {
+            // First character - set the language
+            currentIsKorean = charIsKorean;
+            current = char;
+        } else if (currentIsKorean === charIsKorean) {
+            // Same language - continue accumulating
+            current += char;
+        } else {
+            // Language change - flush current and start new
+            if (current) {
+                result.push(current);
+            }
+            current = char;
+            currentIsKorean = charIsKorean;
+        }
+    }
+    
+    if (current) {
+        result.push(current);
+    }
+    
+    return result;
+}
+
+/**
+ * Check if character should be treated as earcon
+ */
+function isEarconChar(char: string): boolean {
+    // Common earcon characters
+    const earconChars = new Set([
+        '✓', '✗', '→', '←', '↑', '↓', '★', '☆', '♠', '♣', '♥', '♦',
+        '(', ')', '[', ']', '{', '}', '<', '>',
+        '"', "'", '`', ',', '.', ';', ':', '_', '=',
+        '+', '&', '*', '@', '^', '$', '!', '%', '?', '#', '~', '₩',
+        '-', '/', '|', '\\', '\n', '\t'
+    ]);
+    return earconChars.has(char);
+}
+
 export function splitWordChunks(text: string): string[] {
+    // Check if this looks like mixed content (Korean + earcons + expressions)
+    if (text.includes('{') && text.includes('}') || 
+        (isKoreanText(text) && /[✓✗→←↑↓★☆♠♣♥♦()[\]{}<>"'`,.;:_=+&*@^$!%?#~₩\-/|\\]/.test(text))) {
+        log(`[splitWordChunks] Mixed content detected, splitting by language and earcons: "${text}"`);
+        const mixedParts = splitMixedText(text);
+        const result: string[] = [];
+        
+        for (const part of mixedParts) {
+            if (part.startsWith('{') && part.endsWith('}')) {
+                // This is a Python expression - treat as English
+                log(`[splitWordChunks] Processing Python expression: "${part}"`);
+                result.push(part);
+            } else if (isEarconChar(part)) {
+                // This is an earcon character
+                log(`[splitWordChunks] Processing earcon: "${part}"`);
+                result.push(part);
+            } else if (isKoreanText(part)) {
+                // This is Korean text
+                log(`[splitWordChunks] Processing Korean text: "${part}"`);
+                const koreanTokens = splitKoreanText(part);
+                result.push(...koreanTokens);
+            } else {
+                // This is regular English text
+                log(`[splitWordChunks] Processing English text: "${part}"`);
+                result.push(part);
+            }
+        }
+        
+        log(`[splitWordChunks] Mixed content result: ${JSON.stringify(result)}`);
+        return result;
+    }
+    
     // Check if text contains Korean characters
     if (isKoreanText(text)) {
         log(`[splitWordChunks] Korean text detected, using Korean tokenization: "${text}"`);

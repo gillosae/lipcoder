@@ -11,11 +11,14 @@ export interface ASRPopupOptions {
 
 export class ASRPopup {
     private panel: vscode.WebviewPanel | null = null;
+    private statusBarItem: vscode.StatusBarItem | null = null;
+    private notificationItem: vscode.Disposable | null = null;
     private options: ASRPopupOptions;
     private isRecording = false;
     private transcriptionText = '';
     private recordingStartTime = 0;
     private animationFrame: NodeJS.Timeout | null = null;
+    private useMinimalUI = true; // Use minimal UI by default
 
     constructor(options: ASRPopupOptions = {}) {
         this.options = {
@@ -38,19 +41,28 @@ export class ASRPopup {
             return;
         }
         
+        if (this.useMinimalUI) {
+            this.showMinimalUI();
+            return;
+        }
+        
         if (this.panel) {
             this.panel.reveal();
             return;
         }
 
-        // Create webview panel
+        // Create webview panel as a floating overlay that doesn't disrupt editor layout
         this.panel = vscode.window.createWebviewPanel(
             'asrPopup',
             this.options.title || 'ASR Recording',
-            vscode.ViewColumn.Beside,
+            {
+                viewColumn: vscode.ViewColumn.Active,
+                preserveFocus: true  // Don't steal focus from current editor
+            },
             {
                 enableScripts: true,
-                localResourceRoots: [vscode.Uri.file(context.extensionPath)]
+                localResourceRoots: [vscode.Uri.file(context.extensionPath)],
+                retainContextWhenHidden: true  // Keep context when hidden
             }
         );
 
@@ -84,6 +96,23 @@ export class ASRPopup {
     }
 
     /**
+     * Show minimal UI using status bar and notifications
+     */
+    private showMinimalUI(): void {
+        // Create status bar item if not exists
+        if (!this.statusBarItem) {
+            this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+            this.statusBarItem.command = 'lipcoder.showASRPopup'; // Allow clicking to show full popup
+        }
+        
+        this.statusBarItem.text = '$(record) ASR Ready';
+        this.statusBarItem.tooltip = 'ASR Recording Status - Click for details';
+        this.statusBarItem.show();
+        
+        log('[ASR-Popup] Minimal ASR UI shown in status bar');
+    }
+
+    /**
      * Hide the ASR popup
      */
     hide(): void {
@@ -91,6 +120,16 @@ export class ASRPopup {
             this.panel.dispose();
             this.panel = null;
         }
+        
+        if (this.statusBarItem) {
+            this.statusBarItem.hide();
+        }
+        
+        if (this.notificationItem) {
+            this.notificationItem.dispose();
+            this.notificationItem = null;
+        }
+        
         this.stopAnimation();
         log('[ASR-Popup] ASR popup hidden');
     }
@@ -108,7 +147,11 @@ export class ASRPopup {
             this.stopAnimation();
         }
 
-        this.updateContent();
+        if (this.useMinimalUI) {
+            this.updateMinimalUI();
+        } else {
+            this.updateContent();
+        }
     }
 
     /**
@@ -116,17 +159,60 @@ export class ASRPopup {
      */
     updateTranscription(text: string): void {
         this.transcriptionText = text;
-        this.updateContent();
+        
+        if (this.useMinimalUI) {
+            this.updateMinimalUI();
+            // Show transcription as a non-blocking notification
+            if (text && text.trim()) {
+                vscode.window.showInformationMessage(`ASR: ${text}`, { modal: false });
+            }
+        } else {
+            this.updateContent();
+        }
+    }
+
+    /**
+     * Update minimal UI (status bar and notifications)
+     */
+    private updateMinimalUI(): void {
+        if (!this.statusBarItem) {
+            return;
+        }
+        
+        if (this.isRecording) {
+            const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
+            this.statusBarItem.text = `$(record) Recording... ${elapsed}s`;
+            this.statusBarItem.tooltip = 'ASR is recording - Press Ctrl+Shift+A to stop';
+            this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        } else if (this.transcriptionText) {
+            this.statusBarItem.text = `$(check) ASR: ${this.transcriptionText.substring(0, 30)}${this.transcriptionText.length > 30 ? '...' : ''}`;
+            this.statusBarItem.tooltip = `Last transcription: ${this.transcriptionText}`;
+            this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.prominentBackground');
+        } else {
+            this.statusBarItem.text = '$(record) ASR Ready';
+            this.statusBarItem.tooltip = 'ASR Recording Status - Press Ctrl+Shift+A to start';
+            this.statusBarItem.backgroundColor = undefined;
+        }
     }
 
     /**
      * Show error message
      */
     showError(error: string): void {
-        this.sendMessage({
-            command: 'error',
-            error: error
-        });
+        if (this.useMinimalUI) {
+            // Show error as notification and update status bar
+            vscode.window.showErrorMessage(`ASR Error: ${error}`);
+            if (this.statusBarItem) {
+                this.statusBarItem.text = '$(error) ASR Error';
+                this.statusBarItem.tooltip = `ASR Error: ${error}`;
+                this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+            }
+        } else {
+            this.sendMessage({
+                command: 'error',
+                error: error
+            });
+        }
     }
 
     /**
@@ -474,5 +560,37 @@ export class ASRPopup {
      */
     dispose(): void {
         this.hide();
+        
+        if (this.statusBarItem) {
+            this.statusBarItem.dispose();
+            this.statusBarItem = null;
+        }
+        
+        if (this.notificationItem) {
+            this.notificationItem.dispose();
+            this.notificationItem = null;
+        }
+    }
+
+    /**
+     * Toggle between minimal and full UI
+     */
+    toggleUIMode(): void {
+        this.useMinimalUI = !this.useMinimalUI;
+        log(`[ASR-Popup] Switched to ${this.useMinimalUI ? 'minimal' : 'full'} UI mode`);
+        
+        if (this.useMinimalUI) {
+            // Hide panel if it's open
+            if (this.panel) {
+                this.panel.dispose();
+                this.panel = null;
+            }
+            this.showMinimalUI();
+        } else {
+            // Hide status bar item
+            if (this.statusBarItem) {
+                this.statusBarItem.hide();
+            }
+        }
     }
 } 

@@ -6,6 +6,8 @@ import { speakTokenList, TokenChunk, playEarcon, startThinkingAudio, stopThinkin
 import { CommandRouter } from './command_router';
 import { activateVibeCoding } from './features/vibe_coding';
 import { isTerminalSuggestionDialogActive } from './features/terminal';
+import { saveSuggestions, hasCurrentSuggestions, showCurrentSuggestions } from './features/suggestion_storage';
+import { tryExactCommand } from './features/exact_commands';
 import * as path from 'path';
 
 export interface ConversationalIntent {
@@ -29,6 +31,7 @@ export interface ConversationalAction {
     command: string;
     parameters?: Record<string, any>;
     icon?: string;
+    type?: string;
 }
 
 /**
@@ -54,6 +57,21 @@ export class ConversationalASRProcessor {
             // Add to conversation history
             this.addToHistory(transcriptionText);
             
+            // Check for "continue" command first (before LLM processing)
+            if (this.isContinueCommand(transcriptionText)) {
+                log(`[ConversationalASR] Continue command detected: "${transcriptionText}"`);
+                await stopThinkingAudio(); // Stop thinking audio immediately
+                return await this.handleContinueCommand();
+            }
+            
+            // Check for exact commands (bypass LLM for speed)
+            const exactCommandResult = await tryExactCommand(transcriptionText);
+            if (exactCommandResult) {
+                log(`[ConversationalASR] Exact command executed: "${transcriptionText}"`);
+                await stopThinkingAudio(); // Stop thinking audio immediately
+                return exactCommandResult;
+            }
+            
             // Understand intent using LLM
             const intent = await this.understandIntent(transcriptionText, context);
             log(`[ConversationalASR] Intent: ${intent.type} (confidence: ${intent.confidence})`);
@@ -77,6 +95,170 @@ export class ConversationalASRProcessor {
             await stopThinkingAudio();
             logError(`[ConversationalASR] Error processing transcription: ${error}`);
             return this.createErrorResponse(transcriptionText);
+        }
+    }
+
+    /**
+     * Check if the user said a "continue" command
+     */
+    private isContinueCommand(text: string): boolean {
+        const normalizedText = text.toLowerCase().trim();
+        const continuePatterns = [
+            'continue',
+            'continue with suggestions',
+            'show suggestions',
+            'show options',
+            'proceed',
+            'go ahead',
+            'next'
+        ];
+        
+        return continuePatterns.some(pattern => 
+            normalizedText === pattern || 
+            normalizedText.includes(pattern)
+        );
+    }
+
+    /**
+     * Handle continue command - show saved suggestions
+     */
+    private async handleContinueCommand(): Promise<ConversationalResponse> {
+        log(`[ConversationalASR] Handling continue command`);
+        
+        if (!hasCurrentSuggestions()) {
+            log(`[ConversationalASR] No saved suggestions available`);
+            return {
+                response: "No saved suggestions available. Use voice commands to generate suggestions first.",
+                actions: [],
+                shouldSpeak: true
+            };
+        }
+        
+        try {
+            // Show the suggestions and let user select
+            const selectedAction = await showCurrentSuggestions();
+            
+            if (selectedAction) {
+                log(`[ConversationalASR] User selected suggestion: "${selectedAction.label}"`);
+                
+                // Execute the selected action
+                await this.executeSuggestionAction(selectedAction);
+                
+                return {
+                    response: "", // Silent execution
+                    actions: [],
+                    shouldSpeak: false // Don't speak or show popup
+                };
+            } else {
+                log(`[ConversationalASR] User cancelled suggestion selection`);
+                return {
+                    response: "", // Silent cancellation
+                    actions: [],
+                    shouldSpeak: false // Don't speak or show popup
+                };
+            }
+        } catch (error) {
+            logError(`[ConversationalASR] Error handling continue command: ${error}`);
+            return {
+                response: "", // Silent error (logged instead)
+                actions: [],
+                shouldSpeak: false
+            };
+        }
+    }
+
+    /**
+     * Generate simple navigation feedback
+     */
+    private generateNavigationFeedback(originalText: string): string {
+        const text = originalText.toLowerCase();
+        
+        if (text.includes('explorer')) {
+            return 'In explorer';
+        } else if (text.includes('editor')) {
+            return 'In editor';
+        } else if (text.includes('terminal')) {
+            return 'In terminal';
+        } else if (text.includes('panel')) {
+            return 'Panel switched';
+        } else if (text.includes('tab')) {
+            return 'Tab switched';
+        } else if (text.includes('line')) {
+            return 'Line navigated';
+        } else if (text.includes('function')) {
+            return 'Function found';
+        } else if (text.includes('file')) {
+            return 'File opened';
+        } else {
+            return 'Navigated';
+        }
+    }
+
+    /**
+     * Generate simple success feedback
+     */
+    private generateSuccessFeedback(originalText: string): string {
+        const text = originalText.toLowerCase();
+        
+        if (text.includes('save')) {
+            return 'Saved';
+        } else if (text.includes('format')) {
+            return 'Formatted';
+        } else if (text.includes('copy')) {
+            return 'Copied';
+        } else if (text.includes('paste')) {
+            return 'Pasted';
+        } else if (text.includes('delete')) {
+            return 'Deleted';
+        } else if (text.includes('close')) {
+            return 'Closed';
+        } else if (text.includes('open')) {
+            return 'Opened';
+        } else {
+            return 'Done';
+        }
+    }
+
+    /**
+     * Execute a selected suggestion action
+     */
+    public async executeSuggestionAction(action: ConversationalAction): Promise<void> {
+        log(`[ConversationalASR] Executing suggestion action: ${action.command}`);
+        
+        switch (action.command) {
+            case 'vibe_coding':
+                if (action.parameters?.instruction) {
+                    await activateVibeCoding(action.parameters.instruction);
+                }
+                break;
+                
+            case 'code':
+            case 'modify':
+            case 'refactor':
+            case 'document':
+                // These all use vibe coding
+                const instruction = action.parameters?.instruction || action.label;
+                await activateVibeCoding(instruction);
+                break;
+                
+            default:
+                // For other commands, try to execute them via VS Code command palette
+                log(`[ConversationalASR] Attempting to execute command: ${action.command}`);
+                try {
+                    await vscode.commands.executeCommand(`lipcoder.${action.command}`, action.parameters);
+                } catch (error) {
+                    log(`[ConversationalASR] Command execution failed, trying direct execution: ${error}`);
+                    // If that fails, try some common patterns
+                    if (action.command === 'insertText' && action.parameters && action.parameters.text) {
+                        const editor = vscode.window.activeTextEditor;
+                        if (editor) {
+                            await editor.edit(editBuilder => {
+                                editBuilder.insert(editor.selection.active, action.parameters!.text);
+                            });
+                        }
+                    }
+                }
+                break;
         }
     }
 
@@ -353,13 +535,24 @@ Provide a helpful, conversational response:`;
             const commandExecuted = await this.tryExecuteCommand(intent);
             log(`[ConversationalASR] Command execution result: ${commandExecuted}`);
             
-            // Check if this is a navigation command that should not show suggestions
+            // Check if command was executed successfully - provide appropriate feedback
             if (commandExecuted === 'navigation') {
-                log(`[ConversationalASR] Navigation command completed - suppressing all feedback`);
+                log(`[ConversationalASR] Navigation command completed - providing audio feedback only`);
+                // Generate simple navigation feedback without popup
+                const navResponse = this.generateNavigationFeedback(intent.originalText);
                 return {
-                    response: "", // No response text for navigation commands
+                    response: navResponse, // Simple navigation confirmation
                     actions: [], // No suggestions for navigation commands
-                    shouldSpeak: false // Don't speak for navigation commands
+                    shouldSpeak: true // Speak the navigation confirmation
+                };
+            } else if (commandExecuted === true) {
+                log(`[ConversationalASR] Command executed successfully - providing audio feedback only`);
+                // Generate simple success feedback without popup
+                const successResponse = this.generateSuccessFeedback(intent.originalText);
+                return {
+                    response: successResponse, // Simple success confirmation
+                    actions: [], // No suggestions for executed commands
+                    shouldSpeak: true // Speak the success confirmation
                 };
             }
             
@@ -479,29 +672,60 @@ Provide a brief acknowledgment:`;
     }
 
     /**
-     * Handle vibe coding intents
+     * Handle vibe coding intents - now saves suggestions instead of immediately executing
      */
     private async handleVibeCoding(intent: ConversationalIntent): Promise<ConversationalResponse> {
-        const response = "I'll help you go further. Let me work on that...";
+        const response = "I'll analyze your request and prepare suggestions. Say 'continue' when ready to see options.";
         
-        // Execute vibe coding immediately
         try {
-            await activateVibeCoding(intent.originalText);
+            // Generate suggestions without executing vibe coding immediately
+            let actions: ConversationalAction[] = [];
             
             // Check if terminal suggestions are active - if so, don't show additional suggestions
-            // to prevent interrupting the user's selection process
-            let actions: ConversationalAction[] = [];
             if (!isTerminalSuggestionDialogActive()) {
                 log(`[ConversationalASR] Terminal suggestions not active, generating dynamic suggestions`);
                 actions = await this.generateDynamicSuggestions(intent);
+                
+                // Add the original vibe coding action as the first suggestion
+                const vibeCodingAction: ConversationalAction = {
+                    id: 'vibe_coding_original',
+                    label: `Execute: ${intent.originalText}`,
+                    description: 'Execute the original vibe coding request',
+                    command: 'vibe_coding',
+                    parameters: { instruction: intent.originalText },
+                    type: 'code'
+                };
+                actions.unshift(vibeCodingAction);
             } else {
-                log(`[ConversationalASR] Terminal suggestions active, skipping dynamic suggestions to prevent interruption`);
+                log(`[ConversationalASR] Terminal suggestions active, creating basic vibe coding suggestion`);
+                // Even if terminal suggestions are active, create a basic suggestion
+                actions = [{
+                    id: 'vibe_coding_original',
+                    label: `Execute: ${intent.originalText}`,
+                    description: 'Execute the original vibe coding request',
+                    command: 'vibe_coding',
+                    parameters: { instruction: intent.originalText },
+                    type: 'code'
+                }];
+            }
+
+            // Save suggestions instead of executing immediately
+            if (actions.length > 0) {
+                const editor = vscode.window.activeTextEditor;
+                const context = editor ? {
+                    fileName: editor.document.fileName,
+                    lineNumber: editor.selection.active.line,
+                    selectedText: editor.document.getText(editor.selection)
+                } : undefined;
+                
+                saveSuggestions(intent.originalText, actions, context);
+                log(`[ConversationalASR] Saved ${actions.length} suggestions for vibe coding request`);
             }
 
             return {
-                response,
-                actions,
-                shouldSpeak: true
+                response: "", // Return empty response to prevent any popup
+                actions: [], // Return empty actions since we're saving them
+                shouldSpeak: false // Don't speak anything
             };
         } catch (error) {
             return this.createErrorResponse(intent.originalText);
@@ -975,6 +1199,24 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
             // Map common intents to commands
             const text = intent.originalText.toLowerCase();
             
+            // Handle panel navigation commands first
+            if (text.includes('explorer') || text.includes('file explorer')) {
+                await vscode.commands.executeCommand('workbench.view.explorer');
+                return 'navigation';
+            } else if (text.includes('editor') && !text.includes('open')) {
+                await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+                return 'navigation';
+            } else if (text.includes('terminal')) {
+                await vscode.commands.executeCommand('workbench.action.terminal.focus');
+                return 'navigation';
+            } else if (text.includes('problems')) {
+                await vscode.commands.executeCommand('workbench.actions.view.problems');
+                return 'navigation';
+            } else if (text.includes('output')) {
+                await vscode.commands.executeCommand('workbench.action.output.toggleOutput');
+                return 'navigation';
+            }
+            
             // Handle navigation commands that we can execute directly
             if (text.includes('go to line') || (text.includes('line') && /\d+/.test(text))) {
                 const lineMatch = text.match(/\d+/);
@@ -1087,7 +1329,9 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                 const isNavigationCommand = text.includes('go to') || text.includes('goto') || 
                                           text.includes('parent') || text.includes('function') || 
                                           text.includes('class') || text.includes('navigate') ||
-                                          text.includes('move to') || text.includes('jump to');
+                                          text.includes('move to') || text.includes('jump to') ||
+                                          text.includes('explorer') || text.includes('editor') ||
+                                          text.includes('terminal') || text.includes('panel');
                 
                 // If CommandRouter handled a navigation command, return 'navigation'
                 if (result && isNavigationCommand) {

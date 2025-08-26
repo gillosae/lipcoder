@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { log } from '../utils';
-import { playWave, speakTokenList, TokenChunk } from '../audio';
+import { playWave, speakTokenList, TokenChunk, clearAudioStoppingState } from '../audio';
 import { stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
+import { splitWordChunks } from './word_logic';
 import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
@@ -13,6 +15,7 @@ let autoTimer: NodeJS.Timeout | null = null;
  */
 function cleanupFunctionList(): void {
     if (autoTimer) {
+        clearTimeout(autoTimer);
         clearInterval(autoTimer);
         autoTimer = null;
     }
@@ -72,6 +75,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
             quickPick.onDidChangeActive(async active => {
                 // Stop auto-iteration if the user navigates manually
                 if (autoTimer) {
+                    clearTimeout(autoTimer);
                     clearInterval(autoTimer);
                     autoTimer = null;
                 }
@@ -82,13 +86,28 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const pos = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos));
+                    // Comprehensive audio stopping to handle all types including underbar sounds
                     stopAllAudio();
+                    // Clear audio stopping state immediately to allow new audio to start right away
+                    clearAudioStoppingState();
+                    // Explicitly stop earcons to ensure they don't overlap
+                    stopEarconPlayback();
+                    // Small delay to ensure all audio (including underbar PCM files) is fully stopped
+                    await new Promise(resolve => setTimeout(resolve, 50));
                     // Play indent earcon for nesting depth
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakTokenList([{ tokens: [label], category: undefined }]);
+                    
+                    // Use fast word chunking like code reading for function names
+                    const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
+                    const wordTokens = splitWordChunks(functionName);
+                    const chunks: TokenChunk[] = wordTokens.map(token => ({ 
+                        tokens: [token], 
+                        category: 'variable' // Use 'variable' category for fast PCM playback
+                    }));
+                    speakTokenList(chunks);
                 }
             });
 
@@ -103,7 +122,20 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakTokenList([{ tokens: [`moved to function ${label} line ${line + 1}`], category: undefined }]);
+                    
+                    // Use fast word chunking for the confirmation message
+                    const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces
+                    const wordTokens = splitWordChunks(functionName);
+                    const functionChunks: TokenChunk[] = wordTokens.map(token => ({ 
+                        tokens: [token], 
+                        category: 'variable' 
+                    }));
+                    const chunks: TokenChunk[] = [
+                        { tokens: ['moved', 'to', 'function'], category: undefined },
+                        ...functionChunks,
+                        { tokens: ['line', (line + 1).toString()], category: undefined }
+                    ];
+                    speakTokenList(chunks);
                 }
                 quickPick.hide();
             });
@@ -126,21 +158,33 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
             speakTokenList([{ tokens: ['functions'], category: undefined }]);
 
             // Automatically walk through items, reading each every second
+            // Wait a bit before starting auto-iteration to avoid simultaneous speech
             let idx = 0;
-            autoTimer = setInterval(() => {
-                if (idx >= quickPick.items.length) {
-                    clearInterval(autoTimer!);
-                    autoTimer = null;
-                    // keep the QuickPick open for manual navigation
-                    return;
-                }
-                quickPick.activeItems = [quickPick.items[idx]];
-                idx++;
-            }, 1000);
+            autoTimer = setTimeout(() => {
+                autoTimer = setInterval(async () => {
+                    if (idx >= quickPick.items.length) {
+                        clearInterval(autoTimer!);
+                        autoTimer = null;
+                        // keep the QuickPick open for manual navigation
+                        return;
+                    }
+                    // Comprehensive audio stopping to handle all types including underbar sounds
+                    stopAllAudio();
+                    // Clear audio stopping state immediately to allow new audio to start right away
+                    clearAudioStoppingState();
+                    // Explicitly stop earcons to ensure they don't overlap
+                    stopEarconPlayback();
+                    // Small delay to ensure all audio (including underbar PCM files) is fully stopped
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    quickPick.activeItems = [quickPick.items[idx]];
+                    idx++;
+                }, 1000);
+            }, 1500); // Wait 1.5 seconds before starting auto-iteration
             
             // Clean up timer when quickPick is hidden
             quickPick.onDidHide(() => {
                 if (autoTimer) {
+                    clearTimeout(autoTimer);
                     clearInterval(autoTimer);
                     autoTimer = null;
                 }

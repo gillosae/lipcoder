@@ -194,6 +194,154 @@ async function applyVolumeBoost(inputFilePath: string, volumeBoost: number): Pro
  * Apply pitch-preserving time stretching and/or volume boost to an audio file using FFmpeg
  * Returns path to the processed file (cached for efficiency)
  */
+async function applyAudioProcessingWithOriginal(inputFilePath: string, playSpeed: number, volumeBoost?: number, originalFilePath?: string): Promise<string> {
+    // Skip processing if no changes needed
+    const needsSpeedChange = Math.abs(playSpeed - 1.0) > 0.01;
+    const needsVolumeChange = volumeBoost && Math.abs(volumeBoost - 1.0) > 0.01;
+    
+    if (!needsSpeedChange && !needsVolumeChange) {
+        return inputFilePath;
+    }
+    
+    // Use original file for cache key and modification time comparison
+    const cacheKeyFile = originalFilePath || inputFilePath;
+    const inputBasename = path.basename(cacheKeyFile, path.extname(cacheKeyFile));
+    const speedKey = playSpeed.toFixed(3).replace('.', '_');
+    const volumeKey = volumeBoost ? volumeBoost.toFixed(3).replace('.', '_') : '1_000';
+    
+    // Handle long filenames by truncating or hashing to prevent "File name too long" errors
+    let safeBasename = inputBasename;
+    const maxBaseLength = 100; // Conservative limit to avoid filesystem issues
+    
+    if (inputBasename.length > maxBaseLength) {
+        // For very long filenames, use a hash of the original name plus a truncated version
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(inputBasename).digest('hex').substring(0, 8);
+        const truncated = inputBasename.substring(0, 50); // Keep first 50 chars for readability
+        safeBasename = `${truncated}_${hash}`;
+        log(`[audioProcessing] Long filename detected, using safe name: ${safeBasename}`);
+    }
+    
+    const outputFileName = `${safeBasename}_speed${speedKey}_vol${volumeKey}.wav`;
+    const outputFilePath = path.join(os.tmpdir(), 'lipcoder_audio_processing', outputFileName);
+    
+    // Create cache directory if it doesn't exist
+    const cacheDir = path.dirname(outputFilePath);
+    if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    
+    // Return cached file if it exists and is valid
+    if (fs.existsSync(outputFilePath)) {
+        // For alphabet/earcon PCM files, always use cache if valid (they never change)
+        // For other files, check modification time
+        const compareFilePath = originalFilePath || inputFilePath;
+        const isAlphabetOrEarcon = compareFilePath.includes('/alphabet/') || compareFilePath.includes('/earcon/') || compareFilePath.includes('/special/');
+        
+        let shouldUseCache = isAlphabetOrEarcon; // Always use cache for alphabet/earcon files
+        
+        if (!shouldUseCache) {
+            // For other files, check if cached file is newer than original
+            const inputStat = fs.statSync(compareFilePath);
+            const outputStat = fs.statSync(outputFilePath);
+            shouldUseCache = outputStat.mtime > inputStat.mtime;
+        }
+        
+        if (shouldUseCache) {
+            // Validate the cached file before using it
+            if (await validateCachedAudioFile(outputFilePath)) {
+                log(`[audioProcessing] Using cached processed file: ${outputFileName}`);
+                return outputFilePath;
+            } else {
+                log(`[audioProcessing] Cached file is corrupted, regenerating: ${outputFileName}`);
+                // Delete the corrupted file and continue to regenerate
+                try {
+                    fs.unlinkSync(outputFilePath);
+                } catch (e) {
+                    // Ignore deletion errors
+                }
+            }
+        }
+    }
+    
+    const processingDesc = [];
+    if (needsSpeedChange) processingDesc.push(`${playSpeed}x speed`);
+    if (needsVolumeChange) processingDesc.push(`${volumeBoost}x volume`);
+    log(`[audioProcessing] Applying ${processingDesc.join(' + ')} to: ${path.basename(inputFilePath)}`);
+    
+    // Check if input file exists
+    if (!fs.existsSync(inputFilePath)) {
+        const error = new Error(`Input file does not exist: ${inputFilePath}`);
+        logError(`[audioProcessing] ${error.message}`);
+        return Promise.reject(error);
+    }
+    
+    return new Promise((resolve, reject) => {
+        // Build filter chain
+        let filters: string[] = [];
+        
+        // Add time stretching filters if needed
+        if (needsSpeedChange) {
+            // Use atempo filter for time stretching (preserves pitch)
+            // atempo filter has a range limit of 0.5-100.0, so we may need to chain multiple filters
+            let remainingSpeed = playSpeed;
+            while (remainingSpeed > 2.0) {
+                filters.push('atempo=2.0');
+                remainingSpeed /= 2.0;
+            }
+            while (remainingSpeed < 0.5) {
+                filters.push('atempo=0.5');
+                remainingSpeed /= 0.5;
+            }
+            if (Math.abs(remainingSpeed - 1.0) > 0.01) {
+                filters.push(`atempo=${remainingSpeed.toFixed(6)}`);
+            }
+        }
+        
+        // Add volume filter if needed
+        if (needsVolumeChange) {
+            filters.push(`volume=${volumeBoost}`);
+        }
+        
+        const filterString = filters.length > 0 ? ['-af', filters.join(',')] : [];
+        
+        const ffmpegArgs = [
+            '-i', inputFilePath,
+            ...filterString,
+            '-y', // Overwrite output file
+            outputFilePath
+        ];
+        
+        log(`[audioProcessing] Running: ffmpeg ${ffmpegArgs.join(' ')}`);
+        
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        
+        let stderr = '';
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+        
+        ffmpeg.on('close', (code) => {
+            if (code === 0) {
+                log(`[audioProcessing] Successfully created processed file: ${outputFileName}`);
+                resolve(outputFilePath);
+            } else {
+                const error = new Error(`FFmpeg failed with code ${code}: ${stderr}`);
+                logError(`[audioProcessing] ${error.message}`);
+                reject(error);
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            const error = new Error(`FFmpeg spawn error: ${err.message}`);
+            logError(`[audioProcessing] ${error.message}`);
+            reject(error);
+        });
+    });
+}
+
 async function applyAudioProcessing(inputFilePath: string, playSpeed: number, volumeBoost?: number): Promise<string> {
     // Skip processing if no changes needed
     const needsSpeedChange = Math.abs(playSpeed - 1.0) > 0.01;
@@ -358,6 +506,13 @@ async function applyAudioProcessing(inputFilePath: string, playSpeed: number, vo
  */
 async function applyPitchPreservingTimeStretch(inputFilePath: string, playSpeed: number): Promise<string> {
     return applyAudioProcessing(inputFilePath, playSpeed);
+}
+
+/**
+ * Pitch-preserving time stretching with original file for cache comparison
+ */
+async function applyPitchPreservingTimeStretchWithOriginal(inputFilePath: string, playSpeed: number, originalFilePath: string): Promise<string> {
+    return applyAudioProcessingWithOriginal(inputFilePath, playSpeed, undefined, originalFilePath);
 }
 
 // ===============================
@@ -606,13 +761,8 @@ class AudioPlayer {
             return;
         }
         
-        // OPTIMIZATION: Skip pitch-preserving for alphabet/number PCM files for faster playback
-        const isAlphabetOrNumber = filePath.includes('/alphabet/') || filePath.includes('/number/');
-        const shouldUsePitchPreserving = config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isAlphabetOrNumber;
-        
-        if (isAlphabetOrNumber && config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
-            log(`[playPcmCached] ALPHABET/NUMBER OPTIMIZATION: Skipping pitch-preserving for faster playback: ${path.basename(filePath)}`);
-        }
+        // Use pitch-preserving for all audio when enabled and speed is not 1.0
+        const shouldUsePitchPreserving = config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01;
         
         // For pitch-preserving PCM playback, convert to WAV and use time stretching
         if (shouldUsePitchPreserving) {
@@ -623,8 +773,9 @@ class AudioPlayer {
                 const pcmData = originalEntry.pcm;
                 const format = originalEntry.format;
                 
-                // Create temporary WAV file for FFmpeg processing
-                const tempWavPath = path.join(os.tmpdir(), `pcm_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+                // Create temporary WAV file for FFmpeg processing - use consistent name for caching
+                const baseName = path.basename(filePath, '.pcm');
+                const tempWavPath = path.join(os.tmpdir(), `pcm_${baseName}.wav`);
                 
                 // Create WAV header for the PCM data
                 const wavHeader = Buffer.alloc(44);
@@ -645,8 +796,8 @@ class AudioPlayer {
                 const wavData = Buffer.concat([wavHeader, pcmData]);
                 fs.writeFileSync(tempWavPath, wavData);
                 
-                // Use pitch-preserving time stretching
-                const processedFilePath = await applyPitchPreservingTimeStretch(tempWavPath, config.playSpeed);
+                // Use pitch-preserving time stretching with original PCM file for cache key
+                const processedFilePath = await applyPitchPreservingTimeStretchWithOriginal(tempWavPath, config.playSpeed, filePath);
                 
                 // Play the processed file
                 const processedData = fs.readFileSync(processedFilePath);
@@ -1553,7 +1704,7 @@ export async function speakToken(
                     await audioPlayer.playPcmCached(alphaPath, opts?.panning);
                 } else {
                     // Fallback to TTS if PCM file missing
-                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
+                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker });
                     await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
                 }
             } else if (isNumber(token)) {
@@ -1564,20 +1715,19 @@ export async function speakToken(
                     await audioPlayer.playPcmCached(numPath, opts?.panning);
                 } else {
                     // Fallback to TTS if PCM file missing
-                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker ?? getSpeakerForCategory(category) });
+                    const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker });
                     await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
                 }
             } else if (getSpecialCharSpoken(token)) {
                 // Special characters (like underbar, dot) that should be spoken
                 log(`[speakToken] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}" (no category)`);
                 const spokenForm = getSpecialCharSpoken(token)!;
-                const filePath = await genTokenAudio(spokenForm, 'special', { speaker: opts?.speaker ?? getSpeakerForCategory('special') });
+                const filePath = await genTokenAudio(spokenForm, 'special', { speaker: opts?.speaker });
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } else if (isTTSRequired(token)) {
                 // Everything else that needs TTS
                 log(`[speakToken] Using TTS for: "${token}" (no category)`);
-                const speakerName = opts?.speaker ?? getSpeakerForCategory(category);
-                const filePath = await genTokenAudio(token, category, { speaker: speakerName });
+                const filePath = await genTokenAudio(token, category, { speaker: opts?.speaker });
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } else {
                 log(`[speakToken] Skipping empty or whitespace token: "${token}"`);
@@ -1654,19 +1804,27 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 // Import language detection to check if token is Korean
                 const { containsKorean } = require('./language_detection');
                 
-                if (category === 'variable' || category === 'literal') {
+                if (category === 'variable') {
                     // Skip client-side word chunking for Korean text since server already tokenized it properly
                     if (containsKorean(token)) {
                         // Korean text is already properly tokenized by the server, don't re-process
                         expandedTokens.push(token);
                         log(`[speakTokenList] Korean ${category} "${token}" → keeping as-is (already tokenized by server)`);
                     } else {
-                        // Apply word chunking to English variables and literals (handles CamelCase, underscores, 2/3-letter rules)
+                        // Apply word chunking to English variables (handles CamelCase, underscores, 2/3-letter rules)
                         const wordChunks = splitWordChunks(token);
                         expandedTokens.push(...wordChunks);
                         const categoryVoice = getSpeakerForCategory(category);
                         log(`[speakTokenList] ${category} "${token}" → [${wordChunks.join(', ')}] (voice: ${categoryVoice})`);
                     }
+                } else if (category === 'literal') {
+                    // Literals (string content) - split to allow earcons while preserving literal voice for text
+                    // This allows earcons like underscores to be read while keeping text parts as literals
+                    const literalParts = splitWordChunks(token);
+                    for (const part of literalParts) {
+                        expandedTokens.push(part);
+                    }
+                    log(`[speakTokenList] ${category} "${token}" → split into parts: [${literalParts.join(', ')}] for earcon support`);
                 } else if (category === 'comment_text') {
                     // For comment text, keep as single token for direct TTS processing
                     // This allows the entire comment to be processed as one unit with language detection
@@ -1682,6 +1840,12 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     // Comment symbols and numbers should be processed individually (earcons/TTS)
                     expandedTokens.push(token);
                     log(`[speakTokenList] Comment ${category} "${token}" → keeping as individual token`);
+                } else if (!category) {
+                    // Apply word logic to uncategorized tokens (like explorer items)
+                    // This handles 2/3-letter rules for folder names like "src"
+                    const wordChunks = splitWordChunks(token);
+                    expandedTokens.push(...wordChunks);
+                    log(`[speakTokenList] uncategorized "${token}" → [${wordChunks.join(', ')}] (word logic applied)`);
                 } else {
                     // Keep other tokens as-is
                     expandedTokens.push(token);
@@ -1694,6 +1858,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 category,
                 panning
             });
+            log(`[speakTokenList] Created chunk with category "${category}" and tokens: [${expandedTokens.join(', ')}]`);
         }
         
         const originalTokenCount = chunks.reduce((total, chunk) => total + chunk.tokens.length, 0);
@@ -1766,10 +1931,14 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                 
                 // Pre-generate TTS for tokens that will use it
                 if (category && category !== 'default' && category !== 'other') {
-                    // Tokens with meaningful categories
-                    if (!ttsPregenPromises.has(token)) {
-                        log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}"`);
-                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category), abortSignal: signal }));
+                    // Tokens with meaningful categories - use token+category as key to distinguish same token with different categories
+                    const pregenKey = `${token}:${category}`;
+                    if (!ttsPregenPromises.has(pregenKey)) {
+                        log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}" with key: "${pregenKey}"`);
+                        // Don't pass speaker override - let genTokenAudio use category-based voice selection
+                        ttsPregenPromises.set(pregenKey, genTokenAudio(token, category, { abortSignal: signal }));
+                    } else {
+                        log(`[speakTokenList] Pre-generation already queued for key: "${pregenKey}"`);
                     }
                 } else if (getSpecialCharSpoken(token)) {
                     // Special characters need their spoken form pre-generated
@@ -1777,13 +1946,14 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     const specialKey = `special_${token}`;
                     if (!ttsPregenPromises.has(specialKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for special character: "${token}" -> "${spokenForm}"`);
-                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal }));
+                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { abortSignal: signal }));
                     }
                 } else if (isTTSRequired(token)) {
-                    // Other tokens that need TTS
-                    if (!ttsPregenPromises.has(token)) {
+                    // Other tokens that need TTS - use token+category as key
+                    const pregenKey = category ? `${token}:${category}` : token;
+                    if (!ttsPregenPromises.has(pregenKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
-                        ttsPregenPromises.set(token, genTokenAudio(token, category, { speaker: getSpeakerForCategory(category), abortSignal: signal }));
+                        ttsPregenPromises.set(pregenKey, genTokenAudio(token, category, { abortSignal: signal }));
                     }
                 }
             }
@@ -1799,7 +1969,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
             }
             
             const { tokens, category, panning } = chunks[chunkIndex];
-            log(`[speakTokenList] Processing chunk ${chunkIndex + 1}/${chunks.length}: ${tokens.length} tokens [${tokens.join(', ')}]`);
+            log(`[speakTokenList] Processing chunk ${chunkIndex + 1}/${chunks.length}: ${tokens.length} tokens [${tokens.join(', ')}] with category "${category}"`);
             
             for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
                 const token = tokens[tokenIndex];
@@ -1841,7 +2011,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                         } else {
                             // Fallback to immediate generation
                             const spokenForm = getSpecialCharSpoken(token)!;
-                            const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal });
+                            const ttsFilePath = await genTokenAudio(spokenForm, 'special', { abortSignal: signal });
                             await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                         }
                     } else if (category && category !== 'default' && category !== 'other') {
@@ -1849,9 +2019,10 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                         log(`[speakTokenList] Using category-based TTS for: "${token}" (category: ${category})`);
                         const categoryVoice = getSpeakerForCategory(category);
                         
-                        // Check if we have a pre-generated TTS file
-                        if (ttsPregenPromises.has(token)) {
-                            log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (${category})`);
+                        // Check if we have a pre-generated TTS file - use same key format as pre-generation
+                        const pregenKey = `${token}:${category}`;
+                        if (ttsPregenPromises.has(pregenKey)) {
+                            log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (${category}) with key: "${pregenKey}"`);
                             
                             // Check abort signal before waiting for pre-generated TTS
                             if (signal?.aborted || aborted) {
@@ -1860,7 +2031,8 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                             }
                             
                             try {
-                                const ttsFilePath = await ttsPregenPromises.get(token)!;
+                                const ttsFilePath = await ttsPregenPromises.get(pregenKey)!;
+                                log(`[speakTokenList] Retrieved TTS file path: "${ttsFilePath}" for key: "${pregenKey}"`);
                                 
                                 // Check abort signal after TTS generation completes
                                 if (signal?.aborted || aborted) {
@@ -1896,7 +2068,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                             }
                             
                             try {
-                                const ttsFilePath = await genTokenAudio(token, category, { speaker: categoryVoice, abortSignal: signal });
+                                const ttsFilePath = await genTokenAudio(token, category, { abortSignal: signal });
                                 
                                 // Check abort signal after TTS generation (especially important for Korean TTS)
                                 if (signal?.aborted || aborted) {
@@ -1965,7 +2137,7 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                                 // Fallback to immediate generation
                                 try {
                                     const spokenForm = getSpecialCharSpoken(token)!;
-                                    const ttsFilePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special'), abortSignal: signal });
+                                    const ttsFilePath = await genTokenAudio(spokenForm, 'special', { abortSignal: signal });
                                     await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                                 } catch (error) {
                                     if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
@@ -1976,11 +2148,12 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                                 }
                             }
                         } else if (isTTSRequired(token)) {
-                            // Everything else that needs TTS
-                            if (ttsPregenPromises.has(token)) {
+                            // Everything else that needs TTS - use same key format as pre-generation
+                            const pregenKey = category ? `${token}:${category}` : token;
+                            if (ttsPregenPromises.has(pregenKey)) {
                                 log(`[speakTokenList] Using PRE-GENERATED TTS for: "${token}" (no category)`);
                                 try {
-                                    const ttsFilePath = await ttsPregenPromises.get(token)!;
+                                    const ttsFilePath = await ttsPregenPromises.get(pregenKey)!;
                                     await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                                 } catch (error) {
                                     if (signal?.aborted || aborted || (error instanceof Error && error.message.includes('aborted'))) {
@@ -2077,7 +2250,7 @@ async function speakTokenImmediate(
                 await audioPlayer.playPcmCached(alphaPath, opts?.panning);
             } else {
                 log(`[speakTokenImmediate] Generating TTS for alphabet: ${token}`);
-                const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
+                const filePath = await genTokenAudio(token, category);
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             }
         } else if (isNumber(token)) {
@@ -2089,20 +2262,20 @@ async function speakTokenImmediate(
                 await audioPlayer.playPcmCached(numPath, opts?.panning);
             } else {
                 log(`[speakTokenImmediate] Generating TTS for number: ${token}`);
-                const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
+                const filePath = await genTokenAudio(token, category);
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             }
         } else if (getSpecialCharSpoken(token)) {
             // Special characters
             log(`[speakTokenImmediate] Using TTS for special character: "${token}" -> "${getSpecialCharSpoken(token)}"`);
             const spokenForm = getSpecialCharSpoken(token)!;
-            const filePath = await genTokenAudio(spokenForm, 'special', { speaker: getSpeakerForCategory('special') });
+            const filePath = await genTokenAudio(spokenForm, 'special');
             await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
         } else if (isTTSRequired(token)) {
             // General TTS
             log(`[speakTokenImmediate] Processing TTS token: ${token}`);
             try {
-                const filePath = await genTokenAudio(token, category, { speaker: getSpeakerForCategory(category) });
+                const filePath = await genTokenAudio(token, category);
                 await audioPlayer.playTtsAsPcm(filePath, opts?.panning);
             } catch (ttsError) {
                 log(`[speakTokenImmediate] TTS failed for "${token}", trying fallback playback: ${ttsError}`);
@@ -2151,6 +2324,24 @@ export function playWave(
     // Check if this is a Korean TTS file (contains 'openai_ko' in filename)
     const isKoreanTTS = path.basename(filePath).includes('openai_ko');
     const volumeBoost = isKoreanTTS ? openaiTTSConfig.volumeBoost : undefined;
+    
+    // For earcons, use pitch-preserving processing if speed != 1.0 to maintain correct pitch
+    if (opts?.isEarcon) {
+        if (Math.abs(effectiveRate - 1.0) > 0.01 && config.preservePitch) {
+            log(`[playWave] EARCON - Using pitch-preserving processing for earcon: ${path.basename(filePath)}`);
+            // Use pitch-preserving processing for earcons when speed != 1.0
+            return applyAudioProcessing(filePath, effectiveRate, volumeBoost)
+                .then(processedFilePath => {
+                    return audioPlayer.playWavFile(processedFilePath, {
+                        ...opts,
+                        rate: 1.0 // Don't apply rate again - it's already in the processed file
+                    });
+                });
+        } else {
+            log(`[playWave] EARCON - Direct playback at normal speed: ${path.basename(filePath)}`);
+            return audioPlayer.playWavFile(filePath, { ...opts, rate: effectiveRate });
+        }
+    }
     
     // Use audio processing if pitch preservation is enabled, rate != 1.0, or volume boost is needed
     const needsProcessing = (config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) || 

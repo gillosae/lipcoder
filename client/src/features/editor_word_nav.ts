@@ -367,12 +367,22 @@ export function registerEditorWordNav(context: ExtensionContext) {
                 const category = categorizeWord(textToRead, editor.document.languageId);
                 await speakTokenList([{ tokens: [textToRead], category }]);
             } else {
-                // Fallback: read character at current position
+                // Fallback: read character at current position with slow speed
                 const char = lineText[newPosition.character] || '';
                 console.log(`[EditorWordNav] Right nav: fallback - reading char at pos ${newPosition.character}: "${char}"`);
                 if (char) {
                     await new Promise(resolve => setTimeout(resolve, 50));
-                    await speakTokenList([{ tokens: [char], category: undefined }]);
+                    // For alphabet characters, use alphabet PCM files at slow speed
+                    if (/^[a-zA-Z]$/.test(char)) {
+                        const alphaPath = path.join(config.alphabetPath(), `${char.toLowerCase()}.pcm`);
+                        console.log(`[EditorWordNav] Playing alphabet audio at slow speed: ${alphaPath}`);
+                        await playWave(alphaPath, { 
+                            immediate: true, 
+                            rate: 0.5  // Slow speed for cursor movement
+                        });
+                    } else {
+                        await speakTokenList([{ tokens: [char], category: undefined }]);
+                    }
                 } else {
                     console.log(`[EditorWordNav] Right nav: no character to read`);
                 }
@@ -469,11 +479,21 @@ export function registerEditorWordNav(context: ExtensionContext) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                     await speakTokenList([{ tokens: [word], category: undefined }]);
                 } else {
-                    // Read character at current position
+                    // Read character at current position with slow speed
                     const char = lineText[newPosition.character] || '';
                     if (char) {
                         await new Promise(resolve => setTimeout(resolve, 50));
-                        await speakTokenList([{ tokens: [char], category: undefined }]);
+                        // For alphabet characters, use alphabet PCM files at slow speed
+                        if (/^[a-zA-Z]$/.test(char)) {
+                            const alphaPath = path.join(config.alphabetPath(), `${char.toLowerCase()}.pcm`);
+                            console.log(`[EditorWordNav] Playing alphabet audio at slow speed: ${alphaPath}`);
+                            await playWave(alphaPath, { 
+                                immediate: true, 
+                                rate: 0.5  // Slow speed for cursor movement
+                            });
+                        } else {
+                            await speakTokenList([{ tokens: [char], category: undefined }]);
+                        }
                     }
                 }
             }

@@ -34,6 +34,7 @@ export async function genTokenAudio(
 ): Promise<string> {
     const startTime = Date.now();
     log(`[genTokenAudio] START token="${token}" category="${category}" backend="${currentBackend}"`);
+    log(`[genTokenAudio] Call stack: ${new Error().stack?.split('\n')[2]?.trim()}`);
 
     // 0) Pre-generated keyword audio? (same for both backends)
     if (category && category.startsWith('keyword_')) {
@@ -49,9 +50,11 @@ export async function genTokenAudio(
 
     // 0.1) Pre-generated alphabet audio for single letters
     // Use PCM files for single letters in variable names, special chars, etc.
+    // Also use for navigation (no category) and other general cases
     // Skip for keywords and types which might need different pronunciation
     const useAlphabetPCM = token.length === 1 && isAlphabet(token) && 
-        (category === 'special' || category === 'variable' || category === 'literal');
+        (category === 'special' || category === 'variable' || category === 'literal' || 
+         category === undefined || category === null || category === '');
     
     if (useAlphabetPCM) {
         const filename = token.toLowerCase();
@@ -64,7 +67,7 @@ export async function genTokenAudio(
             log(`[genTokenAudio] Alphabet PCM not found for "${token}" (${category}), falling back to TTS`);
         }
     } else if (token.length === 1 && isAlphabet(token)) {
-        log(`[genTokenAudio] Single letter "${token}" with category "${category}" - using TTS for context-specific pronunciation`);
+        log(`[genTokenAudio] Single letter "${token}" with category "${category}" - not using alphabet PCM (useAlphabetPCM=${useAlphabetPCM})`);
     }
 
     // 0.2) Pre-generated number audio for single digits
@@ -105,13 +108,15 @@ export async function genTokenAudio(
             sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
         }
         
-        const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
-        log(`[genTokenAudio] cache check for "${token}" (${detectedLang}) → ${cachedFile}`);
+        // Ensure category is properly included in cache key to prevent voice conflicts
+        const safeCategory = category || 'text';
+        const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${safeCategory}_${sanitized}.wav`);
+        log(`[genTokenAudio] cache check for "${token}" (${detectedLang}) category="${safeCategory}" → ${cachedFile}`);
         if (fs.existsSync(cachedFile)) {
-            log(`[genTokenAudio] cache HIT for "${token}", returning ${cachedFile}`);
+            log(`[genTokenAudio] cache HIT for "${token}" with category "${safeCategory}", returning ${cachedFile}`);
             return cachedFile;
         }
-        log(`[genTokenAudio] cache MISS for "${token}", generating new TTS`);
+        log(`[genTokenAudio] cache MISS for "${token}" with category "${safeCategory}", generating new TTS`);
     } else if (isSpecialChar) {
         log(`[genTokenAudio] *** SPECIAL CHARACTER "${token}" - SKIPPING ALL CACHE CHECKS, USING DIRECT TTS INFERENCE ***`);
     }
@@ -209,7 +214,8 @@ export async function genTokenAudio(
                 sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
             }
             
-            const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${category || 'text'}_${sanitized}.wav`);
+            const safeCategory = category || 'text';
+            const cachedFile = path.join(cacheDir, `${effectiveBackend}_${detectedLang}_${safeCategory}_${sanitized}.wav`);
             fs.writeFileSync(cachedFile, wavBuffer);
             
             // Performance monitoring for Korean TTS
@@ -218,7 +224,7 @@ export async function genTokenAudio(
                 log(`[genTokenAudio] Korean TTS completed in ${processingTime}ms for "${token}"`);
             }
             
-            log(`[genTokenAudio] cached token saved: ${cachedFile} for "${token}"`);
+            log(`[genTokenAudio] cached token saved with category "${safeCategory}": ${cachedFile} for "${token}"`);
             return cachedFile;
         } else {
             // Single character fallback - also WAV format
@@ -250,6 +256,7 @@ async function generateSileroTTS(
         opts?.speaker
         ?? (baseCategory && categoryVoiceMap[baseCategory])
         ?? sileroConfig.defaultSpeaker!;
+    log(`[generateSileroTTS] Voice selection for token="${token}" category="${category}" baseCategory="${baseCategory}" → speaker="${speakerName}"`);
     
     // Send text to long-running Silero server
     const ttsPort = serverManager.getServerPort('tts');
@@ -356,6 +363,7 @@ async function generateOpenAITTS(
     // Get OpenAI settings for this category
     const categorySettings = (baseCategory && openaiCategoryVoiceMap[baseCategory]) || {};
     const openaiSettings = { ...openaiTTSConfig, ...categorySettings };
+    log(`[generateOpenAITTS] Voice selection for token="${token}" category="${category}" baseCategory="${baseCategory}" → voice="${openaiSettings.voice}" speed="${openaiSettings.speed}"`);
     
     // Allow override via opts, but validate it's a valid OpenAI voice
     if (opts?.speaker) {
