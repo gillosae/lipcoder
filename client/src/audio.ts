@@ -2,8 +2,33 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as wav from 'wav';
-import Speaker from 'speaker';
+// import Speaker from 'speaker'; // Dynamically loaded to avoid extension host issues
 import { spawn, ChildProcess } from 'child_process';
+
+// Dynamic Speaker loading to avoid extension host issues
+let Speaker: any = null;
+try {
+    Speaker = require('speaker');
+} catch (err) {
+    logError(`[Audio] Failed to load speaker module: ${err}`);
+    // Create a dummy Speaker class that does nothing
+    Speaker = class DummySpeaker {
+        constructor(options: any) {
+            logWarning('[Audio] Using dummy speaker - no audio output');
+        }
+        on(event: string, callback: Function) {
+            if (event === 'close') {
+                setTimeout(callback, 10); // Simulate immediate close
+            }
+        }
+        write(data: any) {
+            // Do nothing
+        }
+        end() {
+            // Do nothing
+        }
+    };
+}
 import { Readable } from 'stream';
 import { log, logWarning, logInfo, logError, logSuccess } from './utils';
 import { config, sileroConfig, openaiTTSConfig } from './config';
@@ -747,7 +772,7 @@ class AudioUtils {
 // ===============================
 
 class AudioPlayer {
-    private currentSpeaker: Speaker | null = null;
+    private currentSpeaker: any | null = null;
     private currentReader: wav.Reader | null = null;
     private currentFileStream: fs.ReadStream | null = null;
     private currentFallback: ChildProcess | null = null;
@@ -1057,7 +1082,7 @@ class AudioPlayer {
                     log(`[playWavFileDirectBuffer] FAST playback completed for: ${path.basename(filePath)}`);
                     resolve();
                 });
-                speaker.on('error', (err) => {
+                speaker.on('error', (err: any) => {
                     log(`[playWavFileDirectBuffer] Speaker error: ${err}`);
                     reject(err);
                 });
@@ -1074,7 +1099,7 @@ class AudioPlayer {
         });
     }
 
-    private handlePannedPlayback(reader: wav.Reader, speaker: Speaker, format: any, panning: number): void {
+    private handlePannedPlayback(reader: wav.Reader, speaker: any, format: any, panning: number): void {
         log(`[handlePannedPlayback] Applying panning ${panning.toFixed(2)} to WAV audio`);
         const pcmChunks: Buffer[] = [];
         let dataReceived = false;
@@ -1242,7 +1267,7 @@ class AudioPlayer {
                         // log(`[playWavFileInternal] Speaker closed for: ${path.basename(filePath)}`);
                         resolve();
                     });
-                    speaker.on('error', (err) => {
+                    speaker.on('error', (err: any) => {
                         // log(`[playWavFileInternal] Speaker error for ${path.basename(filePath)}: ${err}`);
                         reject(err);
                     });
@@ -1289,7 +1314,7 @@ class AudioPlayer {
                                 log(`[playWavFileInternal] Stereo speaker closed for: ${path.basename(filePath)}`);
                                 resolve();
                             });
-                            stereoSpeaker.on('error', (err) => {
+                                                         stereoSpeaker.on('error', (err: any) => {
                                 log(`[playWavFileInternal] Stereo speaker error: ${err}`);
                                 reject(err);
                             });
@@ -1546,7 +1571,7 @@ class AudioPlayer {
                         }, earlyResolveDelay);
                     }
                     
-                    speaker.on('error', (err) => {
+                    speaker.on('error', (err: any) => {
                         if (!resolved) {
                             resolved = true;
                             reject(err);
@@ -1632,7 +1657,7 @@ class AudioPlayer {
                     }, earlyResolveDelay);
                 }
                 
-                speaker.on('error', (err) => {
+                speaker.on('error', (err: any) => {
                     if (!resolved) {
                         resolved = true;
                         reject(err);

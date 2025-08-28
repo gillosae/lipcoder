@@ -61,6 +61,7 @@ import { registerImageDescription } from './features/image_description';
 import { registerExactCommandPalette, registerShowExactCommandsHelp } from './features/exact_command_palette';
 import { registerNaturalLanguageCommand } from './features/natural_language_command';
 import { registerVenvCommands, setupVirtualEnvironment, getVenvStatus } from './features/venv_installer';
+import { FirstTimeSetup, registerFirstTimeSetupCommands } from './features/first_time_setup';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
@@ -241,6 +242,18 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
+	
+	// 1.1) First Time Setup - 새로운 사용자를 위한 자동 환경 구축 ─────────────────────────
+	const firstTimeSetup = new FirstTimeSetup(context);
+	
+	// 첫 실행 시 자동 설정 확인 (비동기로 실행하여 Extension 활성화 속도 유지)
+	setTimeout(async () => {
+		try {
+			await firstTimeSetup.checkAndRunFirstTimeSetup();
+		} catch (error) {
+			logError(`[Extension] 첫 설정 확인 실패: ${error}`);
+		}
+	}, 1000); // 1초 후 실행하여 Extension 활성화 완료 후 진행
 	
 	// 1.2) Load configuration from VS Code settings ─────────────────────────────────────
 	const { loadConfigFromSettings } = require('./config');
@@ -550,6 +563,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Register Virtual Environment Management Commands
 	registerVenvCommands(context);
 	log('✅ registerVenvCommands completed');
+	
+	// Register First Time Setup Commands
+	const firstTimeSetupCommands = registerFirstTimeSetupCommands(context);
+	firstTimeSetupCommands.forEach(disposable => context.subscriptions.push(disposable));
+	log('✅ registerFirstTimeSetupCommands completed');
 
 	// Add command to restart language server
 	try {

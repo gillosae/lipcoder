@@ -6,8 +6,19 @@ import * as path from 'path';
 import { log, logError, logSuccess, logWarning } from '../utils';
 
 /**
- * 시스템 의존성 체크 및 자동 설치 기능
- * Node.js, Python, Homebrew 등의 필수 도구들을 자동으로 설치합니다.
+ * 🔧 DependencyInstaller - 개별 도구 관리 및 문제 해결 시스템
+ * 
+ * 역할:
+ * - 개별 의존성 체크, 설치, 문제 진단
+ * - 고급 사용자를 위한 세밀한 제어
+ * - Native 모듈 개별 빌드 및 관리
+ * - 문제 해결 및 복구 기능
+ * 
+ * vs first_time_setup.ts:
+ * - dependency_installer: 개별 도구 관리, 문제 해결, 고급 사용자용
+ * - first_time_setup: 신규 사용자 자동 설정, 통합 환경 구축
+ * 
+ * Node.js, Python, Homebrew 등의 필수 도구들을 개별적으로 관리합니다.
  */
 
 interface DependencyInfo {

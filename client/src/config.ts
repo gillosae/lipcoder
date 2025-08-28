@@ -1,11 +1,19 @@
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 
-let extRoot: string;
+let extRoot: string | undefined;
 
 // Initialize config with the extension's root path.
 export function initConfig(context: ExtensionContext) {
     extRoot = context.extensionPath;
+}
+
+// Helper function to safely get extRoot
+function getExtRoot(): string {
+    if (!extRoot) {
+        throw new Error('Extension root not initialized. Call initConfig() first.');
+    }
+    return extRoot;
 }
 
 // TTS Backends & Config ─────────────────────────────────────────────────────
@@ -558,38 +566,38 @@ export const config = {
     audioMinimapSpeedThreshold: 3.5, // lines per second threshold to trigger minimap (increased to reduce false triggers)
     audioMinimapTimeout: 150,    // minimum milliseconds between line changes to calculate speed (reduced for more responsive detection)
 
-    audioPath: () => path.join(extRoot, 'client', 'audio'),
+    audioPath: () => path.join(getExtRoot(), 'client', 'audio'),
     alphabetPath: () => path.join(
-        extRoot,
+        getExtRoot(),
         'client',
         'audio',
         `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : 
                    currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
-    earconPath: () => path.join(extRoot, 'client', 'audio', 'earcon'),
+    earconPath: () => path.join(getExtRoot(), 'client', 'audio', 'earcon'),
     numberPath: () => path.join(
-        extRoot,
+        getExtRoot(),
         'client',
         'audio',
         `number${currentBackend === TTSBackend.Espeak ? '_espeak' : 
                  currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     pythonKeywordsPath: () => path.join(
-        extRoot,
+        getExtRoot(),
         'client',
         'audio',
         `python${currentBackend === TTSBackend.Espeak ? '_espeak' : 
                  currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     typescriptKeywordsPath: () => path.join(
-        extRoot,
+        getExtRoot(),
         'client',
         'audio',
         `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : 
                      currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
-    pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
-    scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
+    pythonPath: () => path.join(getExtRoot(), 'client', 'src', 'python', 'bin', 'python'),
+    scriptPath: () => path.join(getExtRoot(), 'client', 'src', 'python', 'silero_tts_infer.py'),
     specialPath: () => path.join(
         config.audioPath(),
         `special${currentBackend === TTSBackend.Espeak ? '_espeak' : 

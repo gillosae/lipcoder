@@ -706,6 +706,21 @@
         "command": "lipcoder.checkNativeModules",
         "title": "LipCoder: Check Native Modules (node-pty, speaker)",
         "category": "Setup"
+      },
+      {
+        "command": "lipcoder.runFirstTimeSetup",
+        "title": "LipCoder: 🚀 First Time Setup (신규 사용자 자동 설정)",
+        "category": "Auto Setup"
+      },
+      {
+        "command": "lipcoder.resetSetup",
+        "title": "LipCoder: ⚠️ Reset First Time Setup",
+        "category": "Auto Setup"
+      },
+      {
+        "command": "lipcoder.checkSetupStatus",
+        "title": "LipCoder: ✅ Check Auto Setup Status",
+        "category": "Auto Setup"
       }
     ],
     "menus": {
@@ -1082,9 +1097,7 @@
     "diff": "8.0.2",
     "node-fetch": "^2.7.0",
     "node-microphone": "0.1.6",
-    "node-pty": "^1.0.0",
     "openai": "5.16.0",
-    "speaker": "0.5.5",
     "ts-node": "^10.9.2",
     "undici": "^7.11.0",
     "vscode-languageclient": "^9.0.0",
@@ -1092,5 +1105,10 @@
     "vscode-languageserver-textdocument": "1.0.12",
     "wav": "1.0.2",
     "word-list": "^4.1.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0",
+    "node-pty-prebuilt-multiarch": "0.10.1-pre.10",
+    "speaker": "0.5.5"
   }
 }

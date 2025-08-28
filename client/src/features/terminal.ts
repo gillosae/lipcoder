@@ -2155,10 +2155,16 @@ export function registerTerminalReader(context: ExtensionContext) {
         vscode.commands.registerCommand('lipcoder.openTerminal', () => {
             let pty: any;
             try {
+                // Try to load node-pty with better error handling
                 pty = require('node-pty');
-                createPtyTerminal(pty);
+                if (pty && typeof pty.spawn === 'function') {
+                    createPtyTerminal(pty);
+                } else {
+                    throw new Error('node-pty loaded but spawn function not available');
+                }
             } catch (err) {
                 logError(`[Terminal] Failed to load node-pty: ${err}`);
+                logWarning(`[Terminal] Using fallback terminal mode`);
                 createFallbackTerminal();
             }
         }),
