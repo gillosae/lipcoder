@@ -255,7 +255,7 @@ async function extractAndOpenFileFromInstruction(instruction: string): Promise<v
                 log(`[vibe_coding] Found file: ${foundFile}`);
                 const document = await vscode.workspace.openTextDocument(foundFile);
                 const editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.Active);
-                await speakGPT(`Opened ${path.basename(foundFile)} for editing`);
+                await speakGPT(`Opened ${path.basename(foundFile)} for editing`, lineAbortController.signal);
                 return editor;
             }
         } catch (error) {
@@ -351,7 +351,7 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
     if (!editor) {
         log('[vibe_coding] No active editor found after retries');
         logVibeCoding('vibe_coding_error', 'No active editor found');
-        await speakGPT('No active editor found. Please open a file and try again.');
+        await speakGPT('No active editor found. Please open a file and try again.', lineAbortController.signal);
         vscode.window.setStatusBarMessage('No active editor - please open a file and try again', 4000);
         return;
     }
@@ -386,7 +386,7 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
     }
 
     if (!instruction) {
-        await speakGPT('No instruction provided');
+        await speakGPT('No instruction provided', lineAbortController.signal);
         return;
     }
 
@@ -416,24 +416,40 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
         const changeId = generateChangeId();
         currentChangeId = changeId;
         
-        // Store pending change
-        pendingChanges.set(changeId, {
-            id: changeId,
-            result,
-            timestamp: Date.now(),
-            instruction
-        });
+        // Check if this is an analysis request
+        const isAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
         
-        logVibeCoding('vibe_coding_changes_generated', instruction, editor.document.fileName, {
-            changeId,
-            changesCount: result.changes.length,
-            totalAdded: result.totalAdded,
-            totalRemoved: result.totalRemoved,
-            changeType: result.changeType
-        });
-        
-        // Auto-apply the change without showing any diff
-        await showChangesAndAutoAccept(changeId, result, options);
+        if (isAnalysisRequest) {
+            // For analysis requests, just show the explanation without applying changes
+            log(`[vibe_coding] Showing code analysis result`);
+            
+            // Show the analysis result as a notification
+            vscode.window.showInformationMessage(result.changeDescription, { modal: false });
+            
+            // Speak the analysis using GPT TTS as per user preferences [[memory:6411078]]
+            await speakGPT(result.changeDescription, lineAbortController.signal);
+            
+            log(`[vibe_coding] Analysis completed`);
+        } else {
+            // Store pending change for code modifications
+            pendingChanges.set(changeId, {
+                id: changeId,
+                result,
+                timestamp: Date.now(),
+                instruction
+            });
+            
+            logVibeCoding('vibe_coding_changes_generated', instruction, editor.document.fileName, {
+                changeId,
+                changesCount: result.changes?.length || 0,
+                totalAdded: result.totalAdded,
+                totalRemoved: result.totalRemoved,
+                changeType: result.changeType
+            });
+            
+            // Auto-apply the change without showing any diff
+            await showChangesAndAutoAccept(changeId, result, options);
+        }
         
         log(`[vibe_coding] Diff preview completed`);
         
@@ -454,7 +470,7 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
             error: String(error)
         });
         
-        await speakGPT('Error processing vibe coding request');
+        await speakGPT('Error processing vibe coding request', lineAbortController.signal);
         vscode.window.showErrorMessage(`Vibe Coding Error: ${error}`);
     } finally {
         try { await stopThinkingAudio(); } catch {}
@@ -464,7 +480,7 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
 // Test function for debugging
 export async function testVibeCoding() {
     log('[vibe_coding] ===== TEST VIBE CODING =====');
-    await speakGPT('Testing vibe coding TTS with GPT voice');
+    await speakGPT('Testing vibe coding TTS with GPT voice', lineAbortController.signal);
     vscode.window.showInformationMessage('Vibe Coding Test - Check console for logs and listen for GPT voice');
     
     // Test with a sample instruction
@@ -485,7 +501,7 @@ export async function testVibeCodingTTS() {
     for (const message of testMessages) {
         log(`[vibe_coding] Testing TTS for: "${message}"`);
         try {
-            await speakGPT(message);
+            await speakGPT(message, lineAbortController.signal);
             log(`[vibe_coding] TTS test completed for: "${message}"`);
         } catch (error) {
             log(`[vibe_coding] TTS test failed for: "${message}", error: ${error}`);
@@ -579,7 +595,7 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
     for (const pattern of applyPatterns) {
         if (text === pattern || text.includes(pattern)) {
             log(`[vibe_coding] Voice command matched apply pattern: "${pattern}"`);
-            await speakGPT('Applying changes via voice command');
+            await speakGPT('Applying changes via voice command', lineAbortController.signal);
             
             if (currentChangeId) {
                 await applyPendingChange(currentChangeId);
@@ -596,7 +612,7 @@ export async function handleVibeCodingVoiceCommand(voiceText: string): Promise<b
     for (const pattern of rejectPatterns) {
         if (text === pattern || text.includes(pattern)) {
             log(`[vibe_coding] Voice command matched reject pattern: "${pattern}"`);
-            await speakGPT('Rejecting changes via voice command');
+            await speakGPT('Rejecting changes via voice command', lineAbortController.signal);
             
             if (currentChangeId) {
                 await rejectPendingChange(currentChangeId);
@@ -646,7 +662,7 @@ export function registerVibeCodingCommands(context: vscode.ExtensionContext) {
                 const changesSummary = pending ? `+${pending.result.totalAdded || 0} -${pending.result.totalRemoved || 0}` : '';
                 // Use status bar message instead of popup for non-intrusive feedback
                 vscode.window.setStatusBarMessage(`✅ Changes applied ${changesSummary}`, 5000);
-                await speakGPT(`Changes applied. ${pending?.result.summary || ''}`);
+                await speakGPT(`Changes applied. ${pending?.result.summary || ''}`, lineAbortController.signal);
             } else {
                 // Use status bar message instead of popup
                 vscode.window.setStatusBarMessage('No pending vibe coding change to apply', 3000);
@@ -660,7 +676,7 @@ export function registerVibeCodingCommands(context: vscode.ExtensionContext) {
                 disposeVibeControls();
                 // Use status bar message instead of popup for non-intrusive feedback
                 vscode.window.setStatusBarMessage('❌ Changes discarded', 5000);
-                await speakGPT('Changes discarded');
+                await speakGPT('Changes discarded', lineAbortController.signal);
             } else {
                 // Use status bar message instead of popup
                 vscode.window.setStatusBarMessage('No pending vibe coding change to discard', 3000);
@@ -759,10 +775,28 @@ async function processVibeCodingRequest(editor: vscode.TextEditor, instruction: 
     const document = editor.document;
     const originalText = document.getText();
     
-    // Use smart code generation that handles both full and partial code outputs
+    // Check if this is an analysis request
+    const isAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
+    
+    // Use smart code generation that handles both analysis and modification
     const modifiedCode = await generateSmartCodeModification(originalText, instruction, context);
     
-    // Calculate differences using smart analysis
+    // For analysis requests, return the explanation without calculating code changes
+    if (isAnalysisRequest) {
+        return {
+            changes: [], // No code changes for analysis
+            summary: 'Code Analysis', // Simple summary for analysis
+            totalAdded: 0,
+            totalRemoved: 0,
+            modifiedText: modifiedCode, // This contains the analysis explanation
+            originalText: originalText,
+            changeDescription: modifiedCode, // Show the analysis as the description
+            affectedFunctions: [],
+            changeType: 'addition' // Use 'addition' type for analysis to avoid applying changes
+        };
+    }
+    
+    // Calculate differences using smart analysis for code modifications
     const result = calculateSmartCodeChanges(originalText, modifiedCode, instruction, context);
     
     return result;
@@ -841,13 +875,40 @@ async function generateSmartCodeModification(originalText: string, instruction: 
         const { contextText, isPartialContext } = createSmartContext(originalText, context, instruction);
         
         // Analyze the instruction to determine the best approach (English and Korean)
+        const isAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
         const isTestRequest = /test|unit test|create test|add test|write test|테스트|단위 테스트|테스트 함수|테스트를 만들어|테스트 코드/i.test(instruction);
         const isFunctionRequest = /function|method|def |create function|add function|함수|메서드|함수를 만들어|함수 생성|새 함수/i.test(instruction);
         const isClassRequest = /class|create class|add class|클래스|클래스를 만들어|클래스 생성|새 클래스/i.test(instruction);
         const isFullRewrite = /rewrite|refactor|restructure|reorganize|리팩토링|리팩터링|재구성|다시 작성|코드 개선/i.test(instruction);
         
-        // Enhanced system prompt for better code generation with Korean language support
-        const systemPrompt = `You are an expert coding assistant that generates high-quality code modifications. You understand instructions in both English and Korean.
+        // Enhanced system prompt that handles both code analysis and modification
+        const systemPrompt = isAnalysisRequest ? 
+            `You are an expert code analyst that provides clear explanations of code functionality. You understand both English and Korean instructions.
+
+ANALYSIS MODE: Provide a detailed explanation of what the code does, not code modifications.
+
+CONTEXT ANALYSIS:
+- Current cursor: Line ${context.cursorPosition.line + 1}
+- In function: ${context.focusedFunction ? 'Yes' : 'No'}
+- Selected code: ${context.selectedCode ? 'Yes' : 'No'}
+- File size: ${context.isLargeFile ? 'Large' : 'Normal'}
+- Context type: ${isPartialContext ? 'Partial (large file)' : 'Complete'}
+
+LANGUAGE SUPPORT:
+- You understand Korean questions like "이 코드는 어떤 코드야?" (what is this code?)
+- Korean coding terms: 함수 (function), 변수 (variable), 클래스 (class), 기능 (feature), 목적 (purpose)
+- Respond to Korean questions with detailed Korean explanations
+
+ANALYSIS RULES:
+1. Explain what the code does in clear, understandable language
+2. Identify the main purpose and functionality
+3. Describe key components, functions, or classes
+4. Explain the overall structure and flow
+5. Point out important patterns or techniques used
+6. Use the same language as the question (Korean for Korean questions)
+7. Be comprehensive but concise
+8. Focus on functionality, not implementation details` :
+            `You are an expert coding assistant that generates high-quality code modifications. You understand instructions in both English and Korean.
 
 ${isPartialContext ? 
 'IMPORTANT: You are working with a PARTIAL view of a large file. Return only the modified section that needs to change, maintaining proper context and structure.' :
@@ -873,8 +934,15 @@ ${isPartialContext ?
 7. Handle both English and Korean instructions with equal proficiency
 8. IMPORTANT: Do not apply any code formatting, linting, or style changes unless explicitly requested`;
 
-        // Create appropriate prompt based on context type
-        const prompt = isPartialContext ? 
+        // Create appropriate prompt based on request type and context
+        const prompt = isAnalysisRequest ?
+            `Code to Analyze:
+${contextText}
+
+Question: ${instruction}
+
+Please analyze this code and provide a detailed explanation of what it does, its purpose, and key functionality. Answer in the same language as the question.` :
+            isPartialContext ? 
             `Code Context:
 ${contextText}
 
@@ -915,7 +983,14 @@ Make sure to include all existing code plus the requested changes.`;
             // Play thinking finished sound and stop thinking audio
             await playThinkingFinished();
             
-            // Clean up the response
+            // Handle analysis requests differently from modification requests
+            if (isAnalysisRequest) {
+                log(`[vibe_coding] Analysis request completed`);
+                // For analysis requests, return the explanation as-is (no code modification)
+                return modifiedCode.trim();
+            }
+            
+            // Clean up the response for code modifications
             const cleanedCode = stripCodeFences(modifiedCode);
             
             // For partial context, we need to merge the changes back into the original file
@@ -1673,15 +1748,15 @@ function registerChangeManagementCommands(context: vscode.ExtensionContext): voi
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.applyCurrentChange', async () => {
             if (currentChangeId) {
-                await speakGPT('Applying changes');
+                await speakGPT('Applying changes', lineAbortController.signal);
                 await applyPendingChange(currentChangeId);
                 clearInlineDiffDecorations();
             } else if (currentDiffChangeId) {
-                await speakGPT('Applying changes');
+                await speakGPT('Applying changes', lineAbortController.signal);
                 await applyPendingChange(currentDiffChangeId);
                 clearInlineDiffDecorations();
     } else {
-                await speakGPT('No pending changes to apply');
+                await speakGPT('No pending changes to apply', lineAbortController.signal);
                 // Use status bar message instead of popup
                 vscode.window.setStatusBarMessage('No pending changes to apply', 3000);
             }
@@ -1692,15 +1767,15 @@ function registerChangeManagementCommands(context: vscode.ExtensionContext): voi
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.rejectCurrentChange', async () => {
             if (currentChangeId) {
-                await speakGPT('Rejecting changes');
+                await speakGPT('Rejecting changes', lineAbortController.signal);
                 await rejectPendingChange(currentChangeId);
                 clearInlineDiffDecorations();
             } else if (currentDiffChangeId) {
-                await speakGPT('Rejecting changes');
+                await speakGPT('Rejecting changes', lineAbortController.signal);
                 await rejectPendingChange(currentDiffChangeId);
                 clearInlineDiffDecorations();
             } else {
-                await speakGPT('No pending changes to reject');
+                await speakGPT('No pending changes to reject', lineAbortController.signal);
                 // Use status bar message instead of popup
                 vscode.window.setStatusBarMessage('No pending changes to reject', 3000);
             }
@@ -2399,7 +2474,7 @@ async function rejectPendingChange(changeId: string) {
     pendingChanges.delete(changeId);
     currentChangeId = null;
     
-    await speakGPT('Changes rejected');
+    await speakGPT('Changes rejected', lineAbortController.signal);
     // Use status bar message instead of popup
     vscode.window.setStatusBarMessage('Changes rejected', 5000);
     

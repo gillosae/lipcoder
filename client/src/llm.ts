@@ -128,13 +128,20 @@ export async function callLLMForCompletion(
     systemPrompt: string, 
     userPrompt: string, 
     maxTokens: number = 64, 
-    temperature: number = 0.2
+    temperature: number = 0.2,
+    options?: { abortSignal?: AbortSignal }
 ): Promise<string> {
     // CRITICAL: Block ALL LLM completion requests during line reading
     const { getLineTokenReadingActive } = await import('./features/stop_reading.js');
     if (getLineTokenReadingActive()) {
         log(`[LLM] BLOCKING completion request during line token reading`);
         return ''; // Return empty string to prevent any suggestions
+    }
+    
+    // Check if aborted before starting
+    if (options?.abortSignal?.aborted) {
+        log(`[LLM] Request aborted before starting`);
+        throw new Error('LLM request was aborted');
     }
     
     try {
@@ -149,6 +156,8 @@ export async function callLLMForCompletion(
                 messages: [
                     { role: "user", content: `${systemPrompt}\n\n${userPrompt}` }
                 ]
+            }, {
+                signal: options?.abortSignal
             });
             
             const content = response.content[0];
@@ -172,6 +181,8 @@ export async function callLLMForCompletion(
                 ],
                 max_tokens: maxTokens,
                 temperature: temperature
+            }, {
+                signal: options?.abortSignal
             });
             
             const result = response.choices[0]?.message?.content?.trim() || '';

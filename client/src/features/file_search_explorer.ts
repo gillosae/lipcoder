@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
 import { speakTokenList, speakGPT, TokenChunk } from '../audio';
-import { stopReading } from './stop_reading';
+import { stopReading, lineAbortController } from './stop_reading';
 import { log, logError } from '../utils';
 
 interface FileSearchResult {
@@ -146,9 +146,21 @@ async function searchFiles(rootPath: string, pattern: string): Promise<FileSearc
     
     async function searchDirectory(dirPath: string) {
         try {
+            // Check if aborted
+            if (lineAbortController.signal.aborted) {
+                log('[FileSearch] Search aborted');
+                return;
+            }
+            
             const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
             
             for (const item of items) {
+                // Check if aborted during iteration
+                if (lineAbortController.signal.aborted) {
+                    log('[FileSearch] Search aborted during iteration');
+                    return;
+                }
+                
                 if (item.name.startsWith('.')) continue; // Skip hidden files
                 
                 const itemPath = path.join(dirPath, item.name);

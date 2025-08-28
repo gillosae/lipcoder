@@ -60,6 +60,7 @@ import { disposeCommandsWithPrefix } from './command_utils';
 import { registerImageDescription } from './features/image_description';
 import { registerExactCommandPalette, registerShowExactCommandsHelp } from './features/exact_command_palette';
 import { registerNaturalLanguageCommand } from './features/natural_language_command';
+import { registerDependencyCommands, checkAndInstallAllDependencies } from './features/dependency_installer';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
@@ -180,9 +181,32 @@ export async function activate(context: vscode.ExtensionContext) {
         logWarning(`[Extension] Failed to clean up existing subscriptions: ${error}`);
     }
     
-	// 0) Dependency installation in parallel ──────────────────────────────────────────────
+	// 0) Enhanced dependency installation ──────────────────────────────────────────────
 	log('Extension Host running on Electron v' + process.versions.electron);
+	
+	// 기존 간단한 의존성 체크 (백그라운드)
 	installDependencies().catch(err => console.error('installDependencies failed:', err));
+	
+	// 새로운 포괄적인 의존성 체크 (사용자 상호작용 포함)
+	// 첫 번째 활성화에서만 실행하도록 설정
+	const hasRunDependencyCheck = context.globalState.get('lipcoderDependencyCheckCompleted', false);
+	if (!hasRunDependencyCheck) {
+		log('🔧 첫 번째 실행: 포괄적인 의존성 체크를 시작합니다...');
+		
+		// 비동기로 실행하여 확장 활성화를 차단하지 않음
+		setTimeout(async () => {
+			try {
+				await checkAndInstallAllDependencies();
+				// 체크 완료 표시
+				context.globalState.update('lipcoderDependencyCheckCompleted', true);
+				log('✅ 의존성 체크가 완료되었습니다');
+			} catch (error) {
+				logError(`❌ 의존성 체크 중 오류 발생: ${error}`);
+			}
+		}, 2000); // 2초 후 실행 (확장 로딩 완료 후)
+	} else {
+		log('ℹ️ 의존성 체크를 이미 완료했습니다. 수동으로 다시 실행하려면 "LipCoder: Check Dependencies" 명령어를 사용하세요.');
+	}
 
 	// Start memory monitoring
 	startMemoryMonitoring();
@@ -494,6 +518,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Register natural language command functionality
 	registerNaturalLanguageCommand(context);
 	log('✅ registerNaturalLanguageCommand completed');
+	
+	// Register Dependency Management Commands
+	registerDependencyCommands(context);
+	log('✅ registerDependencyCommands completed');
 
 	// Add command to restart language server
 	try {

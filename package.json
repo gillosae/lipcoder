@@ -685,6 +685,26 @@
         "command": "lipcoder.quickNaturalLanguageCommand",
         "title": "LipCoder: Quick Natural Language Commands",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.checkDependencies",
+        "title": "LipCoder: Check Dependencies",
+        "category": "Setup"
+      },
+      {
+        "command": "lipcoder.showDependencyStatus",
+        "title": "LipCoder: Show Dependency Status",
+        "category": "Setup"
+      },
+      {
+        "command": "lipcoder.checkNodeJS",
+        "title": "LipCoder: Check Node.js Installation",
+        "category": "Setup"
+      },
+      {
+        "command": "lipcoder.checkNativeModules",
+        "title": "LipCoder: Check Native Modules (node-pty, speaker)",
+        "category": "Setup"
       }
     ],
     "menus": {

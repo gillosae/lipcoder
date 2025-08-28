@@ -29,7 +29,34 @@ git config --list
 
 ## 🚀 새로운 맥에서의 설치 과정
 
-### 1. 기본 개발 환경 설치
+### 1. 자동 설치 기능 사용 (권장) ⭐
+
+LipCoder v2024에서는 **자동 의존성 설치 기능**이 추가되었습니다!
+
+```bash
+# 1. 프로젝트 클론
+git clone <repository-url>
+cd lipcoder
+
+# 2. VS Code에서 프로젝트 열기
+code .
+
+# 3. LipCoder 확장 활성화
+# → 자동으로 의존성 체크 및 설치 UI가 나타납니다!
+```
+
+**자동 설치 기능:**
+- ✅ Node.js & npm 자동 설치
+- ✅ Python 3 & pip 자동 설치  
+- ✅ Homebrew 자동 설치
+- ✅ Python 패키지 (Flask, uvicorn, ASGI, PyTorch 등) 자동 설치
+- ✅ 오디오 도구 (FFmpeg, SoX) 자동 설치
+- ✅ **네이티브 모듈 (node-pty, speaker) 자동 재빌드**
+- ✅ 사용자 친화적인 설치 가이드 제공
+
+### 2. 수동 설치 (고급 사용자용)
+
+자동 설치를 원하지 않는 경우:
 
 ```bash
 # Homebrew 설치 (없는 경우)
@@ -43,7 +70,7 @@ which python3.11
 # 결과 예: /opt/homebrew/bin/python3.11
 ```
 
-### 2. 프로젝트 클론 및 기본 설정
+### 3. 프로젝트 클론 및 기본 설정
 
 ```bash
 # 프로젝트 클론
@@ -208,11 +235,20 @@ brew install ffmpeg sox
 
 ### 5. Node.js 네이티브 모듈 문제
 ```bash
-# 에러: 네이티브 모듈 컴파일 실패
-# 해결: 네이티브 모듈 재빌드
+# 에러: node-pty 또는 speaker 모듈 로드 실패
+# 해결 1: 개별 모듈 재빌드
+npm rebuild node-pty
+npm rebuild speaker
+
+# 해결 2: 전체 네이티브 모듈 재빌드
 npm rebuild
-# 또는
+
+# 해결 3: 완전 재설치
 npm install --build-from-source
+
+# 참고: 네이티브 모듈이 없어도 LipCoder는 fallback으로 동작합니다
+# - node-pty 없으면 → VS Code 기본 터미널 사용
+# - speaker 없으면 → 시스템 오디오 API 사용
 ```
 
 ## 📝 이전 후 확인사항
@@ -234,6 +270,38 @@ npm install --build-from-source
 - [ ] 빌드 시간 정상
 - [ ] 오디오 지연시간 확인
 - [ ] 메모리 사용량 확인
+
+## 🔧 새로운 의존성 관리 명령어
+
+LipCoder v2024에서 추가된 편리한 명령어들:
+
+### VS Code 명령 팔레트에서 사용 (Cmd+Shift+P)
+
+- **`LipCoder: Check Dependencies`** - 모든 의존성 체크 및 자동 설치
+- **`LipCoder: Show Dependency Status`** - 현재 의존성 상태 확인  
+- **`LipCoder: Check Node.js Installation`** - Node.js 전용 체크
+- **`LipCoder: Check Native Modules`** - node-pty, speaker 등 네이티브 모듈 체크
+
+### 터미널에서 수동 체크
+
+```bash
+# Node.js 확인
+node --version
+npm --version
+
+# Python 패키지 확인
+python3 -c "import flask; print('Flask:', flask.__version__)"
+python3 -c "import uvicorn; print('Uvicorn:', uvicorn.__version__)"
+python3 -c "import torch; print('PyTorch:', torch.__version__)"
+
+# 시스템 도구 확인
+brew --version
+ffmpeg -version
+
+# 네이티브 모듈 확인
+node -e "require('node-pty'); console.log('node-pty: OK')"
+node -e "require('speaker'); console.log('speaker: OK')"
+```
 
 ## 💡 최적화 팁
 

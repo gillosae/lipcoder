@@ -107,7 +107,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             // log(`Inline prompt: ${userPrompt}`);
 
             const systemPrompt = "You are a code autocomplete assistant. Only output the code snippet without explanation.";
-            let suggestion = await callLLMForCompletion(systemPrompt, userPrompt, 64, 0.2);
+            let suggestion = await callLLMForCompletion(systemPrompt, userPrompt, 64, 0.2, { abortSignal: lineAbortController.signal });
             suggestion = stripFences(suggestion).trim();
             if (!suggestion || /^(sure|please|here|okay|ok)[,\s]/i.test(suggestion)) {
                 return { items: [] };

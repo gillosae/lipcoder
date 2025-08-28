@@ -8,6 +8,7 @@ import { activateVibeCoding } from './features/vibe_coding';
 import { isTerminalSuggestionDialogActive } from './features/terminal';
 import { saveSuggestions, hasCurrentSuggestions, showCurrentSuggestions } from './features/suggestion_storage';
 import { tryExactCommand } from './features/exact_commands';
+import { lineAbortController } from './features/stop_reading';
 import * as path from 'path';
 
 export interface ConversationalIntent {
@@ -1435,15 +1436,27 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
      */
     private async speakResponse(response: string): Promise<void> {
         try {
+            // Check if aborted before starting
+            if (lineAbortController.signal.aborted) {
+                log(`[ConversationalASR] Response speech aborted before starting`);
+                return;
+            }
+            
             // Play a subtle notification sound first
             await playEarcon('suggestion');
+            
+            // Check again after earcon
+            if (lineAbortController.signal.aborted) {
+                log(`[ConversationalASR] Response speech aborted after earcon`);
+                return;
+            }
             
             // Check if this is a success message - use GPT voice for better feedback
             const isSuccessMessage = this.isSuccessMessage(response);
             
             if (isSuccessMessage) {
-                // Use GPT voice for success messages
-                await speakGPT(response);
+                // Use GPT voice for success messages with abort signal
+                await speakGPT(response, lineAbortController.signal);
             } else {
                 // Convert response to token chunks for TTS
                 const chunks: TokenChunk[] = [{
@@ -1451,9 +1464,13 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                     category: 'comment' // Use comment voice for conversational responses
                 }];
                 
-                await speakTokenList(chunks);
+                await speakTokenList(chunks, lineAbortController.signal);
             }
         } catch (error) {
+            if (error instanceof Error && (error.name === 'AbortError' || error.message === 'Aborted')) {
+                log(`[ConversationalASR] Response speech aborted by user`);
+                return;
+            }
             logError(`[ConversationalASR] TTS error: ${error}`);
         }
     }
