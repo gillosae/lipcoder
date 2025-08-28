@@ -349,37 +349,42 @@ export async function registerSyntaxErrors(context: ExtensionContext) {
     }
     
     // Register all syntax error commands using safe registration
-    await registerCommandsSafely(context, [
-        {
-            id: 'lipcoderDev.syntaxErrorList',
-            callback: async (editorArg?: vscode.TextEditor) => {
-                log('[SyntaxErrors] syntaxErrorList command called');
-                stopAllAudio();
-                await showSyntaxErrorList(editorArg);
+    try {
+        await registerCommandsSafely(context, [
+            {
+                id: 'lipcoder.syntaxErrorList',
+                callback: async (editorArg?: vscode.TextEditor) => {
+                    log('[SyntaxErrors] syntaxErrorList command called');
+                    stopAllAudio();
+                    await showSyntaxErrorList(editorArg);
+                }
+            },
+            {
+                id: 'lipcoder.nextSyntaxError',
+                callback: async (editorArg?: vscode.TextEditor) => {
+                    stopAllAudio();
+                    await nextSyntaxError(editorArg);
+                }
+            },
+            {
+                id: 'lipcoder.previousSyntaxError',
+                callback: async (editorArg?: vscode.TextEditor) => {
+                    stopAllAudio();
+                    await previousSyntaxError(editorArg);
+                }
+            },
+            {
+                id: 'lipcoder.firstSyntaxError',
+                callback: async (editorArg?: vscode.TextEditor) => {
+                    stopAllAudio();
+                    await firstSyntaxError(editorArg);
+                }
             }
-        },
-        {
-            id: 'lipcoder.nextSyntaxError',
-            callback: async (editorArg?: vscode.TextEditor) => {
-                stopAllAudio();
-                await nextSyntaxError(editorArg);
-            }
-        },
-        {
-            id: 'lipcoder.previousSyntaxError',
-            callback: async (editorArg?: vscode.TextEditor) => {
-                stopAllAudio();
-                await previousSyntaxError(editorArg);
-            }
-        },
-        {
-            id: 'lipcoder.firstSyntaxError',
-            callback: async (editorArg?: vscode.TextEditor) => {
-                stopAllAudio();
-                await firstSyntaxError(editorArg);
-            }
-        }
-    ]);
+        ]);
+    } catch (error) {
+        log(`[SyntaxErrors] Error during command registration: ${error}`);
+        // Continue anyway - the commands may have been partially registered
+    }
     
     // Listen for diagnostic changes to update current errors
     context.subscriptions.push(

@@ -91,7 +91,7 @@
         "title": "LipCoder: Open File"
       },
       {
-        "command": "lipcoderDev.syntaxErrorList",
+        "command": "lipcoder.syntaxErrorList",
         "title": "LipCoder: Show Syntax Error List (Dev)"
       },
       {
@@ -950,10 +950,12 @@
             "silero-gpt",
             "espeak-gpt",
             "espeak",
-            "xtts-v2"
+            "xtts-v2",
+            "macos-gpt",
+            "macos"
           ],
-          "default": "espeak",
-          "description": "Choose the TTS backend: 'silero-gpt' for Silero (English) + GPT (Korean), 'espeak-gpt' for Espeak (English) + GPT (Korean), 'espeak' for Espeak (all languages), 'xtts-v2' for XTTS-v2 (both languages)."
+          "default": "macos",
+          "description": "Choose the TTS backend: 'silero-gpt' for Silero (English) + GPT (Korean), 'espeak-gpt' for Espeak (English) + GPT (Korean), 'espeak' for Espeak (all languages), 'xtts-v2' for XTTS-v2 (both languages), 'macos-gpt' for macOS native voice (English) + GPT (Korean), 'macos' for macOS native voice (all languages)."
         },
         "lipcoder.xttsV2ServerUrl": {
           "type": "string",
@@ -980,6 +982,37 @@
           "type": "string",
           "default": "",
           "description": "Path to speaker reference WAV file for voice cloning with XTTS-v2 (optional)."
+        },
+        "lipcoder.macosVoice": {
+          "type": "string",
+          "default": "Yuna",
+          "description": "Default macOS voice for text-to-speech. Common voices: Yuna (Korean), Samantha, Victoria, Daniel, Karen, Moira, Tessa, Veena, Fiona. Use 'say -v ?' in Terminal to see all available voices."
+        },
+        "lipcoder.macosRate": {
+          "type": "number",
+          "default": 200,
+          "minimum": 50,
+          "maximum": 500,
+          "description": "Speech rate for macOS TTS in words per minute (default: 200)."
+        },
+        "lipcoder.macosVolume": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Volume level for macOS TTS (0.0 = silent, 1.0 = maximum)."
+        },
+        "lipcoder.macosSampleRate": {
+          "type": "number",
+          "default": 24000,
+          "enum": [
+            16000,
+            22050,
+            24000,
+            44100,
+            48000
+          ],
+          "description": "Sample rate for macOS TTS audio output (Hz)."
         }
       }
     }

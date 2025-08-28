@@ -90,13 +90,27 @@ export function findTokenSound(token: string): string | null {
         // First check backend-specific special folder
         const specPcm = path.join(config.specialPath(), `${specialName}.pcm`);
         const specWav = path.join(config.specialPath(), `${specialName}.wav`);
-        if (fs.existsSync(specPcm)) return specPcm;
-        if (fs.existsSync(specWav)) return specWav;
+        console.log(`[findTokenSound] Checking for "${token}" -> "${specialName}": specialPath=${config.specialPath()}, specPcm=${specPcm}, exists=${fs.existsSync(specPcm)}`);
+        if (fs.existsSync(specPcm)) {
+            console.log(`[findTokenSound] Using backend-specific PCM: ${specPcm}`);
+            return specPcm;
+        }
+        if (fs.existsSync(specWav)) {
+            console.log(`[findTokenSound] Using backend-specific WAV: ${specWav}`);
+            return specWav;
+        }
         // Legacy fallback: old 'special' folder without suffix
         const legacyPcm = path.join(config.audioPath(), 'special', `${specialName}.pcm`);
         const legacyWav = path.join(config.audioPath(), 'special', `${specialName}.wav`);
-        if (fs.existsSync(legacyPcm)) return legacyPcm;
-        if (fs.existsSync(legacyWav)) return legacyWav;
+        console.log(`[findTokenSound] Backend-specific not found, checking legacy: legacyPcm=${legacyPcm}, exists=${fs.existsSync(legacyPcm)}`);
+        if (fs.existsSync(legacyPcm)) {
+            console.log(`[findTokenSound] Using LEGACY PCM: ${legacyPcm}`);
+            return legacyPcm;
+        }
+        if (fs.existsSync(legacyWav)) {
+            console.log(`[findTokenSound] Using LEGACY WAV: ${legacyWav}`);
+            return legacyWav;
+        }
         // Then fall back to the static earcon folder
         const fallbackEarconPcm = path.join(config.earconPath(), `${specialName}.pcm`);
         const fallbackEarconWav = path.join(config.earconPath(), `${specialName}.wav`);
@@ -194,7 +208,7 @@ function findTextEarconSound(token: string): string | null {
         ';': 'semicolon',
         ':': 'colon',
         '_': 'underscore',
-        '-': 'dash',
+        '-': 'minus',
         '=': 'equals',
         '+': 'plus',
         '*': 'asterisk',
@@ -235,7 +249,16 @@ function findTextEarconSound(token: string): string | null {
         return null;
     }
     
-    const textEarconDir = path.join(config.audioPath(), 'special_espeak_text');
+    // Use backend-specific text earcon directory
+    const { currentBackend, TTSBackend } = require('./config');
+    let textEarconDirName = 'special_espeak_text';
+    if (currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT) {
+        textEarconDirName = 'special_macos_text';
+    } else if (currentBackend === TTSBackend.SileroGPT) {
+        textEarconDirName = 'special_silero_text';
+    }
+    
+    const textEarconDir = path.join(config.audioPath(), textEarconDirName);
     const pcmPath = path.join(textEarconDir, `${fileName}.pcm`);
     const wavPath = path.join(textEarconDir, `${fileName}.wav`);
     

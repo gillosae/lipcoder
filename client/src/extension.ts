@@ -154,9 +154,14 @@ export async function activate(context: vscode.ExtensionContext) {
             context.subscriptions.length = 0;
         }
         
-        // Check for existing lipcoder commands and log them
-        const { commandExists } = require('./command_utils');
+        // Check for existing lipcoder commands and attempt cleanup
+        const { commandExists, forceDisposeLipcoderCommands } = require('./command_utils');
+        
+        // Attempt to dispose any existing lipcoder commands
+        await forceDisposeLipcoderCommands();
+        
         const lipcoderCommands = [
+            // 'lipcoder.syntaxErrorList',
             'lipcoder.syntaxErrorList',
             'lipcoder.nextSyntaxError', 
             'lipcoder.previousSyntaxError',
@@ -166,7 +171,7 @@ export async function activate(context: vscode.ExtensionContext) {
         for (const cmd of lipcoderCommands) {
             const exists = await commandExists(cmd);
             if (exists) {
-                logWarning(`[Extension] Command ${cmd} already exists in VS Code registry`);
+                logWarning(`[Extension] Command ${cmd} still exists after cleanup attempt`);
             }
         }
         
@@ -480,7 +485,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	log('✅ registerTestSuggestionStorage completed');
 
 	// Register exact commands for Command Palette access
-	registerExactCommandPalette(context);
+	await registerExactCommandPalette(context);
 	log('✅ registerExactCommandPalette completed');
 	
 	registerShowExactCommandsHelp(context);
@@ -782,6 +787,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
 	logWarning("🔄 lipcoder deactivate starting...");
+	
+	// Clear the activation flag to allow clean reactivation
+	(global as any).__lipcoderActivated = false;
 	
 	// Create a force exit timeout as absolute last resort
 	const forceExitTimer = setTimeout(() => {

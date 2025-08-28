@@ -4,7 +4,7 @@ import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak } from '../audio';
 import { config } from '../config';
-import { stopReading, lineAbortController } from './stop_reading';
+import { stopReading, lineAbortController, stopAllAudio } from './stop_reading';
 import { log } from '../utils';
 
 let autoTimer: NodeJS.Timeout | null = null;
@@ -138,11 +138,23 @@ export function registerSymbolTree(context: ExtensionContext) {
             // Auto-iterate
             let idx = 0;
             autoTimer = setInterval(() => {
+                // Check if aborted
+                if (lineAbortController.signal.aborted) {
+                    log('[SymbolTree] Auto navigation aborted');
+                    clearInterval(autoTimer!);
+                    autoTimer = null;
+                    quickPick.hide();
+                    return;
+                }
+                
                 if (idx >= quickPick.items.length) {
                     clearInterval(autoTimer!);
                     autoTimer = null;
                     return;
                 }
+                
+                // Stop all audio before moving to next item
+                stopAllAudio();
                 quickPick.activeItems = [quickPick.items[idx]];
                 idx++;
             }, 1000);

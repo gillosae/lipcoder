@@ -5,7 +5,7 @@ import { log } from '../utils';
 /**
  * Register all exact commands as VS Code commands for Command Palette access
  */
-export function registerExactCommandPalette(context: vscode.ExtensionContext): void {
+export async function registerExactCommandPalette(context: vscode.ExtensionContext): Promise<void> {
     log('[ExactCommandPalette] Registering exact commands for Command Palette...');
     
     // Create a map to avoid duplicate command registrations
@@ -13,9 +13,21 @@ export function registerExactCommandPalette(context: vscode.ExtensionContext): v
     
     // Register each exact command
     for (const cmd of EXACT_COMMANDS) {
-        // Skip if already registered
+        // Skip if already registered in this session
         if (registeredCommands.has(cmd.command)) {
             continue;
+        }
+        
+        // Check if command already exists in VS Code registry
+        try {
+            const existingCommands = await vscode.commands.getCommands(true);
+            if (existingCommands.includes(cmd.command)) {
+                log(`[ExactCommandPalette] Command ${cmd.command} already exists, skipping registration`);
+                registeredCommands.add(cmd.command);
+                continue;
+            }
+        } catch (error) {
+            log(`[ExactCommandPalette] Error checking existing commands: ${error}`);
         }
         
         registeredCommands.add(cmd.command);
@@ -48,10 +60,14 @@ export function registerExactCommandPalette(context: vscode.ExtensionContext): v
         };
         
         // Register the command
-        const disposable = vscode.commands.registerCommand(cmd.command, commandHandler);
-        context.subscriptions.push(disposable);
-        
-        log(`[ExactCommandPalette] Registered command: ${cmd.command}`);
+        try {
+            const disposable = vscode.commands.registerCommand(cmd.command, commandHandler);
+            context.subscriptions.push(disposable);
+            log(`[ExactCommandPalette] Registered command: ${cmd.command}`);
+        } catch (error) {
+            log(`[ExactCommandPalette] Failed to register command ${cmd.command}: ${error}`);
+            // Continue with other commands
+        }
     }
     
     // Register line navigation command (special case)

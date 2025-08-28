@@ -28,7 +28,9 @@ export async function safeRegisterCommand(
         const errorMessage = String(error);
         
         // If the error is about command already existing, log a warning but don't throw
-        if (errorMessage.includes('already exists') || errorMessage.includes('already registered')) {
+        if (errorMessage.includes('already exists') || 
+            errorMessage.includes('already registered') ||
+            errorMessage.includes('command') && errorMessage.includes('exists')) {
             logWarning(`[CommandUtils] Command '${commandId}' already exists (caught in registration), skipping`);
             return null;
         }
@@ -97,6 +99,22 @@ export async function forceDisposeCommand(commandId: string): Promise<void> {
     } catch (error) {
         // Command doesn't exist or can't be accessed, which is fine
         log(`[CommandUtils] Command '${commandId}' doesn't exist or can't be accessed: ${error}`);
+    }
+}
+
+/**
+ * Force dispose multiple lipcoder commands
+ */
+export async function forceDisposeLipcoderCommands(): Promise<void> {
+    const lipcoderCommands = [
+        'lipcoder.syntaxErrorList',
+        'lipcoder.nextSyntaxError',
+        'lipcoder.previousSyntaxError',
+        'lipcoder.firstSyntaxError'
+    ];
+    
+    for (const commandId of lipcoderCommands) {
+        await forceDisposeCommand(commandId);
     }
 }
 

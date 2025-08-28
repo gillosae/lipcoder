@@ -8,8 +8,9 @@ export const SPECIAL_CHAR_FILES: Record<string, string> = {
     '%': 'percent.pcm', '^': 'caret.pcm', '&': 'ampersand.pcm', '*': 'asterisk.pcm',
     '+': 'plus.pcm', '~': 'tilde.pcm', '|': 'bar.pcm', '?': 'question.pcm',
     '₩': 'won.pcm', '=': 'equals.pcm', '`': 'backtick.pcm', '\\': 'backslash.pcm',
-    '-': 'dash.pcm', '/': 'slash.pcm', ':': 'colon.pcm', ';': 'semicolon.pcm',
+    '-': 'minus.pcm', '/': 'slash.pcm', ':': 'colon.pcm', ';': 'semicolon.pcm',
     ',': 'comma.pcm', '.': 'dot.pcm', '_': 'underscore.pcm', ' ': 'space.pcm',
+    '[': 'squarebracket.pcm', ']': 'squarebracket.pcm',
     'enter': 'enter.pcm', 'backspace': 'backspace.pcm'
 };
 

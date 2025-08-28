@@ -51,6 +51,12 @@ class ServerManager {
             script: 'start_xtts_v2.sh',
             defaultPort: 5006  // Use unique port for XTTS-v2
         });
+        
+        this.servers.set('macos_tts', {
+            name: 'macOS TTS Server',
+            script: 'start_macos_tts.sh',
+            defaultPort: 5008  // Use unique port for macOS TTS
+        });
     }
 
 
@@ -231,6 +237,12 @@ class ServerManager {
             } else if (currentBackend === TTSBackend.XTTSV2) {
                 serverPromises.push(this.startServer('xtts_v2'));  // XTTS-v2 for both
                 log('[ServerManager] Starting XTTS-v2 for both Korean and English');
+            } else if (currentBackend === TTSBackend.MacOSGPT) {
+                serverPromises.push(this.startServer('macos_tts'));  // macOS for English
+                log('[ServerManager] Starting macOS TTS for English (macOS+GPT backend)');
+            } else if (currentBackend === TTSBackend.MacOS) {
+                serverPromises.push(this.startServer('macos_tts'));  // macOS for all languages
+                log('[ServerManager] Starting macOS TTS for all languages (macOS backend)');
             }
             
             await Promise.all(serverPromises);
@@ -305,8 +317,8 @@ class ServerManager {
     }
 
     // Switch TTS backend by stopping current and starting new one
-    async switchTTSBackend(newBackend: 'silero' | 'espeak' | 'espeak-all' | 'xtts-v2'): Promise<void> {
-        const currentTTSServers = ['tts', 'espeak_tts', 'xtts_v2'];
+    async switchTTSBackend(newBackend: 'silero' | 'espeak' | 'espeak-all' | 'xtts-v2' | 'macos' | 'macos-all'): Promise<void> {
+        const currentTTSServers = ['tts', 'espeak_tts', 'xtts_v2', 'macos_tts'];
         
         log(`[ServerManager] Switching TTS backend to: ${newBackend}`);
         
@@ -328,6 +340,8 @@ class ServerManager {
             targetServer = 'espeak_tts';
         } else if (newBackend === 'xtts-v2') {
             targetServer = 'xtts_v2';
+        } else if (newBackend === 'macos' || newBackend === 'macos-all') {
+            targetServer = 'macos_tts';
         } else {
             throw new Error(`Unknown TTS backend: ${newBackend}`);
         }

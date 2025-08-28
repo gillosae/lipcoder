@@ -4,7 +4,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { fetch, Agent } from 'undici';
 import { log } from './utils';
-import { config, categoryVoiceMap, sileroConfig, espeakConfig, espeakCategoryVoiceMap, openaiTTSConfig, openaiCategoryVoiceMap, xttsV2Config, currentBackend, TTSBackend } from './config';
+import { config, categoryVoiceMap, sileroConfig, espeakConfig, espeakCategoryVoiceMap, openaiTTSConfig, openaiCategoryVoiceMap, xttsV2Config, macosConfig, macosCategoryVoiceMap, currentBackend, TTSBackend } from './config';
 import { isAlphabet, isNumber } from './mapping';
 import { serverManager } from './server_manager';
 import { detectLanguage, DetectedLanguage, shouldUseKoreanTTS, shouldUseEnglishTTS } from './language_detection';
@@ -48,6 +48,7 @@ export async function genTokenAudio(
             // If language not specified in category, try both
             dirs.push(config.pythonKeywordsPath(), config.typescriptKeywordsPath());
         }
+        log(`[genTokenAudio] Current backend: ${currentBackend}, Keyword dirs: ${dirs.join(', ')}`);
         for (const baseDir of dirs) {
             const wavPath = path.join(baseDir, `${filename}.wav`);
             const pcmPath = path.join(baseDir, `${filename}.pcm`);
@@ -74,8 +75,10 @@ export async function genTokenAudio(
     
     if (useAlphabetPCM) {
         const filename = token.toLowerCase();
-        const pcmPath = path.join(config.alphabetPath(), `${filename}.pcm`);
-        const wavPath = path.join(config.alphabetPath(), `${filename}.wav`);
+        const alphabetPath = config.alphabetPath();
+        const pcmPath = path.join(alphabetPath, `${filename}.pcm`);
+        const wavPath = path.join(alphabetPath, `${filename}.wav`);
+        log(`[genTokenAudio] Current backend: ${currentBackend}, Alphabet path: ${alphabetPath}`);
         log(`[genTokenAudio] looking up alphabet assets at ${pcmPath} or ${wavPath}`);
         if (fs.existsSync(pcmPath)) {
             log(`[genTokenAudio] *** ALPHABET BYPASS (PCM): ${pcmPath}`);
@@ -241,6 +244,22 @@ export async function genTokenAudio(
                 : { abortSignal: opts?.abortSignal };
             wavBuffer = await generateOpenAITTS(token, category, fallbackOpts);
         }
+    } else if (currentBackend === TTSBackend.MacOSGPT) {
+        // macOS for English + GPT for Korean
+        if (useKoreanTTS) {
+            log(`[genTokenAudio] Korean text detected, using OpenAI TTS (macOS+GPT backend): "${token}"`);
+            const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
+                ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
+                : { abortSignal: opts?.abortSignal };
+            wavBuffer = await generateOpenAITTS(token, category, koreanOpts);
+        } else {
+            log(`[genTokenAudio] English text detected, using macOS TTS (macOS+GPT backend): "${token}"`);
+            wavBuffer = await generateMacOSTTS(token, category, opts);
+        }
+    } else if (currentBackend === TTSBackend.MacOS) {
+        // macOS for all languages (including Korean)
+        log(`[genTokenAudio] Using macOS TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
+        wavBuffer = await generateMacOSTTS(token, category, opts);
     } else {
         throw new Error(`Unsupported TTS backend: ${currentBackend}`);
     }
@@ -542,6 +561,90 @@ async function generateOpenAITTS(
 }
 
 /**
+ * Generate TTS using macOS native voice backend
+ */
+async function generateMacOSTTS(
+    token: string,
+    category?: string,
+    opts?: { speaker?: string }
+): Promise<Buffer> {
+    const baseCategory = category?.split('_')[0];
+    
+    // Get macOS settings for this category
+    const categorySettings = (baseCategory && macosCategoryVoiceMap[baseCategory]) || {};
+    const macosSettings = { ...macosConfig, ...categorySettings };
+    
+    // Detect language and set appropriate voice
+    const detectedLanguage = detectLanguage(token);
+    if (detectedLanguage === DetectedLanguage.Korean) {
+        // For Korean text, use Yuna voice if available, otherwise keep default
+        if (macosSettings.defaultVoice !== 'Yuna') {
+            macosSettings.defaultVoice = 'Yuna';
+            log(`[generateMacOSTTS] Korean text detected, switching to Yuna voice: "${token}"`);
+        } else {
+            log(`[generateMacOSTTS] Korean text detected, using Yuna voice: "${token}"`);
+        }
+    } else if (token === 'underscore') {
+        // Force Yuna voice for underscore
+        macosSettings.defaultVoice = 'Yuna';
+        log(`[generateMacOSTTS] Underscore detected, forcing Yuna voice: "${token}"`);
+    } else {
+        log(`[generateMacOSTTS] English text detected, using voice "${macosSettings.defaultVoice}": "${token}"`);
+    }
+    
+    // Allow override via opts (using speaker as voice for compatibility)
+    if (opts?.speaker) {
+        macosSettings.defaultVoice = opts.speaker;
+    }
+    
+    // Send text to macOS TTS server
+    let macosPort = serverManager.getServerPort('macos_tts');
+    if (!macosPort) {
+        log(`[generateMacOSTTS] macOS TTS server not running, attempting to start it...`);
+        try {
+            await serverManager.startIndividualServer('macos_tts');
+            macosPort = serverManager.getServerPort('macos_tts');
+            if (!macosPort) {
+                throw new Error('Failed to start macOS TTS server. Please check if macOS TTS is available on your system.');
+            }
+            log(`[generateMacOSTTS] macOS TTS server started successfully on port ${macosPort}`);
+        } catch (startError) {
+            throw new Error(`macOS TTS server failed to start: ${startError}. Try switching to macOS TTS backend first or check if macOS TTS is available.`);
+        }
+    }
+    
+    log(`[generateMacOSTTS] Using macOS server on port ${macosPort} for token "${token}"`);
+    
+    const res = await fetch(`http://localhost:${macosPort}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: token,
+            voice: macosSettings.defaultVoice,
+            rate: macosSettings.rate,
+            volume: macosSettings.volume,
+            sample_rate: macosSettings.sampleRate,
+        }),
+        dispatcher: keepAliveAgent
+    });
+    
+    if (!res.ok) {
+        // Capture and log the error body for debugging
+        let errorBody: string;
+        try {
+            errorBody = await res.text();
+        } catch {
+            errorBody = '<unable to read response body>';
+        }
+        log(
+            `[generateMacOSTTS] TTS server error ${res.status} ${res.statusText}: ${errorBody}`
+        );
+        throw new Error(`macOS TTS server error: ${res.status} ${res.statusText}. Server may not be running.`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+}
+
+/**
  * Generate TTS using XTTS-v2 backend
  */
 async function generateXTTSV2(
@@ -728,6 +831,15 @@ export function getSpeakerForCategory(category?: string, opts?: { speaker?: stri
         const voice = 'xtts-v2';
         if (category?.includes('comment')) {
             log(`[getSpeakerForCategory] Returning XTTS-v2 voice for comment: ${voice}`);
+        }
+        return voice;
+    } else if (currentBackend === TTSBackend.MacOSGPT || currentBackend === TTSBackend.MacOS) {
+        // For macOS backends, use macOS voices for English, OpenAI for Korean (in MacOSGPT)
+        const categorySettings = (baseCategory && macosCategoryVoiceMap[baseCategory]) || {};
+        const macosSettings = { ...macosConfig, ...categorySettings };
+        const voice = macosSettings.defaultVoice;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning macOS voice for comment: ${voice}`);
         }
         return voice;
     } else {

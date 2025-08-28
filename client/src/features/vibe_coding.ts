@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { speakTokenList, speakGPT, TokenChunk, startThinkingAudio, stopThinkingAudio, playThinkingFinished, stopPlayback } from '../audio';
 // Automatic text reading imports removed - continuous actions eliminated
-import { stopAllAudio } from './stop_reading';
+import { stopAllAudio, lineAbortController } from './stop_reading';
 import { log } from '../utils';
 import { logVibeCoding, logFeatureUsage } from '../activity_logger';
 import { comprehensiveEventTracker } from '../comprehensive_event_tracker';
@@ -399,6 +399,13 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
     const originalText = editor.document.getText();
     
     try {
+        // Check if aborted before starting processing
+        if (lineAbortController.signal.aborted) {
+            log('[vibe_coding] Request aborted before processing');
+            await stopThinkingAudio();
+            return;
+        }
+        
         log(`[vibe_coding] Starting vibe coding request: ${instruction}`);
         logVibeCoding('vibe_coding_request_started', instruction, editor.document.fileName);
         
@@ -889,7 +896,21 @@ Make sure to include all existing code plus the requested changes.`;
         await startThinkingAudio();
         
         try {
-            const modifiedCode = await callLLMForCompletion(systemPrompt, prompt, 4000, 0.1);
+            // Check if aborted before making LLM call
+            if (lineAbortController.signal.aborted) {
+                log('[vibe_coding] Request aborted before LLM call');
+                await stopThinkingAudio();
+                throw new Error('Vibe coding request was aborted');
+            }
+            
+            const modifiedCode = await callLLMForCompletion(systemPrompt, prompt, 4000, 0.1, { abortSignal: lineAbortController.signal });
+            
+            // Check if aborted after LLM call
+            if (lineAbortController.signal.aborted) {
+                log('[vibe_coding] Request aborted after LLM call');
+                await stopThinkingAudio();
+                throw new Error('Vibe coding request was aborted');
+            }
             
             // Play thinking finished sound and stop thinking audio
             await playThinkingFinished();

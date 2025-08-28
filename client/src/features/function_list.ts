@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { log } from '../utils';
 import { playWave, speakTokenList, speakGPT, TokenChunk, clearAudioStoppingState, readInEspeak } from '../audio';
-import { stopAllAudio } from './stop_reading';
+import { stopAllAudio, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 
 import { config } from '../config';
@@ -155,6 +155,15 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
             let idx = 0;
             autoTimer = setTimeout(() => {
                 autoTimer = setInterval(() => {
+                    // Check if aborted
+                    if (lineAbortController.signal.aborted) {
+                        log('[FunctionList] Auto navigation aborted');
+                        clearInterval(autoTimer!);
+                        autoTimer = null;
+                        quickPick.hide();
+                        return;
+                    }
+                    
                     if (idx >= quickPick.items.length) {
                         clearInterval(autoTimer!);
                         autoTimer = null;

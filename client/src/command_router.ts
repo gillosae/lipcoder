@@ -1134,7 +1134,7 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         const actionMap: { [key: string]: string } = {
-            'list': 'lipcoderDev.syntaxErrorList',
+            'list': 'lipcoder.syntaxErrorList',
             'next': 'lipcoder.nextSyntaxError',
             'previous': 'lipcoder.previousSyntaxError'
         };
@@ -2234,7 +2234,7 @@ Generate appropriate ${languageId} code that:
             },
             {
                 pattern: /^(syntax errors|syntax error list|error list|errors)$/i,
-                command: 'lipcoderDev.syntaxErrorList',
+                command: 'lipcoder.syntaxErrorList',
                 description: 'Show syntax error list',
                 preventDefault: true
             },

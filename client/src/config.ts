@@ -14,6 +14,8 @@ export enum TTSBackend {
     EspeakGPT = 'espeak-gpt',     // Espeak for English + GPT for Korean  
     Espeak = 'espeak',           // Espeak for all languages (including Korean)
     XTTSV2 = 'xtts-v2',          // XTTS-v2 for both Korean and English
+    MacOSGPT = 'macos-gpt',      // macOS native voice for English + GPT for Korean
+    MacOS = 'macos',             // macOS native voice for all languages
 }
 
 // ASR Backends & Config ─────────────────────────────────────────────────────
@@ -80,6 +82,14 @@ export interface XTTSV2Config {
     speakerWav?: string;  // Optional speaker reference for voice cloning
 }
 
+export interface MacOSConfig {
+    language: string;     // en for English
+    defaultVoice: string; // Alex, Samantha, Victoria, etc.
+    rate: number;         // words per minute (default: 200)
+    volume: number;       // 0.0-1.0 (default: 0.7)
+    sampleRate: number;   // output sample rate
+}
+
 export interface ClaudeConfig {
     apiKey: string;
     model: string;        // claude-3-5-sonnet-20241022, claude-3-haiku-20240307, etc.
@@ -91,7 +101,7 @@ export interface VibeCodingConfig {
     showPopups: boolean;
 }
 
-export let currentBackend = TTSBackend.Espeak;
+export let currentBackend = TTSBackend.MacOS;
 
 // ASR Configuration ─────────────────────────────────────────────────────
 export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
@@ -148,6 +158,14 @@ export let xttsV2Config: XTTSV2Config = {
     language: 'ko', // Korean language
     sampleRate: 24000, // 24kHz (XTTS-v2 default)
     volumeBoost: 1.0, // No volume boost by default
+};
+
+export let macosConfig: MacOSConfig = {
+    language: 'en',
+    defaultVoice: 'Yuna',  // Default macOS voice (Yuna supports Korean)
+    rate: 200,  // words per minute
+    volume: 0.7,  // volume level (0.0-1.0)
+    sampleRate: 24000,
 };
 
 export let claudeConfig: ClaudeConfig = {
@@ -340,8 +358,61 @@ export const openaiCategoryVoiceMap: Record<string, Partial<OpenAITTSConfig>> = 
     'default': { voice: 'alloy', speed: 1.0 },
 };
 
+// macOS voice mapping for different categories
+export const macosCategoryVoiceMap: Record<string, Partial<MacOSConfig>> = {
+    // Different voices and settings for semantic categories using macOS native voices
+    // Popular macOS voices: Alex, Samantha, Victoria, Daniel, Karen, Moira, Tessa, Veena, Fiona
+    
+    variable: { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },        // Variables, function names - Yuna for consistency
+    operator: { defaultVoice: 'Yuna', rate: 220, volume: 0.8 },        // Math operators - slightly faster
+    type: { defaultVoice: 'Yuna', rate: 180, volume: 0.6 },            // Punctuation & symbols - slower
+    comment: { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },         // Comments - slower, gentle
+    
+    // Future semantic categories
+    keyword: { defaultVoice: 'Daniel', rate: 200, volume: 0.75 },                        // Keywords - male voice
+    'keyword.control': { defaultVoice: 'Daniel', rate: 200, volume: 0.75 },
+    'keyword.operator': { defaultVoice: 'Daniel', rate: 220, volume: 0.8 },
+    'keyword.import': { defaultVoice: 'Daniel', rate: 180, volume: 0.65 },
+    
+    'function.name': { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },
+    'function.call': { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },
+    'function.builtin': { defaultVoice: 'Yuna', rate: 220, volume: 0.8 },
+    
+    'string': { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
+    'string.quoted': { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
+    literal: { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
+    
+    'number': { defaultVoice: 'Yuna', rate: 230, volume: 0.7 },
+    'number.integer': { defaultVoice: 'Yuna', rate: 230, volume: 0.7 },
+    'number.float': { defaultVoice: 'Yuna', rate: 220, volume: 0.7 },
+    
+    'type.class': { defaultVoice: 'Yuna', rate: 180, volume: 0.65 },
+    'class.name': { defaultVoice: 'Yuna', rate: 180, volume: 0.65 },
+    'class.builtin': { defaultVoice: 'Yuna', rate: 190, volume: 0.7 },
+    
+    'parameter': { defaultVoice: 'Yuna', rate: 190, volume: 0.65 },
+    'parameter.name': { defaultVoice: 'Yuna', rate: 190, volume: 0.65 },
+    'property': { defaultVoice: 'Yuna', rate: 190, volume: 0.7 },
+    'property.name': { defaultVoice: 'Yuna', rate: 190, volume: 0.7 },
+    
+    'punctuation': { defaultVoice: 'Yuna', rate: 250, volume: 0.5 },
+    'punctuation.bracket': { defaultVoice: 'Yuna', rate: 250, volume: 0.5 },
+    'punctuation.delimiter': { defaultVoice: 'Yuna', rate: 260, volume: 0.45 },
+    
+    'constant': { defaultVoice: 'Yuna', rate: 190, volume: 0.7 },
+    'constant.builtin': { defaultVoice: 'Yuna', rate: 190, volume: 0.7 },
+    
+    'namespace': { defaultVoice: 'Yuna', rate: 175, volume: 0.65 },
+    'module': { defaultVoice: 'Yuna', rate: 175, volume: 0.65 },
+    
+    'special': { defaultVoice: 'Yuna', rate: 240, volume: 0.9 },   // Special characters - faster, more energetic
+    
+    'text': { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },
+    'default': { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },
+};
+
 // Allow runtime switching of TTS backend & config
-export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>, openaiPartial?: Partial<OpenAITTSConfig>, xttsV2Partial?: Partial<XTTSV2Config>) {
+export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroConfig>, espeakPartial?: Partial<EspeakConfig>, openaiPartial?: Partial<OpenAITTSConfig>, xttsV2Partial?: Partial<XTTSV2Config>, macosPartial?: Partial<MacOSConfig>) {
     currentBackend = backend;
     
     // Apply partial configs based on what the combined backend uses
@@ -351,11 +422,14 @@ export function setBackend(backend: TTSBackend, sileroPartial?: Partial<SileroCo
     if ((backend === TTSBackend.EspeakGPT) && espeakPartial) {
         espeakConfig = { ...espeakConfig, ...espeakPartial };
     }
-    if ((backend === TTSBackend.SileroGPT || backend === TTSBackend.EspeakGPT) && openaiPartial) {
+    if ((backend === TTSBackend.SileroGPT || backend === TTSBackend.EspeakGPT || backend === TTSBackend.MacOSGPT) && openaiPartial) {
         openaiTTSConfig = { ...openaiTTSConfig, ...openaiPartial };
     }
     if (backend === TTSBackend.XTTSV2 && xttsV2Partial) {
         xttsV2Config = { ...xttsV2Config, ...xttsV2Partial };
+    }
+    if ((backend === TTSBackend.MacOSGPT || backend === TTSBackend.MacOS) && macosPartial) {
+        macosConfig = { ...macosConfig, ...macosPartial };
     }
 }
 
@@ -489,32 +563,37 @@ export const config = {
         extRoot,
         'client',
         'audio',
-        `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+        `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                   currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     earconPath: () => path.join(extRoot, 'client', 'audio', 'earcon'),
     numberPath: () => path.join(
         extRoot,
         'client',
         'audio',
-        `number${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+        `number${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                 currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     pythonKeywordsPath: () => path.join(
         extRoot,
         'client',
         'audio',
-        `python${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+        `python${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                 currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     typescriptKeywordsPath: () => path.join(
         extRoot,
         'client',
         'audio',
-        `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+        `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                     currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
     specialPath: () => path.join(
         config.audioPath(),
-        `special${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+        `special${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                  currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
     ),
     musicalPath: () => path.join(config.audioPath(), 'musical'),
     alertPath: () => path.join(config.audioPath(), 'alert'),
@@ -612,6 +691,10 @@ export function loadConfigFromSettings() {
             currentBackend = TTSBackend.Espeak;
         } else if (ttsBackend === 'xtts-v2') {
             currentBackend = TTSBackend.XTTSV2;
+        } else if (ttsBackend === 'macos-gpt') {
+            currentBackend = TTSBackend.MacOSGPT;
+        } else if (ttsBackend === 'macos') {
+            currentBackend = TTSBackend.MacOS;
         }
         
         // Load XTTS-v2 configuration
@@ -628,6 +711,19 @@ export function loadConfigFromSettings() {
         if (xttsV2SpeakerWav) {
             xttsV2Config.speakerWav = xttsV2SpeakerWav;
         }
+        
+        // Load macOS TTS configuration
+        const macosVoice = config.get('macosVoice', 'Alex') as string;
+        macosConfig.defaultVoice = macosVoice;
+        
+        const macosRate = config.get('macosRate', 200) as number;
+        macosConfig.rate = macosRate;
+        
+        const macosVolume = config.get('macosVolume', 0.7) as number;
+        macosConfig.volume = macosVolume;
+        
+        const macosSampleRate = config.get('macosSampleRate', 24000) as number;
+        macosConfig.sampleRate = macosSampleRate;
         
         // Load LLM backend selection
         const llmBackend = config.get('llmBackend', 'claude') as string;

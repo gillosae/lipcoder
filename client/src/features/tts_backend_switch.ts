@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { setBackend, TTSBackend, currentBackend, sileroConfig, espeakConfig, openaiTTSConfig, xttsV2Config } from '../config';
+import { setBackend, TTSBackend, currentBackend, sileroConfig, espeakConfig, openaiTTSConfig, xttsV2Config, macosConfig } from '../config';
 import { log, logSuccess, logWarning } from '../utils';
 import { serverManager } from '../server_manager';
 
@@ -85,6 +85,46 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         }
     });
 
+    // Command to switch to macOS+GPT TTS (macOS for English, GPT for Korean)
+    const switchToMacOSGPTCommand = vscode.commands.registerCommand('lipcoder.switchToMacOSGPT', async () => {
+        try {
+            log('[TTS Backend] Switching to macOS+GPT TTS...');
+            
+            // Start macOS TTS server
+            await serverManager.switchTTSBackend('macos');
+            
+            // Update the config to combined backend
+            setBackend(TTSBackend.MacOSGPT);
+            
+            log('[TTS Backend] Successfully switched to macOS+GPT TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: macOS Native (English) + GPT (Korean)');
+            logSuccess(`TTS Backend: macOS+GPT (macOS: ${macosConfig.defaultVoice}, GPT: ${openaiTTSConfig.voice})`);
+        } catch (error) {
+            logWarning(`Failed to switch to macOS+GPT TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to macOS+GPT TTS: ${error}`);
+        }
+    });
+
+    // Command to switch to pure macOS TTS (macOS for all languages including Korean)
+    const switchToMacOSCommand = vscode.commands.registerCommand('lipcoder.switchToMacOS', async () => {
+        try {
+            log('[TTS Backend] Switching to pure macOS TTS...');
+            
+            // Start macOS TTS server
+            await serverManager.switchTTSBackend('macos-all');
+            
+            // Update the config to pure macOS backend
+            setBackend(TTSBackend.MacOS);
+            
+            log('[TTS Backend] Successfully switched to pure macOS TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: macOS Native (All Languages including Korean)');
+            logSuccess(`TTS Backend: Pure macOS (Voice: ${macosConfig.defaultVoice}, supports multiple languages)`);
+        } catch (error) {
+            logWarning(`Failed to switch to pure macOS TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to pure macOS TTS: ${error}`);
+        }
+    });
+
     // Command to ensure MMS-TTS server is running (but don't change main backend)
     const ensureMMSTTSCommand = vscode.commands.registerCommand('lipcoder.ensureMMSTTS', async () => {
         try {
@@ -154,6 +194,7 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
         const espeak2Running = serverStatus['espeak_tts_2']?.running || false;
         const xttsV2Running = serverStatus['xtts_v2']?.running || false;
+        const macosRunning = serverStatus['macos_tts']?.running || false;
         
         if (currentBackend === TTSBackend.SileroGPT) {
             statusMessage = `Current TTS Backend: Silero + GPT
@@ -179,6 +220,17 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
 • Model: ${xttsV2Config.model}
 • Sample Rate: ${xttsV2Config.sampleRate}Hz
 • Port: ${serverStatus['xtts_v2']?.port || 'N/A'}`;
+        } else if (currentBackend === TTSBackend.MacOSGPT) {
+            statusMessage = `Current TTS Backend: macOS + GPT
+• macOS (English): ${macosRunning ? 'Running' : 'Stopped'} - Voice: ${macosConfig.defaultVoice}, Rate: ${macosConfig.rate} WPM
+• GPT (Korean): API-based - Voice: ${openaiTTSConfig.voice}, Speed: ${openaiTTSConfig.speed}x
+• Port: ${serverStatus['macos_tts']?.port || 'N/A'}`;
+        } else if (currentBackend === TTSBackend.MacOS) {
+            statusMessage = `Current TTS Backend: macOS Native (Universal)
+• macOS (All Languages): ${macosRunning ? 'Running' : 'Stopped'}
+• Voice: ${macosConfig.defaultVoice}, Rate: ${macosConfig.rate} WPM, Volume: ${macosConfig.volume}
+• Sample Rate: ${macosConfig.sampleRate}Hz
+• Port: ${serverStatus['macos_tts']?.port || 'N/A'}`;
         } else {
             statusMessage = `Current TTS Backend: ${currentBackend} (unknown)`;
         }
@@ -194,6 +246,7 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
         const espeak2Running = serverStatus['espeak_tts_2']?.running || false;
         const xttsV2Running = serverStatus['xtts_v2']?.running || false;
+        const macosRunning = serverStatus['macos_tts']?.running || false;
         
         const items = [
             {
@@ -219,6 +272,18 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
                 description: `XTTS-v2 for both Korean and English ${xttsV2Running ? '- Running' : '- Stopped'}`,
                 detail: 'High-quality neural TTS with voice cloning support for both languages',
                 backend: TTSBackend.XTTSV2
+            },
+            {
+                label: '🍎 macOS + GPT',
+                description: `macOS Native (English) + GPT (Korean) ${macosRunning ? '- macOS Running' : '- macOS Stopped'}`,
+                detail: 'Native macOS voices for English, Premium GPT TTS for Korean - Best quality on macOS',
+                backend: TTSBackend.MacOSGPT
+            },
+            {
+                label: '🍎 macOS Native (Universal)',
+                description: `macOS Native for all languages ${macosRunning ? '- Running' : '- Stopped'}`,
+                detail: 'Native macOS voices for all languages including Korean - System integrated',
+                backend: TTSBackend.MacOS
             }
         ];
 
@@ -245,6 +310,10 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
                     await vscode.commands.executeCommand('lipcoder.switchToEspeak');
                 } else if (selected.backend === TTSBackend.XTTSV2) {
                     await vscode.commands.executeCommand('lipcoder.switchToXTTSV2');
+                } else if (selected.backend === TTSBackend.MacOSGPT) {
+                    await vscode.commands.executeCommand('lipcoder.switchToMacOSGPT');
+                } else if (selected.backend === TTSBackend.MacOS) {
+                    await vscode.commands.executeCommand('lipcoder.switchToMacOS');
                 }
                 
             } catch (error) {
@@ -265,6 +334,8 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         switchToEspeakGPTCommand,
         switchToEspeakCommand,
         switchToXTTSV2Command,
+        switchToMacOSGPTCommand,
+        switchToMacOSCommand,
         showTTSStatusCommand,
         selectTTSBackendCommand
     );

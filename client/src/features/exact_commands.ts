@@ -27,7 +27,7 @@ export const EXACT_COMMANDS: ExactCommand[] = [
             '신텍스 에러들', '신텍스 에러 목록', '문법 오류들', '문법 오류 목록', '문법 에러들', '문법 에러 목록', '신텍스 에러 리스트', '문법 오류 리스트',
             '오류 목록', '오류 리스트', '에러 목록', '에러 리스트', 'syntax error', 'syntax errors', '신택스 에러', '신텍스 에러'
         ], 
-        command: 'lipcoderDev.syntaxErrorList', 
+        command: 'lipcoder.syntaxErrorList', 
         feedback: 'Syntax error list', 
         type: 'navigation' 
     },
@@ -143,6 +143,44 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         patterns: ['open generated png', 'open png', 'open png file', 'generated png', 'png 열어', 'png 파일 열어', 'png 파일 열기', 'png 열기', '생성된 png', '생성된 png 열어', '생성된 png 파일 열어'], 
         command: 'lipcoder.openPngFile', 
         feedback: 'Opening PNG file', 
+        type: 'action' 
+    },
+    
+    // TTS Backend switching commands
+    { 
+        patterns: [
+            'switch to macos tts', 'use macos tts', 'macos tts', 'macos voice', 'native macos tts', 'system tts',
+            'macOS TTS로 바꿔', 'macOS TTS 사용', 'macOS 음성', '맥OS TTS', '맥OS 음성', '시스템 TTS', '네이티브 TTS'
+        ], 
+        command: 'lipcoder.switchToMacOS', 
+        feedback: 'Switched to macOS TTS', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'switch to macos gpt', 'use macos gpt', 'macos plus gpt', 'macos and gpt', 'macos gpt tts',
+            'macOS GPT로 바꿔', 'macOS GPT 사용', 'macOS 플러스 GPT', 'macOS와 GPT', 'macOS GPT TTS'
+        ], 
+        command: 'lipcoder.switchToMacOSGPT', 
+        feedback: 'Switched to macOS + GPT TTS', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'select tts backend', 'choose tts backend', 'tts backend', 'switch tts backend', 'change tts backend',
+            'TTS 백엔드 선택', 'TTS 백엔드 바꿔', 'TTS 백엔드 변경', 'TTS 엔진 선택', 'TTS 엔진 바꿔'
+        ], 
+        command: 'lipcoder.selectTTSBackend', 
+        feedback: 'TTS backend selector', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'tts status', 'show tts status', 'current tts backend', 'tts backend status',
+            'TTS 상태', 'TTS 상태 보여줘', '현재 TTS 백엔드', 'TTS 백엔드 상태'
+        ], 
+        command: 'lipcoder.showTTSStatus', 
+        feedback: 'TTS status', 
         type: 'action' 
     },
     
