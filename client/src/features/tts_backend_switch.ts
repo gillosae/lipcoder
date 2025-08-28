@@ -45,6 +45,26 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         }
     });
 
+    // Command to switch to pure Espeak TTS (Espeak for all languages including Korean)
+    const switchToEspeakCommand = vscode.commands.registerCommand('lipcoder.switchToEspeak', async () => {
+        try {
+            log('[TTS Backend] Switching to pure Espeak TTS...');
+            
+            // Start Espeak server
+            await serverManager.switchTTSBackend('espeak-all');
+            
+            // Update the config to pure espeak backend
+            setBackend(TTSBackend.Espeak);
+            
+            log('[TTS Backend] Successfully switched to pure Espeak TTS');
+            vscode.window.showInformationMessage('✅ TTS Backend: Espeak (All Languages including Korean)');
+            logSuccess(`TTS Backend: Pure Espeak (Voice: ${espeakConfig.defaultVoice}, supports 100+ languages)`);
+        } catch (error) {
+            logWarning(`Failed to switch to pure Espeak TTS: ${error}`);
+            vscode.window.showErrorMessage(`Failed to switch to pure Espeak TTS: ${error}`);
+        }
+    });
+
     // Command to switch to XTTS-v2 TTS (for both Korean and English)
     const switchToXTTSV2Command = vscode.commands.registerCommand('lipcoder.switchToXTTSV2', async () => {
         try {
@@ -132,6 +152,7 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const serverStatus = serverManager.getServerStatus();
         const sileroRunning = serverStatus['tts']?.running || false;
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
+        const espeak2Running = serverStatus['espeak_tts_2']?.running || false;
         const xttsV2Running = serverStatus['xtts_v2']?.running || false;
         
         if (currentBackend === TTSBackend.SileroGPT) {
@@ -144,6 +165,14 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
 • Espeak (English): ${espeakRunning ? 'Running' : 'Stopped'} - Voice: ${espeakConfig.defaultVoice}, Speed: ${espeakConfig.speed} WPM
 • GPT (Korean): API-based - Voice: ${openaiTTSConfig.voice}, Speed: ${openaiTTSConfig.speed}x
 • Port: ${serverStatus['espeak_tts']?.port || 'N/A'}`;
+        } else if (currentBackend === TTSBackend.Espeak) {
+            const espeakPort1 = serverStatus['espeak_tts']?.port || 'N/A';
+            const espeakPort2 = serverStatus['espeak_tts_2']?.port || 'N/A';
+            statusMessage = `Current TTS Backend: Dual Espeak (Parallel Processing)
+• Espeak Server 1: ${espeakRunning ? 'Running' : 'Stopped'} - Port: ${espeakPort1}
+• Espeak Server 2: ${espeak2Running ? 'Running' : 'Stopped'} - Port: ${espeakPort2}
+• Voice: ${espeakConfig.defaultVoice}, Speed: ${espeakConfig.speed} WPM
+• Supports 100+ languages including Korean, Spanish, French, German, etc.`;
         } else if (currentBackend === TTSBackend.XTTSV2) {
             statusMessage = `Current TTS Backend: XTTS-v2 (Universal)
 • XTTS-v2 (Korean + English): ${xttsV2Running ? 'Running' : 'Stopped'}
@@ -163,6 +192,7 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
         const serverStatus = serverManager.getServerStatus();
         const sileroRunning = serverStatus['tts']?.running || false;
         const espeakRunning = serverStatus['espeak_tts']?.running || false;
+        const espeak2Running = serverStatus['espeak_tts_2']?.running || false;
         const xttsV2Running = serverStatus['xtts_v2']?.running || false;
         
         const items = [
@@ -177,6 +207,12 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
                 description: `Espeak (English) + GPT (Korean) ${espeakRunning ? '- Espeak Running' : '- Espeak Stopped'}`,
                 detail: 'Fast system TTS for English, Premium GPT TTS for Korean - Fastest option',
                 backend: TTSBackend.EspeakGPT
+            },
+            {
+                label: '🌍 Dual Espeak (Parallel)',
+                description: `Espeak servers: ${espeakRunning ? 'Server 1 ✓' : 'Server 1 ✗'} ${espeak2Running ? 'Server 2 ✓' : 'Server 2 ✗'}`,
+                detail: 'Fast parallel TTS processing for 100+ languages - Dual server setup for maximum speed',
+                backend: TTSBackend.Espeak
             },
             {
                 label: '🎯 XTTS-v2 (Universal)',
@@ -205,6 +241,8 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
                     await vscode.commands.executeCommand('lipcoder.switchToSileroGPT');
                 } else if (selected.backend === TTSBackend.EspeakGPT) {
                     await vscode.commands.executeCommand('lipcoder.switchToEspeakGPT');
+                } else if (selected.backend === TTSBackend.Espeak) {
+                    await vscode.commands.executeCommand('lipcoder.switchToEspeak');
                 } else if (selected.backend === TTSBackend.XTTSV2) {
                     await vscode.commands.executeCommand('lipcoder.switchToXTTSV2');
                 }
@@ -225,6 +263,7 @@ export function registerTTSBackendSwitch(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         switchToSileroGPTCommand,
         switchToEspeakGPTCommand,
+        switchToEspeakCommand,
         switchToXTTSV2Command,
         showTTSStatusCommand,
         selectTTSBackendCommand

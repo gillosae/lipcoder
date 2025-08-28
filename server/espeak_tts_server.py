@@ -1,4 +1,3 @@
-from asgiref.wsgi import WsgiToAsgi
 from flask import Flask, request, jsonify
 import subprocess
 import uuid
@@ -29,8 +28,7 @@ if not ESPEAK_AVAILABLE:
 else:
     logger.info("espeak-ng is available and ready")
 
-# Expose ASGI application for Uvicorn
-asgi_app = WsgiToAsgi(app)
+# Flask app for direct use
 
 @app.route('/tts', methods=['POST'])
 def tts():
@@ -156,4 +154,5 @@ def list_voices():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5005))
+    logger.info(f"Starting espeak-ng TTS server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False) 

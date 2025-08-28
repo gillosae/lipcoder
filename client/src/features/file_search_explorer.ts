@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk } from '../audio';
 import { stopReading } from './stop_reading';
 import { log, logError } from '../utils';
 
@@ -90,7 +90,7 @@ export function registerFileSearchExplorer(context: ExtensionContext) {
                 
                 if (csvFiles.length === 0) {
                     vscode.window.showInformationMessage('No CSV files found in workspace');
-                    await speakTokenList([{ tokens: ['No CSV files found'], category: undefined }]);
+                    await speakGPT('No CSV files found');
                     return;
                 }
                 
@@ -195,7 +195,7 @@ async function examineFileContent(filePath: string): Promise<FileContent> {
 async function displayFileSearchResults(results: FileSearchResult[], pattern: string) {
     if (results.length === 0) {
         vscode.window.showInformationMessage(`No files found matching pattern: ${pattern}`);
-        await speakTokenList([{ tokens: ['No files found'], category: undefined }]);
+        await speakGPT('No files found');
         return;
     }
     
@@ -213,7 +213,7 @@ async function displayFileSearchResults(results: FileSearchResult[], pattern: st
     });
     
     if (selected) {
-        await speakTokenList([{ tokens: ['Selected', selected.result.name], category: undefined }]);
+        await speakGPT(`Selected ${selected.result.name}`);
         
         // Ask what to do with the selected file
         const action = await vscode.window.showQuickPick([
@@ -246,7 +246,7 @@ async function displayCsvFileResults(csvFiles: FileSearchResult[]) {
     });
     
     if (selected) {
-        await speakTokenList([{ tokens: ['Selected CSV file', selected.file.name], category: undefined }]);
+        await speakGPT(`Selected CSV file ${selected.file.name}`);
         
         // Automatically examine CSV structure
         const content = await examineFileContent(selected.file.path);
@@ -535,7 +535,7 @@ async function showInteractiveFileBrowser() {
             
             if (selected.isDirectory) {
                 currentPath = selected.fullPath;
-                await speakTokenList([{ tokens: ['Entered', path.basename(selected.fullPath)], category: undefined }]);
+                await speakGPT(`Entered ${path.basename(selected.fullPath)}`);
             } else {
                 // It's a file, ask what to do
                 const action = await vscode.window.showQuickPick([
@@ -574,7 +574,7 @@ async function handleFileAction(file: FileSearchResult, action: string) {
         case 'open':
             const doc = await vscode.workspace.openTextDocument(file.path);
             await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-            await speakTokenList([{ tokens: ['Opened', file.name, 'in editor'], category: undefined }]);
+            await speakGPT(`Opened ${file.name} in editor`);
             break;
             
         case 'examine':
@@ -598,13 +598,13 @@ Extension: ${file.extension || 'none'}
             `.trim();
             
             vscode.window.showInformationMessage(info, { modal: true });
-            await speakTokenList([{ tokens: ['File info displayed'], category: undefined }]);
+            await speakGPT('File info displayed');
             break;
             
         case 'copy':
             await vscode.env.clipboard.writeText(file.path);
             vscode.window.showInformationMessage(`Copied path: ${file.path}`);
-            await speakTokenList([{ tokens: ['Path copied to clipboard'], category: undefined }]);
+            await speakGPT('Path copied to clipboard');
             break;
     }
 }

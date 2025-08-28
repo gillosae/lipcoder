@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
-import { playWave, speakTokenList, TokenChunk } from '../audio';
+import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak, clearAudioStoppingState } from '../audio';
 import { stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 import { config } from '../config';
 import { log } from '../utils';
+import { safeRegisterCommand, registerCommandsSafely } from '../command_utils';
 
 // Current syntax error navigation state
 let currentErrorIndex = 0;
@@ -89,11 +91,11 @@ async function navigateToErrorLocation(error: SyntaxError): Promise<void> {
 async function navigateToError(error: SyntaxError, index: number, total: number): Promise<void> {
     await navigateToErrorLocation(error);
     
-    // Speak the error information - simple format: "line N, error message"
+    // Use readInEspeak for fast combined reading of error information - simple format: "line N, error message"
     const simpleText = `line ${error.line + 1}, ${error.message}`;
     
     log(`[SyntaxErrors] Speaking: "${simpleText}"`);
-    speakTokenList([{ tokens: [simpleText], category: undefined }]);
+    readInEspeak([{ tokens: [simpleText], category: undefined }]).catch(console.error);
 }
 
 /**
@@ -125,7 +127,7 @@ async function initializeSyntaxErrorNavigation(editorArg?: vscode.TextEditor): P
     log(`[SyntaxErrors] Found ${errors.length} syntax errors in ${uri.fsPath}`);
     
     if (errors.length === 0) {
-        speakTokenList([{ tokens: ['No syntax errors found in this file'], category: undefined }]);
+        speakGPT('No syntax errors found in this file');
         return false;
     }
     
@@ -165,7 +167,7 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
     const errors = getSyntaxErrors(uri);
     
     if (errors.length === 0) {
-        speakTokenList([{ tokens: ['No syntax errors found in this file'], category: undefined }]);
+        speakGPT('No syntax errors found in this file');
         return;
     }
     
@@ -202,8 +204,13 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
     // Navigate to error on selection change
     quickPick.onDidChangeActive(async (activeItems) => {
         if (activeItems.length > 0) {
-            // Stop all audio (same pattern as other QuickPick features)
+            // Comprehensive audio stopping to handle all types including underbar sounds
+            log(`[SyntaxErrors] Manual navigation - stopping audio for error navigation`);
             stopAllAudio();
+            // Clear audio stopping state immediately to allow new audio to start right away
+            clearAudioStoppingState();
+            // Explicitly stop earcons to ensure they don't overlap
+            stopEarconPlayback();
             
             const item = activeItems[0];
             log(`[SyntaxErrors] Navigating to error ${item.index + 1} of ${errors.length}`);
@@ -211,10 +218,10 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
             // Navigate to the error location
             await navigateToErrorLocation(item.error);
             
-            // Speak clean TTS (same pattern as breadcrumb/function_list)
+            // Use readInEspeak for fast combined reading of error information
             const cleanText = `line ${item.error.line + 1}, ${item.error.message}`;
             log(`[SyntaxErrors] Speaking: "${cleanText}"`);
-            speakTokenList([{ tokens: [cleanText], category: undefined }]);
+            readInEspeak([{ tokens: [cleanText], category: undefined }]).catch(console.error);
         }
     });
     
@@ -326,7 +333,7 @@ async function firstSyntaxError(editorArg?: vscode.TextEditor): Promise<void> {
 /**
  * Register all syntax error navigation commands
  */
-export function registerSyntaxErrors(context: ExtensionContext) {
+export async function registerSyntaxErrors(context: ExtensionContext) {
     // Track active editor changes
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -341,35 +348,38 @@ export function registerSyntaxErrors(context: ExtensionContext) {
         lastActiveEditor = vscode.window.activeTextEditor;
     }
     
-    // Register commands
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.syntaxErrorList', async (editorArg?: vscode.TextEditor) => {
-            log('[SyntaxErrors] syntaxErrorList command called');
-            stopAllAudio();
-            await showSyntaxErrorList(editorArg);
-        })
-    );
-    
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.nextSyntaxError', async (editorArg?: vscode.TextEditor) => {
-            stopAllAudio();
-            await nextSyntaxError(editorArg);
-        })
-    );
-    
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.previousSyntaxError', async (editorArg?: vscode.TextEditor) => {
-            stopAllAudio();
-            await previousSyntaxError(editorArg);
-        })
-    );
-    
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.firstSyntaxError', async (editorArg?: vscode.TextEditor) => {
-            stopAllAudio();
-            await firstSyntaxError(editorArg);
-        })
-    );
+    // Register all syntax error commands using safe registration
+    await registerCommandsSafely(context, [
+        {
+            id: 'lipcoderDev.syntaxErrorList',
+            callback: async (editorArg?: vscode.TextEditor) => {
+                log('[SyntaxErrors] syntaxErrorList command called');
+                stopAllAudio();
+                await showSyntaxErrorList(editorArg);
+            }
+        },
+        {
+            id: 'lipcoder.nextSyntaxError',
+            callback: async (editorArg?: vscode.TextEditor) => {
+                stopAllAudio();
+                await nextSyntaxError(editorArg);
+            }
+        },
+        {
+            id: 'lipcoder.previousSyntaxError',
+            callback: async (editorArg?: vscode.TextEditor) => {
+                stopAllAudio();
+                await previousSyntaxError(editorArg);
+            }
+        },
+        {
+            id: 'lipcoder.firstSyntaxError',
+            callback: async (editorArg?: vscode.TextEditor) => {
+                stopAllAudio();
+                await firstSyntaxError(editorArg);
+            }
+        }
+    ]);
     
     // Listen for diagnostic changes to update current errors
     context.subscriptions.push(

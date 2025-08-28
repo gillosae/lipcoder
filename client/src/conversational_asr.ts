@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { log, logError, logSuccess, logWarning } from './utils';
 import { callLLMForCompletion, getOpenAIClient, getClaudeClient } from './llm';
 import { currentLLMBackend, LLMBackend, claudeConfig } from './config';
-import { speakTokenList, TokenChunk, playEarcon, startThinkingAudio, stopThinkingAudio, playThinkingFinished } from './audio';
+import { speakTokenList, speakGPT, TokenChunk, playEarcon, startThinkingAudio, stopThinkingAudio, playThinkingFinished } from './audio';
 import { CommandRouter } from './command_router';
 import { activateVibeCoding } from './features/vibe_coding';
 import { isTerminalSuggestionDialogActive } from './features/terminal';
@@ -87,6 +87,9 @@ export class ConversationalASRProcessor {
             if (response.shouldSpeak) {
                 await this.speakResponse(response.response);
             }
+            
+            // Clear actions for ASR commands to prevent continuing quickpicks
+            response.actions = [];
             
             return response;
             
@@ -279,6 +282,7 @@ IMPORTANT CLASSIFICATION RULES:
 - If the user mentions implementing, creating, adding, modifying, completing, or working on code → vibe_coding
 - If the user wants to navigate, search, open, or perform editor actions → command
 - If the user asks "what", "how", "why" about code → question
+- If the user asks about images, pictures, graphics, charts, or visual content → command (image description)
 
 Examples:
 - "What does this function do?" → question
@@ -298,15 +302,38 @@ Examples:
 - "Read line tokens" → command
 - "Find function main" → command
 - "Terminal up" → command
+- "파이썬 파일 열어줘" → command (parameters: {"fileType": "python"})
+- "Python 파일 열어줘" → command (parameters: {"fileType": "python"})
+- "open python file" → command (parameters: {"fileType": "python"})
+- "자바스크립트 파일 열어" → command (parameters: {"fileType": "javascript"})
+- "open javascript file" → command (parameters: {"fileType": "javascript"})
+
+IMAGE DESCRIPTION EXAMPLES (all → command):
+- "그림에서 막대의 색이 다른지 알려줘" → command
+- "이미지에서 뭐가 보이는지 설명해줘" → command  
+- "차트에서 어떤 데이터를 보여주는지 말해줘" → command
+- "그래프의 트렌드가 어떻게 되는지 알려줘" → command
+- "사진에서 몇 개의 객체가 있는지 세어줘" → command
+- "그림에서 텍스트가 뭐라고 써있는지 읽어줘" → command
+- "이미지의 색깔이 어떻게 다른지 설명해줘" → command
+- "그림에서 사람이 몇 명인지 알려줘" → command
+- "차트의 최대값이 뭔지 말해줘" → command
 
 VIBE CODING KEYWORDS: implement, create, add, modify, complete, generate, write, build, make, develop, code, function, class, method, fix, improve, refactor, change
+
+IMAGE DESCRIPTION KEYWORDS: 그림, 이미지, 사진, 차트, 그래프, 도표, 막대, 색깔, 색상, 개수, 몇 개, 몇 명, 텍스트, 글자, 문자, 숫자, 데이터, 트렌드, 경향, 최대값, 최소값, picture, image, chart, graph, color, count, text, number, data, trend
 
 Respond in JSON format:
 {
   "type": "question|command|vibe_coding|clarification|unknown",
   "confidence": 0.95,
   "intent": "brief description of what user wants",
-  "parameters": {"key": "value"}
+  "parameters": {
+    "fileType": "python|javascript|typescript|json|markdown|text|css|html|java|cpp|c|shell",
+    "filename": "specific_filename.ext",
+    "operation": "open|save|close|format",
+    "other": "value"
+  }
 }`;
 
         const userPrompt = `User said: "${text}"
@@ -672,60 +699,20 @@ Provide a brief acknowledgment:`;
     }
 
     /**
-     * Handle vibe coding intents - now saves suggestions instead of immediately executing
+     * Handle vibe coding intents - execute immediately for code creation requests
      */
     private async handleVibeCoding(intent: ConversationalIntent): Promise<ConversationalResponse> {
-        const response = "I'll analyze your request and prepare suggestions. Say 'continue' when ready to see options.";
-        
         try {
-            // Generate suggestions without executing vibe coding immediately
-            let actions: ConversationalAction[] = [];
+            // Execute vibe coding immediately for code creation requests
+            log(`[ConversationalASR] Executing vibe coding immediately for: ${intent.originalText}`);
             
-            // Check if terminal suggestions are active - if so, don't show additional suggestions
-            if (!isTerminalSuggestionDialogActive()) {
-                log(`[ConversationalASR] Terminal suggestions not active, generating dynamic suggestions`);
-                actions = await this.generateDynamicSuggestions(intent);
-                
-                // Add the original vibe coding action as the first suggestion
-                const vibeCodingAction: ConversationalAction = {
-                    id: 'vibe_coding_original',
-                    label: `Execute: ${intent.originalText}`,
-                    description: 'Execute the original vibe coding request',
-                    command: 'vibe_coding',
-                    parameters: { instruction: intent.originalText },
-                    type: 'code'
-                };
-                actions.unshift(vibeCodingAction);
-            } else {
-                log(`[ConversationalASR] Terminal suggestions active, creating basic vibe coding suggestion`);
-                // Even if terminal suggestions are active, create a basic suggestion
-                actions = [{
-                    id: 'vibe_coding_original',
-                    label: `Execute: ${intent.originalText}`,
-                    description: 'Execute the original vibe coding request',
-                    command: 'vibe_coding',
-                    parameters: { instruction: intent.originalText },
-                    type: 'code'
-                }];
-            }
-
-            // Save suggestions instead of executing immediately
-            if (actions.length > 0) {
-                const editor = vscode.window.activeTextEditor;
-                const context = editor ? {
-                    fileName: editor.document.fileName,
-                    lineNumber: editor.selection.active.line,
-                    selectedText: editor.document.getText(editor.selection)
-                } : undefined;
-                
-                saveSuggestions(intent.originalText, actions, context);
-                log(`[ConversationalASR] Saved ${actions.length} suggestions for vibe coding request`);
-            }
-
+            // Call activateVibeCoding directly with the instruction
+            await activateVibeCoding(intent.originalText, { suppressConversationalASR: true });
+            
             return {
-                response: "", // Return empty response to prevent any popup
-                actions: [], // Return empty actions since we're saving them
-                shouldSpeak: false // Don't speak anything
+                response: "Executing your code request...",
+                actions: [],
+                shouldSpeak: false // Let vibe coding handle its own audio feedback
             };
         } catch (error) {
             return this.createErrorResponse(intent.originalText);
@@ -1196,10 +1183,46 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
      */
     private async tryExecuteCommand(intent: ConversationalIntent): Promise<boolean | string> {
         try {
+            // First, try exact commands for fast execution
+            const { tryExactCommand } = await import('./features/exact_commands.js');
+            const exactResult = await tryExactCommand(intent.originalText);
+            if (exactResult) {
+                log(`[ConversationalASR] Exact command executed successfully: "${intent.originalText}"`);
+                return true;
+            }
+            
             // Map common intents to commands
             const text = intent.originalText.toLowerCase();
             
-            // Handle panel navigation commands first
+            // Check for image description commands first
+            const imageKeywords = [
+                '그림', '이미지', '사진', '차트', '그래프', '도표', '막대', '막대들', '색깔', '색상', 
+                '개수', '몇 개', '몇 명', '텍스트', '글자', '문자', '숫자', '데이터', 
+                '트렌드', '경향', '최대값', '최소값', 'picture', 'image', 'chart', 
+                'graph', 'color', 'count', 'text', 'number', 'data', 'trend', 'bars'
+            ];
+            
+            const hasImageKeyword = imageKeywords.some(keyword => text.includes(keyword));
+            const isImageQuestion = text.includes('뭐가') || text.includes('어떻게') || 
+                                  text.includes('몇') || text.includes('어떤') || 
+                                  text.includes('다른지') || text.includes('같은지') || text.includes('다르니') ||
+                                  text.includes('what') || text.includes('how') || 
+                                  text.includes('many') || text.includes('different');
+            
+            if (hasImageKeyword && (isImageQuestion || text.includes('설명') || text.includes('분석') || text.includes('describe') || text.includes('analyze'))) {
+                log(`[ConversationalASR] 🖼️ Image description command detected: "${intent.originalText}"`);
+                try {
+                    // Import and execute image description function
+                    const { selectAndAnalyzeImage } = await import('./features/image_description.js');
+                    await selectAndAnalyzeImage();
+                    return true; // Command executed successfully
+                } catch (error) {
+                    log(`[ConversationalASR] Error executing image description: ${error}`);
+                    return false;
+                }
+            }
+            
+            // Handle panel navigation commands
             if (text.includes('explorer') || text.includes('file explorer')) {
                 await vscode.commands.executeCommand('workbench.view.explorer');
                 return 'navigation';
@@ -1290,6 +1313,58 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                 }
             }
             
+            // Handle file type opening requests before CommandRouter
+            const fileTypeMatch = text.match(/(?:파이썬|python|자바스크립트|javascript|타입스크립트|typescript|제이슨|json|마크다운|markdown|텍스트|text|씨에스에스|css|에이치티엠엘|html|자바|java|씨플플|cpp|씨|c|쉘|shell)\s*파일\s*열어/i);
+            if (fileTypeMatch || text.match(/open\s+(?:python|javascript|typescript|json|markdown|text|css|html|java|cpp|c|shell)\s+file/i)) {
+                log(`[ConversationalASR] 📁 File type opening request detected: "${intent.originalText}"`);
+                
+                // Extract file type from intent parameters or text
+                let fileType = intent.parameters?.fileType;
+                if (!fileType) {
+                    // Extract from text
+                    const typeMap: { [key: string]: string } = {
+                        '파이썬': 'python', 'python': 'python',
+                        '자바스크립트': 'javascript', 'javascript': 'javascript',
+                        '타입스크립트': 'typescript', 'typescript': 'typescript',
+                        '제이슨': 'json', 'json': 'json',
+                        '마크다운': 'markdown', 'markdown': 'markdown',
+                        '텍스트': 'text', 'text': 'text',
+                        '씨에스에스': 'css', 'css': 'css',
+                        '에이치티엠엘': 'html', 'html': 'html',
+                        '자바': 'java', 'java': 'java',
+                        '씨플플': 'cpp', 'cpp': 'cpp',
+                        '씨': 'c', 'c': 'c',
+                        '쉘': 'shell', 'shell': 'shell'
+                    };
+                    
+                    for (const [key, value] of Object.entries(typeMap)) {
+                        if (text.includes(key)) {
+                            fileType = value;
+                            break;
+                        }
+                    }
+                }
+                
+                if (fileType) {
+                    try {
+                        // Create CommandRouter with file type parameters
+                        const commandRouter = new CommandRouter();
+                        
+                        // Create a modified text that CommandRouter can understand
+                        const modifiedText = `open ${fileType} file`;
+                        log(`[ConversationalASR] 📁 Routing file type request to CommandRouter: "${modifiedText}"`);
+                        
+                        const result = await commandRouter.processTranscription(modifiedText);
+                        if (result) {
+                            log(`[ConversationalASR] 📁 File type opening handled successfully`);
+                            return true;
+                        }
+                    } catch (error) {
+                        log(`[ConversationalASR] 📁 File type opening failed: ${error}`);
+                    }
+                }
+            }
+            
             // Try routing through the existing command router
             try {
                 log(`[ConversationalASR] About to create CommandRouter...`);
@@ -1363,16 +1438,38 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
             // Play a subtle notification sound first
             await playEarcon('suggestion');
             
-            // Convert response to token chunks for TTS
-            const chunks: TokenChunk[] = [{
-                tokens: [response],
-                category: 'comment' // Use comment voice for conversational responses
-            }];
+            // Check if this is a success message - use GPT voice for better feedback
+            const isSuccessMessage = this.isSuccessMessage(response);
             
-            await speakTokenList(chunks);
+            if (isSuccessMessage) {
+                // Use GPT voice for success messages
+                await speakGPT(response);
+            } else {
+                // Convert response to token chunks for TTS
+                const chunks: TokenChunk[] = [{
+                    tokens: [response],
+                    category: 'comment' // Use comment voice for conversational responses
+                }];
+                
+                await speakTokenList(chunks);
+            }
         } catch (error) {
             logError(`[ConversationalASR] TTS error: ${error}`);
         }
+    }
+
+    /**
+     * Check if a response is a success message that should use GPT voice
+     */
+    private isSuccessMessage(response: string): boolean {
+        const successPatterns = [
+            'saved', 'formatted', 'copied', 'pasted', 'deleted', 'closed', 'opened', 'done',
+            'command executed successfully', 'executed successfully', 'completed successfully',
+            'applied successfully', 'changes applied'
+        ];
+        
+        const lowerResponse = response.toLowerCase();
+        return successPatterns.some(pattern => lowerResponse.includes(pattern));
     }
 
     /**
@@ -1442,10 +1539,14 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
         
         // Patterns for opening specific files
         const openFilePatterns = [
-            /open\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,
-            /show\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,
-            /edit\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,
-            /load\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i
+            /open\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,  // "open filename.py"
+            /show\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,  // "show filename.py"
+            /edit\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,  // "edit filename.py"
+            /load\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,  // "load filename.py"
+            /^open([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)$/i,   // "openfilename.py" (concatenated)
+            /^show([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)$/i,   // "showfilename.py" (concatenated)
+            /^edit([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)$/i,   // "editfilename.py" (concatenated)
+            /^load([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)$/i    // "loadfilename.py" (concatenated)
         ];
         
         for (const pattern of openFilePatterns) {

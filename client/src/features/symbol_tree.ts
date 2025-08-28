@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
-import { playWave, speakTokenList, TokenChunk } from '../audio';
+import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak } from '../audio';
 import { config } from '../config';
 import { stopReading, lineAbortController } from './stop_reading';
 import { log } from '../utils';
@@ -26,7 +26,7 @@ export function registerSymbolTree(context: ExtensionContext) {
             const editor = editorArg || vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
-                speakTokenList([{ tokens: ['Open a File First!'], category: undefined }]);
+                speakGPT('Open a File First!');
                 return;
             }
             const originalSelection = editor.selection;
@@ -72,7 +72,7 @@ export function registerSymbolTree(context: ExtensionContext) {
 
             // Handle movement
             quickPick.onDidChangeActive(async active => {
-                stopReading();
+                // Stop auto-iteration if the user navigates manually
                 if (autoTimer) {
                     clearInterval(autoTimer);
                     autoTimer = null;
@@ -83,11 +83,18 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const pos = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos));
+                    
+                    // Comprehensive audio stopping to handle all types including underbar sounds
+                    log(`[SymbolTree] Manual navigation - stopping audio for symbol: ${label}`);
+                    stopReading();
+                    
                     const MAX_INDENT_UNITS = 5;
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakTokenList([{ tokens: [label], category: undefined }]);
+                    
+                    // Use readInEspeak for fast combined reading of symbol names
+                    readInEspeak([{ tokens: [label], category: undefined }]).catch(console.error);
                 }
             });
 
@@ -102,10 +109,11 @@ export function registerSymbolTree(context: ExtensionContext) {
                     const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    speakTokenList([{ 
+                    // Use readInEspeak for fast combined reading of acceptance message
+                    readInEspeak([{ 
                         tokens: [`moved to symbol ${label} line ${line + 1}`], 
                         category: undefined 
-                    }], lineAbortController.signal);
+                    }], lineAbortController.signal).catch(console.error);
                 }
                 quickPick.hide();
             });
@@ -118,14 +126,14 @@ export function registerSymbolTree(context: ExtensionContext) {
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
                     stopReading();
-                    speakTokenList([{ tokens: [`back to line ${pos.line + 1}`], category: undefined }]);
+                    speakGPT(`back to line ${pos.line + 1}`);
                 }
                 quickPick.dispose();
             });
 
             stopReading();
             quickPick.show();
-            speakTokenList([{ tokens: ['symbols'], category: undefined }]);
+            speakGPT('symbols');
 
             // Auto-iterate
             let idx = 0;

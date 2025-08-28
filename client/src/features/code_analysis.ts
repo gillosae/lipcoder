@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk } from '../audio';
 import { log, logError, logSuccess } from '../utils';
 import { getOpenAIClient } from '../llm';
 
@@ -65,22 +65,38 @@ export async function analyzeCodeWithQuestion(question: string): Promise<void> {
 }
 
 /**
- * Get comprehensive code context from the current editor
+ * Get comprehensive code context from the current editor with smart context selection
  */
 async function getCodeContext(editor: vscode.TextEditor): Promise<CodeContext> {
     const document = editor.document;
     const selection = editor.selection;
     const position = editor.selection.active;
     
+    // Get full text for small files, focused context for large files
+    const fullText = document.getText();
+    const isLargeFile = fullText.length > 10000; // 10KB threshold
+    
+    let contextText = fullText;
+    if (isLargeFile) {
+        // For large files, provide focused context around cursor position
+        const contextRadius = 50; // lines before and after cursor
+        const startLine = Math.max(0, position.line - contextRadius);
+        const endLine = Math.min(document.lineCount - 1, position.line + contextRadius);
+        const contextRange = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+        contextText = document.getText(contextRange);
+        
+        log(`[CodeAnalysis] Large file detected (${fullText.length} chars), using focused context: lines ${startLine + 1}-${endLine + 1}`);
+    }
+    
     const context: CodeContext = {
         fileName: document.fileName,
         language: document.languageId,
         selectedText: document.getText(selection),
-        fullText: document.getText(),
+        fullText: contextText, // Use focused context for large files
         cursorPosition: position
     };
     
-    // Try to get current function name
+    // Try to get current function name and details
     try {
         const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
             'vscode.executeDocumentSymbolProvider',
@@ -91,6 +107,9 @@ async function getCodeContext(editor: vscode.TextEditor): Promise<CodeContext> {
             const currentFunction = findCurrentFunction(symbols, position);
             if (currentFunction) {
                 context.currentFunction = currentFunction.name;
+                log(`[CodeAnalysis] Found current function: ${currentFunction.name} at line ${currentFunction.range.start.line + 1}`);
+            } else {
+                log(`[CodeAnalysis] No current function found at cursor position line ${position.line + 1}`);
             }
         }
     } catch (error) {
@@ -156,11 +175,11 @@ Special handling for Korean function analysis questions:
 - When asked "지금 내가 있는 함수는 뭐하는 함수야?" or similar, focus on explaining the current function's purpose, parameters, return value, and main logic.
 - Provide detailed explanations in Korean including what the function does, how it works, and its role in the codebase.
 
-Provide a clear, concise answer in the same language as the question. If the question is in Korean, answer in Korean. If in English, answer in English.
+IMPORTANT: Keep your answer concise and focused (under 150 characters for the main answer). Provide a clear, direct response in the same language as the question. If the question is in Korean, answer in Korean. If in English, answer in English.
 
 Response format:
 {
-  "answer": "Direct answer to the question",
+  "answer": "Direct, concise answer to the question (under 150 characters)",
   "details": "Additional details if needed (optional)",
   "statistics": {
     "functions": number_of_functions,
@@ -285,7 +304,7 @@ async function performBasicAnalysis(question: string, context: CodeContext): Pro
 }
 
 /**
- * Show result in popup and speak it
+ * Show result in status bar and speak it (non-intrusive bottom-right notification)
  */
 async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
     const { question, answer, details, statistics } = result;
@@ -294,18 +313,21 @@ async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
     log(`[CodeAnalysis] 📋 Question: "${question}"`);
     log(`[CodeAnalysis] 📋 Answer: "${answer}"`);
     
-    // Prepare display message
+    // Prepare display message for status bar (keep it concise)
     let displayMessage = answer;
-    if (details) {
-        displayMessage += `\n\n${details}`;
-    }
     if (statistics) {
-        displayMessage += `\n\n통계: 함수 ${statistics.functions}개, 변수 ${statistics.variables}개, 클래스 ${statistics.classes}개, 총 ${statistics.lines}줄`;
+        displayMessage += ` (함수 ${statistics.functions}개, 변수 ${statistics.variables}개, 클래스 ${statistics.classes}개, ${statistics.lines}줄)`;
     }
     
-    // Show non-modal notification popup (bottom-right corner)
-    log(`[CodeAnalysis] 📋 Showing popup with message: "${displayMessage}"`);
-    vscode.window.showInformationMessage(displayMessage);
+    // Show non-intrusive status bar message (appears at bottom-right)
+    log(`[CodeAnalysis] 📋 Showing status bar message: "${displayMessage}"`);
+    vscode.window.setStatusBarMessage(`💬 ${displayMessage}`, 8000); // Show for 8 seconds
+    
+    // Always show a non-blocking notification for code analysis results
+    // This ensures the user gets visual feedback without intrusive quickpicks
+    const fullMessage = details ? `${answer}\n\n${details}` : answer;
+    log(`[CodeAnalysis] 📋 Showing information message: "${fullMessage}"`);
+    vscode.window.showInformationMessage(fullMessage, { modal: false });
     
     // Speak the answer as plain text
     log(`[CodeAnalysis] 📋 About to call speakAnalysisResult...`);
@@ -315,74 +337,45 @@ async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
 }
 
 /**
- * Convert analysis result to speech
+ * Convert analysis result to speech using simple TTS approach
  */
 async function speakAnalysisResult(answer: string): Promise<void> {
     try {
-        log(`[CodeAnalysis] 🔊 ATTEMPTING TO SPEAK: "${answer}"`);
+        log(`[CodeAnalysis] 🔊 Speaking analysis result: "${answer}"`);
         
-        // Try multiple approaches to ensure speech works
-        
-        // Method 1: Use comment category (known to work)
-        log(`[CodeAnalysis] 🔊 Method 1: Trying with comment category...`);
-        try {
-            const chunks1: TokenChunk[] = [{
-                tokens: [answer],
-                category: 'comment'  // Use comment category which should work
-            }];
+        // Truncate very long responses to prevent filename length errors
+        let speechText = answer;
+        if (answer.length > 200) {
+            // Find a good breaking point (sentence end or period)
+            const truncated = answer.substring(0, 200);
+            const lastPeriod = truncated.lastIndexOf('.');
+            const lastExclamation = truncated.lastIndexOf('!');
+            const lastQuestion = truncated.lastIndexOf('?');
             
-            log(`[CodeAnalysis] 🔊 Calling speakTokenList with comment category: ${JSON.stringify(chunks1)}`);
-            await speakTokenList(chunks1);
-            log(`[CodeAnalysis] 🔊 Method 1 (comment category) completed successfully`);
-            return; // Success, exit early
-        } catch (method1Error) {
-            logError(`[CodeAnalysis] 🚨 Method 1 failed: ${method1Error}`);
+            const breakPoint = Math.max(lastPeriod, lastExclamation, lastQuestion);
+            if (breakPoint > 100) {
+                speechText = answer.substring(0, breakPoint + 1);
+            } else {
+                speechText = truncated + "...";
+            }
+            
+            log(`[CodeAnalysis] 🔊 Truncated long response from ${answer.length} to ${speechText.length} characters`);
         }
         
-        // Method 2: Use undefined category (original approach)
-        log(`[CodeAnalysis] 🔊 Method 2: Trying with undefined category...`);
-        try {
-            const chunks2: TokenChunk[] = [{
-                tokens: [answer],
-                category: undefined  // No category = plain text TTS
-            }];
-            
-            log(`[CodeAnalysis] 🔊 Calling speakTokenList with undefined category: ${JSON.stringify(chunks2)}`);
-            await speakTokenList(chunks2);
-            log(`[CodeAnalysis] 🔊 Method 2 (undefined category) completed successfully`);
-            return; // Success, exit early
-        } catch (method2Error) {
-            logError(`[CodeAnalysis] 🚨 Method 2 failed: ${method2Error}`);
-        }
+        // Use GPT voice for code analysis responses (force OpenAI TTS)
+        const chunks: TokenChunk[] = [{
+            tokens: [speechText],
+            category: 'vibe_text'  // Force OpenAI TTS for code analysis responses
+        }];
         
-        // Method 3: Direct TTS call
-        log(`[CodeAnalysis] 🔊 Method 3: Trying direct TTS generation...`);
-        try {
-            const { genTokenAudio } = await import('../tts.js');
-            const audioPath = await genTokenAudio(answer, undefined);
-            log(`[CodeAnalysis] 🔊 Direct TTS generated audio at: ${audioPath}`);
-            
-            const { playWave } = await import('../audio.js');
-            await playWave(audioPath);
-            log(`[CodeAnalysis] 🔊 Method 3 (direct TTS) completed successfully`);
-            return; // Success, exit early
-        } catch (method3Error) {
-            logError(`[CodeAnalysis] 🚨 Method 3 failed: ${method3Error}`);
-        }
-        
-        throw new Error('All speech methods failed');
+        await speakTokenList(chunks);
+        log(`[CodeAnalysis] 🔊 Speech completed successfully`);
         
     } catch (error) {
-        logError(`[CodeAnalysis] 🚨 ALL SPEECH METHODS FAILED: ${error}`);
-        logError(`[CodeAnalysis] 🚨 Error stack: ${error instanceof Error ? error.stack : 'No stack'}`);
+        logError(`[CodeAnalysis] 🚨 Speech failed: ${error}`);
         
-        // Try fallback speech method
-        try {
-            log(`[CodeAnalysis] 🔊 Trying fallback notification...`);
-            vscode.window.showInformationMessage(`Speaking: ${answer}`);
-        } catch (fallbackError) {
-            logError(`[CodeAnalysis] 🚨 Fallback also failed: ${fallbackError}`);
-        }
+        // Fallback: show status bar message indicating speech failure
+        vscode.window.setStatusBarMessage(`🔊 Speech failed: ${answer.substring(0, 100)}...`, 5000);
     }
 }
 

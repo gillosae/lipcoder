@@ -68,6 +68,44 @@ export function splitCamel(id: string): string[] {
     return id.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g) || [id];
 }
 
+// Helper to detect date-like formats that should be spelled out as individual digits
+export function isDateLikeFormat(digits: string): boolean {
+    const len = digits.length;
+    
+    // Common date formats that should be spelled out:
+    // DDMMYY (6 digits), DDMMYYYY (8 digits), YYYYMMDD (8 digits)
+    // HHMMSS (6 digits), timestamps, IDs, etc.
+    
+    if (len === 6) {
+        // Could be DDMMYY, HHMMSS, or other 6-digit formats
+        // These are typically better read as individual digits
+        return true;
+    }
+    
+    if (len === 8) {
+        // Could be DDMMYYYY, YYYYMMDD, or other 8-digit formats
+        // These are typically better read as individual digits
+        return true;
+    }
+    
+    if (len === 4) {
+        // Could be YYYY year format - check if it looks like a recent year
+        const num = parseInt(digits, 10);
+        if (num >= 1900 && num <= 2100) {
+            // Years are often better read as individual digits (e.g., "2024" as "2 0 2 4")
+            return true;
+        }
+    }
+    
+    // For very long digit sequences (9+ digits), likely IDs or timestamps
+    if (len >= 9) {
+        return true;
+    }
+    
+    // Short sequences (1-3 digits) are usually better as numbers
+    return false;
+}
+
 
 /**
  * Split input text into tokens:
@@ -288,8 +326,15 @@ export function splitWordChunks(text: string): string[] {
                         result.push(run);
                     }
                 } else if (/^\d+$/.test(run)) {
-                    // 4. Digit runs: keep as complete numbers for better TTS pronunciation
-                    result.push(run);
+                    // 4. Digit runs: Check if this looks like a date format or ID that should be spelled out
+                    if (isDateLikeFormat(run)) {
+                        // Split date-like formats (DDMMYY, DDMMYYYY, etc.) into individual digits
+                        log(`[splitWordChunks] Date-like format detected: "${run}" → splitting into individual digits`);
+                        for (const digit of run) result.push(digit);
+                    } else {
+                        // Keep as complete numbers for better TTS pronunciation
+                        result.push(run);
+                    }
                 } else {
                     // 4. Special runs: split into individual characters
                     for (const ch of run) result.push(ch);

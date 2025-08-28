@@ -1,7 +1,7 @@
 // client/src/features/switch_panel.ts
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk } from '../audio';
 
 interface PanelItem {
     label: string;
@@ -62,9 +62,9 @@ export function registerSwitchPanel(context: ExtensionContext) {
                     setTimeout(async () => {
                         const newActiveEditor = vscode.window.activeTextEditor;
                         if (newActiveEditor) {
-                            await speakTokenList([{ tokens: ['in editor'], category: undefined }]);
+                            await speakGPT('in editor');
                         } else {
-                            await speakTokenList([{ tokens: ['No files open in editor'], category: undefined }]);
+                            await speakGPT('No files open in editor');
                         }
                     }, 200);
                     return;

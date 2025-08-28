@@ -4,7 +4,7 @@ import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk } from '../audio';
 
 export function registerBreadcrumb(
     context: ExtensionContext,
@@ -49,7 +49,7 @@ export function registerBreadcrumb(
                 ? `You are in ${relativePath} ${pathItems[0].label}`
                 : `You are in ${relativePath}`;
             stopReading();
-            await speakTokenList([{ tokens: [message], category: undefined }]);
+            await speakGPT(message);
             if (pathItems.length === 0) {
                 vscode.window.showInformationMessage(message);
                 return;
@@ -79,7 +79,7 @@ export function registerBreadcrumb(
                 const sel = quickPick.activeItems[0];
                 if (sel) {
                     stopReading();
-                    speakTokenList([{ tokens: [`moved to ${sel.label} line ${sel.line + 1}`], category: undefined }]);
+                    speakGPT(`moved to ${sel.label} line ${sel.line + 1}`);
                 }
                 quickPick.hide();
             });
@@ -91,7 +91,7 @@ export function registerBreadcrumb(
                         editor.selection = originalSelection;
                         editor.revealRange(new vscode.Range(pos0, pos0));
                         stopReading();
-                        speakTokenList([{ tokens: [`back to line ${pos0.line + 1}`], category: undefined }]);
+                        speakGPT(`back to line ${pos0.line + 1}`);
                     }
                     quickPick.dispose();
                 }

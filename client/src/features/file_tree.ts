@@ -2,7 +2,7 @@
 
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { playWave, speakTokenList, TokenChunk } from '../audio';
+import { playWave, speakTokenList, speakGPT, TokenChunk } from '../audio';
 import { config } from '../config';
 import * as path from 'path';
 
@@ -72,7 +72,7 @@ export function registerFileTree(context: ExtensionContext) {
             printTree(tree);
 
             // 2) File tree built but automatic reading disabled
-            await speakTokenList([{ tokens: ['File tree built. Use explorer navigation to browse files.'], category: undefined }]);
+            await speakGPT('File tree built. Use explorer navigation to browse files.');
             
             // Removed automatic file tree reading - users can navigate manually
             fileTreeAbortController = null; // Done

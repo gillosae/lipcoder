@@ -4,7 +4,7 @@ import { isFileTreeReading } from './file_tree';
 import { stopReading, getLineTokenReadingActive, stopForCursorMovement, stopAllAudio, lineAbortController, setLineTokenReadingActive } from './stop_reading';
 import { speakTokenList, TokenChunk } from '../audio';
 import { readWordTokens } from './read_word_tokens';
-import { readTextTokens } from './read_text_tokens';
+import { readTextTokens, getReadTextTokensActive } from './read_text_tokens';
 import { config } from '../config';
 import { updateLineSeverity } from './line_severity';
 import { shouldSuppressReadingEnhanced } from './debug_console_detection';
@@ -131,11 +131,10 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
 
     // Track recent typing to prevent double audio on cursor movement
     let lastTypingTime = 0;
-    const TYPING_DETECTION_WINDOW_MS = 5; // Consider cursor movements within 5ms of typing as typing-related
+    const TYPING_DETECTION_WINDOW_MS = 100; // Consider cursor movements within 100ms of typing as typing-related
     
-    cursorTimeout = setTimeout(() => { 
-        readyForCursor = true; 
-    }, 2000);
+    // Set readyForCursor immediately - no delay needed for cursor movement
+    readyForCursor = true;
 
     // Indentation tracking (moved from extension)
     const indentLevels: Map<string, number> = new Map();
@@ -306,40 +305,62 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection(async (e) => {
             try {
-                if (!readyForCursor) return;
-                if (e.kind !== vscode.TextEditorSelectionChangeKind.Keyboard) return;
+                log(`[NavEditor] 🔍 CURSOR SELECTION CHANGE - readyForCursor: ${readyForCursor}, kind: ${e.kind}, selections: ${e.selections.length}`);
+                
+                if (!readyForCursor) {
+                    log(`[NavEditor] ❌ BLOCKED - readyForCursor is false`);
+                    return;
+                }
+                if (e.kind !== vscode.TextEditorSelectionChangeKind.Keyboard) {
+                    log(`[NavEditor] ❌ BLOCKED - not keyboard selection (kind: ${e.kind})`);
+                    return;
+                }
                 
                 // PRIORITY: Always process cursor movements that change lines, regardless of other conditions
                 const newLineNum = e.selections[0].start.line;
                 const isLineChange = currentLineNum !== newLineNum;
+                log(`[NavEditor] 📍 Line check: current=${currentLineNum}, new=${newLineNum}, isLineChange=${isLineChange}`);
+                
                 if (isLineChange) {
-                    log(`[NavEditor] PRIORITY: Line change detected ${currentLineNum} → ${newLineNum}`);
+                    log(`[NavEditor] ✅ PRIORITY: Line change detected ${currentLineNum} → ${newLineNum}`);
                 }
 
                 // Check if we should suppress reading for debug console or other panels
                 if (shouldSuppressReadingEnhanced(e.textEditor)) {
-                    log('[NavEditor] Suppressing reading for debug console or other panel');
+                    log('[NavEditor] ❌ BLOCKED - shouldSuppressReadingEnhanced returned true');
                     return;
                 }
 
                 const doc = e.textEditor.document;
                 const scheme = doc.uri.scheme;
-                if (scheme === 'output' || scheme !== 'file') return;
-                if (e.textEditor.viewColumn === undefined) return;
+                log(`[NavEditor] 📄 Document check: scheme=${scheme}, viewColumn=${e.textEditor.viewColumn}`);
+                
+                if (scheme === 'output' || scheme !== 'file') {
+                    log(`[NavEditor] ❌ BLOCKED - invalid scheme: ${scheme}`);
+                    return;
+                }
+                if (e.textEditor.viewColumn === undefined) {
+                    log(`[NavEditor] ❌ BLOCKED - viewColumn is undefined`);
+                    return;
+                }
 
                 const lineNum = newLineNum; // Use the already calculated line number
-                if (!isLineChange) return; // Skip if no line change detected
+                if (!isLineChange) {
+                    log(`[NavEditor] ❌ BLOCKED - no line change detected`);
+                    return; // Skip if no line change detected
+                }
 
                 // Skip audio minimap processing if this cursor movement was caused by recent typing
                 const timeSinceTyping = Date.now() - lastTypingTime;
                 const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
+                log(`[NavEditor] ⏱️ Timing check: timeSinceTyping=${timeSinceTyping}ms, isTypingRelated=${isTypingRelated}`);
                 
                 if (!isTypingRelated) {
                     // ULTRA-AGGRESSIVE STOP: Stop all audio immediately when cursor moves to new line
                     // This is especially important for Korean TTS which can take longer to generate
                     log('[NavEditor] CURSOR MOVEMENT DETECTED - ULTRA-AGGRESSIVE AUDIO STOP');
                     
-                    // 1. Cancel any pending line read from previous cursor movement FIRST
+                    // 1. Cancel any pending line read from previous cursor movement FIRST (no longer needed with immediate reading)
                     if (pendingLineReadTimeout) {
                         clearTimeout(pendingLineReadTimeout);
                         pendingLineReadTimeout = null;
@@ -400,22 +421,32 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                         resetSpeedTracking(lineNum, e.textEditor); // Pass current line and editor
                     }, 75);
                 } else if (!isTypingRelated && config.cursorLineReadingEnabled) {
-                    // Only use regular line token reading if continuous tone is NOT playing and not typing
-                    if (!isContinuousTonePlaying()) {
-                        // Reduced delay for more responsive cursor movement
-                        pendingLineReadTimeout = setTimeout(() => {
-                            pendingLineReadTimeout = null;
-                            // Double-check that we're still on the same line and should read
-                            if (e.textEditor === vscode.window.activeTextEditor && 
-                                e.textEditor.selection.active.line === lineNum) {
-                                log('[NavEditor] Starting line reading after cursor movement');
-                                vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
-                                    .then(undefined, err => console.error('readLineTokens failed:', err));
-                            }
-                        }, 50); // Reduced to 50ms for more responsive cursor movement
-                    } else {
-                        log('[NavEditor] Skipping readLineTokens - continuous tone is playing');
+                    log(`[NavEditor] 🎯 Checking line reading conditions: !isTypingRelated=${!isTypingRelated}, cursorLineReadingEnabled=${config.cursorLineReadingEnabled}`);
+                    
+                    // Check if automatic reading is suppressed (e.g., during vibe coding)
+                    if (suppressAutomaticReading) {
+                        log('[NavEditor] ❌ BLOCKED - suppressAutomaticReading is true');
+                        return;
                     }
+                    
+                    // Only use regular line token reading if continuous tone is NOT playing and not typing
+                    const continuousTonePlaying = isContinuousTonePlaying();
+                    log(`[NavEditor] 🔊 Audio check: continuousTonePlaying=${continuousTonePlaying}`);
+                    
+                    if (!continuousTonePlaying) {
+                        // IMMEDIATE line reading for cursor movement - no delay to prevent gaps
+                        log('[NavEditor] 🚀 STARTING IMMEDIATE line reading after cursor movement');
+                        vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor)
+                            .then(() => {
+                                log('[NavEditor] ✅ readLineTokens command completed successfully');
+                            }, err => {
+                                console.error('[NavEditor] ❌ readLineTokens failed:', err);
+                            });
+                    } else {
+                        log('[NavEditor] ❌ BLOCKED - continuous tone is playing');
+                    }
+                } else {
+                    log(`[NavEditor] ❌ BLOCKED - conditions not met: isTypingRelated=${isTypingRelated}, cursorLineReadingEnabled=${config.cursorLineReadingEnabled}`);
                 }
             } catch (err: any) {
                 console.error('onDidChangeTextEditorSelection handler error:', err);
@@ -471,8 +502,16 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 }
                 
                 // Only stop reading if line token reading is not currently active
+                // IMPORTANT: Don't stop audio if we just started line reading from cursor movement
                 if (!getLineTokenReadingActive()) {
-                    stopAllAudio(); // Use centralized stopping system
+                    // Additional check: Don't stop if this is very recent cursor movement (within 100ms)
+                    const timeSinceLastCursorMove = Date.now() - lastCursorMoveTime;
+                    if (timeSinceLastCursorMove > 100) {
+                        stopAllAudio(); // Use centralized stopping system
+                        log(`[NavEditor] Stopped audio for character navigation (${timeSinceLastCursorMove}ms since last cursor move)`);
+                    } else {
+                        log(`[NavEditor] Skipping audio stop - recent cursor movement detected (${timeSinceLastCursorMove}ms ago)`);
+                    }
                 }
 
                 const doc = e.textEditor.document;
@@ -481,8 +520,17 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                     : doc.getText(new vscode.Range(sel, old));
 
                 if (char) {
-                    log(`[NavEditor] Playing character navigation audio for: "${char}"`);
-                    speakTokenList([{ tokens: [char], category: undefined }]);
+                    // Check if this cursor movement is typing-related to avoid double audio
+                    const timeSinceTyping = Date.now() - lastTypingTime;
+                    const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
+                    const isReadTextTokensProcessing = getReadTextTokensActive();
+                    
+                    if (isTypingRelated || isReadTextTokensProcessing) {
+                        log(`[NavEditor] ✅ SKIPPED character navigation audio for "${char}" - typing-related: ${isTypingRelated} (${timeSinceTyping}ms ago), readTextTokens active: ${isReadTextTokensProcessing}`);
+                    } else {
+                        log(`[NavEditor] 🔊 PLAYING character navigation audio for: "${char}" (${timeSinceTyping}ms since typing, readTextTokens active: ${isReadTextTokensProcessing})`);
+                        speakTokenList([{ tokens: [char], category: undefined }]);
+                    }
                 } else {
                     log(`[NavEditor] No character found for navigation`);
                 }

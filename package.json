@@ -5,13 +5,10 @@
   "description": "LipCoder - Audio-Enhanced Code Editor",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.98.2"
+    "vscode": "^1.74.0",
+    "node": ">=16.14.2"
   },
   "private": true,
-  "workspaces": [
-    "client",
-    "server"
-  ],
   "categories": [
     "Other"
   ],
@@ -94,8 +91,8 @@
         "title": "LipCoder: Open File"
       },
       {
-        "command": "lipcoder.syntaxErrorList",
-        "title": "LipCoder: Show Syntax Error List"
+        "command": "lipcoderDev.syntaxErrorList",
+        "title": "LipCoder: Show Syntax Error List (Dev)"
       },
       {
         "command": "lipcoder.nextSyntaxError",
@@ -120,6 +117,10 @@
       {
         "command": "lipcoder.openTerminal",
         "title": "LipCoder: Open Pseudo Terminal"
+      },
+      {
+        "command": "lipcoder.smartGoToTerminal",
+        "title": "LipCoder: Smart Go To Terminal"
       },
       {
         "command": "lipcoder.killTerminalAndOpenLipCoder",
@@ -220,6 +221,16 @@
       {
         "command": "lipcoder.analyzeCode",
         "title": "LipCoder: Analyze Code - Ask Questions About Your Code",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.selectAndAnalyzeImage",
+        "title": "LipCoder: Describe Image for Accessibility",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.analyzeImageFromExplorer",
+        "title": "LipCoder: Analyze This Image",
         "category": "LipCoder"
       },
       {
@@ -436,6 +447,36 @@
         "category": "TTS"
       },
       {
+        "command": "lipcoder.toggleEarconMode",
+        "title": "LipCoder: Toggle Earcon Mode (Parentheses → Sound → Text)",
+        "category": "Audio"
+      },
+      {
+        "command": "lipcoder.selectEarconMode",
+        "title": "LipCoder: Select Earcon Mode",
+        "category": "Audio"
+      },
+      {
+        "command": "lipcoder.setEarconModeSound",
+        "title": "LipCoder: Set Earcon Mode to Sound",
+        "category": "Audio"
+      },
+      {
+        "command": "lipcoder.setEarconModeText",
+        "title": "LipCoder: Set Earcon Mode to Text",
+        "category": "Audio"
+      },
+      {
+        "command": "lipcoder.setEarconModeParenthesesOnly",
+        "title": "LipCoder: Set Earcon Mode to Parentheses Only",
+        "category": "Audio"
+      },
+      {
+        "command": "lipcoder.showEarconMode",
+        "title": "LipCoder: Show Current Earcon Mode",
+        "category": "Audio"
+      },
+      {
         "command": "lipcoder.restartLanguageServer",
         "title": "LipCoder: Restart Language Server",
         "category": "LipCoder"
@@ -584,14 +625,88 @@
         "command": "lipcoder.toggleRealtimeCommands",
         "title": "🔄 Toggle Realtime Voice Commands",
         "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showVibeCodingDiff",
+        "title": "Vibe Coding: Show Diff (Copilot-style)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.acceptVibeCodingChange",
+        "title": "Vibe Coding: Accept Changes",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.rejectVibeCodingChange",
+        "title": "Vibe Coding: Reject Changes",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.showSuggestionHistory",
+        "title": "Vibe Coding: Suggestion History",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.continueWithSuggestions",
+        "title": "Vibe Coding: Continue with Suggestions",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.startVibeCoding",
+        "title": "Vibe Coding: Start (Natural Language…)",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.triggerInlineSuggestion",
+        "title": "LipCoder: Trigger Inline Suggestion",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.goToLineNumber",
+        "title": "LipCoder: Go to Line Number",
+        "category": "Navigation"
+      },
+      {
+        "command": "lipcoder.showExactCommandsHelp",
+        "title": "LipCoder: Show Voice Commands Help",
+        "category": "Help"
+      },
+      {
+        "command": "lipcoder.openPngFile",
+        "title": "LipCoder: Open Generated PNG File",
+        "category": "File"
+      },
+      {
+        "command": "lipcoder.naturalLanguageCommand",
+        "title": "LipCoder: Natural Language Command",
+        "category": "LipCoder"
+      },
+      {
+        "command": "lipcoder.quickNaturalLanguageCommand",
+        "title": "LipCoder: Quick Natural Language Commands",
+        "category": "LipCoder"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "lipcoder.analyzeImageFromExplorer",
+          "when": "resourceExtname =~ /\\.(jpg|jpeg|png|gif|webp|bmp)$/i",
+          "group": "lipcoder@1"
+        }
+      ]
+    },
     "keybindings": [
       {
-        "command": "lipcoder.stopReadLineTokens",
+        "command": "lipcoder.stopAllAudio",
         "key": "ctrl+.",
         "mac": "cmd+.",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.stopAllAudio",
+        "key": "ctrl+.",
+        "mac": "cmd+."
       },
       {
         "command": "lipcoder.readCurrentLine",
@@ -628,7 +743,6 @@
         "command": "lipcoder.terminalReadLast",
         "when": "terminalFocus"
       },
-
       {
         "key": "ctrl+shift+c",
         "command": "lipcoder.terminalClearHistory",
@@ -643,6 +757,11 @@
         "command": "lipcoder.formatCode",
         "key": "shift+alt+f",
         "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "lipcoder.triggerInlineSuggestion",
+        "key": "shift+enter",
+        "when": "editorTextFocus && !inlineSuggestionVisible"
       },
       {
         "command": "lipcoder.acceptSuggestion",
@@ -666,7 +785,7 @@
       },
       {
         "command": "lipcoder.rejectSuggestion",
-        "key": "backspace",
+        "key": "shift+backspace",
         "when": "editorTextFocus && inlineSuggestionVisible"
       },
       {
@@ -749,13 +868,20 @@
         },
         "lipcoder.llmBackend": {
           "type": "string",
-          "enum": ["chatgpt", "claude"],
+          "enum": [
+            "chatgpt",
+            "claude"
+          ],
           "default": "claude",
           "description": "Choose the LLM backend for vibe coding and chat completions."
         },
         "lipcoder.claudeModel": {
           "type": "string",
-          "enum": ["claude-opus-4-1-20250805", "claude-sonnet-4-20250514",  "claude-3-5-haiku-20241022"],
+          "enum": [
+            "claude-opus-4-1-20250805",
+            "claude-sonnet-4-20250514",
+            "claude-3-5-haiku-20241022"
+          ],
           "default": "claude-sonnet-4-20250514",
           "description": "Claude model to use for completions."
         },
@@ -767,25 +893,47 @@
         "lipcoder.claudeTemperature": {
           "type": "number",
           "default": 0.1,
-          "minimum": 0.0,
-          "maximum": 1.0,
+          "minimum": 0,
+          "maximum": 1,
           "description": "Temperature for Claude responses (0.0 = deterministic, 1.0 = creative)."
         },
         "lipcoder.asrBackend": {
           "type": "string",
-          "enum": ["gpt4o-transcribe", "silero"],
+          "enum": [
+            "gpt4o-transcribe",
+            "silero"
+          ],
           "default": "gpt4o-transcribe",
           "description": "Choose the ASR backend for voice recognition. GPT-4o Transcribe supports multilingual recognition including Korean and English."
         },
         "lipcoder.asrLanguage": {
-          "type": ["string", "null"],
-          "enum": [null, "en", "ko", "ja", "zh", "es", "fr", "de", "it", "pt", "ru"],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "en",
+            "ko",
+            "ja",
+            "zh",
+            "es",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "ru"
+          ],
           "default": null,
           "description": "Language for ASR recognition. Set to null for automatic language detection (supports Korean, English, and many others). Only works with GPT-4o Transcribe backend."
         },
         "lipcoder.diffPreviewMode": {
           "type": "string",
-          "enum": ["native", "inline", "popup"],
+          "enum": [
+            "native",
+            "inline",
+            "popup"
+          ],
           "default": "native",
           "description": "Choose how to preview code changes: 'native' uses VS Code's built-in diff viewer, 'inline' shows diff in a separate editor, 'popup' shows simple confirmation dialog."
         },
@@ -793,14 +941,19 @@
           "type": "number",
           "default": 1.3,
           "minimum": 0.1,
-          "maximum": 3.0,
+          "maximum": 3,
           "description": "Volume boost multiplier for Korean TTS (1.0 = no change, 1.3 = 30% louder). Only affects Korean text when using OpenAI TTS."
         },
         "lipcoder.ttsBackend": {
           "type": "string",
-          "enum": ["silero-gpt", "espeak-gpt", "xtts-v2"],
-          "default": "silero-gpt",
-          "description": "Choose the combined TTS backend: 'silero-gpt' for Silero (English) + GPT (Korean), 'espeak-gpt' for Espeak (English) + GPT (Korean), 'xtts-v2' for XTTS-v2 (both languages)."
+          "enum": [
+            "silero-gpt",
+            "espeak-gpt",
+            "espeak",
+            "xtts-v2"
+          ],
+          "default": "espeak",
+          "description": "Choose the TTS backend: 'silero-gpt' for Silero (English) + GPT (Korean), 'espeak-gpt' for Espeak (English) + GPT (Korean), 'espeak' for Espeak (all languages), 'xtts-v2' for XTTS-v2 (both languages)."
         },
         "lipcoder.xttsV2ServerUrl": {
           "type": "string",
@@ -810,14 +963,17 @@
         "lipcoder.xttsV2SampleRate": {
           "type": "number",
           "default": 24000,
-          "enum": [16000, 24000],
+          "enum": [
+            16000,
+            24000
+          ],
           "description": "Sample rate for XTTS-v2 audio output (16000 or 24000 Hz)."
         },
         "lipcoder.xttsV2VolumeBoost": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "minimum": 0.1,
-          "maximum": 3.0,
+          "maximum": 3,
           "description": "Volume boost multiplier for XTTS-v2 audio (1.0 = no change, 1.5 = 50% louder)."
         },
         "lipcoder.xttsV2SpeakerWav": {
@@ -831,6 +987,8 @@
   "scripts": {
     "vscode:prepublish": "npm run package",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "gen:espeak-assets": "node scripts/generate_espeak_assets.js",
+    "gen:text-earcons": "node scripts/generate_text_earcons.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
@@ -863,7 +1021,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "node-pty": "^1.0.0",
     "speaker": "^0.5.5",
     "ts-node": "^10.9.2",

@@ -1,26 +1,48 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList } from '../audio';
+import { speakTokenList, speakGPT } from '../audio';
 import { openFileTabAware } from './last_editor_tracker';
 
 export function registerOpenFile(context: ExtensionContext) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.openFile', async (filename?: string | any) => {
-            // Handle case where filename might be passed as an object or other type
-            let actualFilename: string;
-            if (typeof filename === 'string') {
-                actualFilename = filename;
-            } else if (filename && typeof filename === 'object' && filename.filename) {
-                actualFilename = filename.filename;
-            } else if (filename && typeof filename === 'object' && filename.toString) {
-                actualFilename = filename.toString();
-            } else {
-                actualFilename = String(filename || '');
+        vscode.commands.registerCommand('lipcoder.openFile', async (...args: any[]) => {
+            // Robustly extract filename from possible arguments
+            let actualFilename = '';
+
+            // 1) Prefer any direct string argument
+            for (const arg of args) {
+                if (typeof arg === 'string' && arg.trim()) {
+                    actualFilename = arg.trim();
+                    break;
+                }
+            }
+
+            // 2) Try object with filename property
+            if (!actualFilename) {
+                for (const arg of args) {
+                    if (arg && typeof arg === 'object' && typeof arg.filename === 'string' && arg.filename.trim()) {
+                        actualFilename = arg.filename.trim();
+                        break;
+                    }
+                }
+            }
+
+            // 3) As a last resort, use toString if it yields something meaningful
+            if (!actualFilename) {
+                for (const arg of args) {
+                    if (arg && typeof arg === 'object' && typeof arg.toString === 'function') {
+                        const s = String(arg.toString());
+                        if (s && s !== '[object Object]') {
+                            actualFilename = s.trim();
+                            break;
+                        }
+                    }
+                }
             }
             
             if (!actualFilename || actualFilename.trim() === '') {
-                await speakTokenList([{ tokens: ['No filename provided'], category: undefined }]);
+                await speakGPT('No filename provided');
                 return;
             }
             
@@ -29,17 +51,25 @@ export function registerOpenFile(context: ExtensionContext) {
 
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (!workspaceFolders || workspaceFolders.length === 0) {
-                await speakTokenList([{ tokens: ['No workspace folder open'], category: undefined }]);
+                await speakGPT('No workspace folder open');
                 return;
             }
 
             try {
-                // Search for files matching the filename
-                const searchPattern = `**/*${actualFilename}*`;
+                // Build a case-insensitive glob for the filename (so README.md matches readme.md, etc.)
+                const toCaseInsensitiveGlob = (name: string) => name.split('').map(ch => {
+                    if (/[a-zA-Z]/.test(ch)) {
+                        return `[${ch.toLowerCase()}${ch.toUpperCase()}]`;
+                    }
+                    return ch;
+                }).join('');
+
+                // Search for files matching the (case-insensitive) filename
+                const searchPattern = `**/*${toCaseInsensitiveGlob(actualFilename)}*`;
                 const files = await vscode.workspace.findFiles(searchPattern, '**/node_modules/**', 50);
                 
                 if (files.length === 0) {
-                    await speakTokenList([{ tokens: [`File ${actualFilename} not found`], category: undefined }]);
+                    await speakGPT(`File ${actualFilename} not found`);
                     return;
                 }
 
@@ -95,13 +125,36 @@ export function registerOpenFile(context: ExtensionContext) {
                     return { file, score, basename: fullBasename, relativePath };
                 });
 
+                // If user specified an exact filename with extension and we have exact matches,
+                // directly open the best exact match (prefer shallowest path), skipping the picker.
+                const lowerInput = actualFilename.toLowerCase();
+                const inputHasExtension = path.extname(actualFilename).toLowerCase() !== '';
+                let preselectedTarget: vscode.Uri | null = null;
+
+                if (inputHasExtension) {
+                    const exactFullMatches = scoredFiles.filter(item => item.basename.toLowerCase() === lowerInput);
+                    if (exactFullMatches.length > 0) {
+                        exactFullMatches.sort((a, b) => {
+                            const depthA = a.relativePath.split('/').length;
+                            const depthB = b.relativePath.split('/').length;
+                            if (depthA !== depthB) return depthA - depthB; // prefer shallower
+                            return a.relativePath.length - b.relativePath.length; // then shorter path
+                        });
+                        preselectedTarget = exactFullMatches[0].file;
+                    }
+                }
+
                 // Sort by score (highest first)
                 scoredFiles.sort((a, b) => b.score - a.score);
 
                 let targetFile: vscode.Uri;
 
+                // Prefer preselected exact match when available
+                if (preselectedTarget) {
+                    targetFile = preselectedTarget;
+                }
                 // If the top match has a significantly higher score than others, use it
-                if (scoredFiles.length === 1 || 
+                else if (scoredFiles.length === 1 || 
                     (scoredFiles[0].score >= 1000) || // Exact match
                     (scoredFiles[0].score > scoredFiles[1].score + 100)) { // Significantly better
                     targetFile = scoredFiles[0].file;
@@ -115,7 +168,7 @@ export function registerOpenFile(context: ExtensionContext) {
                     }));
 
                     // Announce that user should choose from list
-                    await speakTokenList([{ tokens: ['Choose from list'], category: undefined }]);
+                    await speakGPT('Choose from list');
 
                     // Create quick pick with audio feedback
                     const quickPick = vscode.window.createQuickPick();
@@ -175,7 +228,7 @@ export function registerOpenFile(context: ExtensionContext) {
                     });
 
                     if (!selected) {
-                        await speakTokenList([{ tokens: ['File selection cancelled'], category: undefined }]);
+                        await speakGPT('File selection cancelled');
                         return;
                     }
 
@@ -188,14 +241,14 @@ export function registerOpenFile(context: ExtensionContext) {
                 // Provide audio feedback
                 const fileName = path.basename(targetFile.fsPath);
                 if (editor) {
-                    await speakTokenList([{ tokens: [`Opened ${fileName}`], category: undefined }]);
+                    await speakGPT(`Opened ${fileName}`);
                 } else {
-                    await speakTokenList([{ tokens: [`Failed to open ${fileName}`], category: undefined }]);
+                    await speakGPT(`Failed to open ${fileName}`);
                 }
 
             } catch (error) {
                 console.error('Error opening file:', error);
-                await speakTokenList([{ tokens: [`Error opening file ${actualFilename}`], category: undefined }]);
+                await speakGPT(`Error opening file ${actualFilename}`);
             }
         })
     );

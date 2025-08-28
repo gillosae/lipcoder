@@ -24,6 +24,10 @@ import { containsKorean } from './language_detection';
 export { genTokenAudio, playSpecial } from './tts';
 export { playEarcon, earconRaw } from './earcon';
 
+// Track active GPT TTS requests to prevent delayed responses
+let activeGPTTTSController: AbortController | null = null;
+let lastGPTTTSTime = 0;
+
 // ===============================
 // PITCH-PRESERVING TIME STRETCHING
 // ===============================
@@ -754,6 +758,18 @@ class AudioPlayer {
     private cache = new AudioCache();
     private fallbackManager = new FallbackPlayerManager();
 
+    // Preload a PCM file into the in-memory cache without playing
+    public preloadPcm(filePath: string): void {
+        try {
+            if (!fs.existsSync(filePath)) {
+                return;
+            }
+            this.cache.loadAndCache(filePath);
+        } catch (err) {
+            logWarning(`[preloadPcm] Failed to preload ${path.basename(filePath)}: ${err}`);
+        }
+    }
+
     async playPcmCached(filePath: string, panning?: number): Promise<void> {
         // Check if we're in the middle of stopping - abort immediately  
         if (this.isStopping) {
@@ -761,8 +777,16 @@ class AudioPlayer {
             return;
         }
         
-        // Use pitch-preserving for all audio when enabled and speed is not 1.0
-        const shouldUsePitchPreserving = config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01;
+        // Check if this is an alphabet character - bypass pitch-preserving for instant playback
+        const isAlphabetChar = filePath.includes('/alphabet/') || filePath.includes('\\alphabet\\');
+        
+        // Use pitch-preserving for all audio when enabled and speed is not 1.0, 
+        // BUT skip it for alphabet characters to avoid delay
+        const shouldUsePitchPreserving = config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isAlphabetChar;
+        
+        if (isAlphabetChar && config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+            log(`[playPcmCached] Using FAST sample-rate method for alphabet char (bypassing pitch-preserving): ${path.basename(filePath)}`);
+        }
         
         // For pitch-preserving PCM playback, convert to WAV and use time stretching
         if (shouldUsePitchPreserving) {
@@ -1494,14 +1518,40 @@ class AudioPlayer {
                     this.stopCurrentPlayback();
                     
                     // @ts-ignore: samplesPerFrame used for low-latency and immediate stopping
-                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: 256, highWaterMark: 1024 } as any);
+                    const bufferSize = config.aggressiveAudioPipeline ? 128 : 256;
+                    const waterMark = config.aggressiveAudioPipeline ? 512 : 1024;
+                    const speaker = new Speaker({ ...finalFormat, samplesPerFrame: bufferSize, highWaterMark: waterMark } as any);
                     this.currentSpeaker = speaker;
                     
+                    let resolved = false;
+                    
                     speaker.on('close', () => {
-                        log(`[playTtsAsPcm] Pitch-preserving playback completed: ${path.basename(wavFilePath)}`);
-                        resolve();
+                        if (!resolved) {
+                            log(`[playTtsAsPcm] Pitch-preserving playback completed: ${path.basename(wavFilePath)}`);
+                            resolved = true;
+                            resolve();
+                        }
                     });
-                    speaker.on('error', reject);
+                    
+                    // For reduced inter-token delay, resolve slightly before audio finishes
+                    if (config.reduceInterTokenDelay) {
+                        const estimatedDuration = (finalPcm.length / (finalFormat.sampleRate * finalFormat.channels * 2)) * 1000; // ms
+                        const earlyResolveDelay = Math.max(50, estimatedDuration * 0.85); // Resolve at 85% completion, min 50ms
+                        setTimeout(() => {
+                            if (!resolved) {
+                                log(`[playTtsAsPcm] Early resolve for reduced latency: ${path.basename(wavFilePath)}`);
+                                resolved = true;
+                                resolve();
+                            }
+                        }, earlyResolveDelay);
+                    }
+                    
+                    speaker.on('error', (err) => {
+                        if (!resolved) {
+                            resolved = true;
+                            reject(err);
+                        }
+                    });
                     
                     log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (pitch-preserving with small buffer)`);
                     speaker.write(finalPcm);
@@ -1554,14 +1604,40 @@ class AudioPlayer {
                 this.stopCurrentPlayback();
                 
                 // @ts-ignore: samplesPerFrame used for low-latency and immediate stopping
-                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 256, highWaterMark: 1024 } as any);
+                const bufferSize = config.aggressiveAudioPipeline ? 128 : 256;
+                const waterMark = config.aggressiveAudioPipeline ? 512 : 1024;
+                const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: bufferSize, highWaterMark: waterMark } as any);
                 this.currentSpeaker = speaker;
                 
+                let resolved = false;
+                
                 speaker.on('close', () => {
-                    log(`[playTtsAsPcm] Sample rate adjustment playback completed: ${path.basename(wavFilePath)}`);
-                    resolve();
+                    if (!resolved) {
+                        log(`[playTtsAsPcm] Sample rate adjustment playback completed: ${path.basename(wavFilePath)}`);
+                        resolved = true;
+                        resolve();
+                    }
                 });
-                speaker.on('error', reject);
+                
+                // For reduced inter-token delay, resolve slightly before audio finishes
+                if (config.reduceInterTokenDelay) {
+                    const estimatedDuration = (finalPcm.length / (adjustedFormat.sampleRate * adjustedFormat.channels * 2)) * 1000; // ms
+                    const earlyResolveDelay = Math.max(50, estimatedDuration * 0.85); // Resolve at 85% completion, min 50ms
+                    setTimeout(() => {
+                        if (!resolved) {
+                            log(`[playTtsAsPcm] Early resolve for reduced latency (fallback): ${path.basename(wavFilePath)}`);
+                            resolved = true;
+                            resolve();
+                        }
+                    }, earlyResolveDelay);
+                }
+                
+                speaker.on('error', (err) => {
+                    if (!resolved) {
+                        resolved = true;
+                        reject(err);
+                    }
+                });
                 
                 log(`[playTtsAsPcm] Writing ${finalPcm.length} bytes to speaker (sample rate adjustment with small buffer)`);
                 speaker.write(finalPcm);
@@ -1674,6 +1750,21 @@ export const audioPlayer = new AudioPlayer();
 // PUBLIC API (maintaining backward compatibility)
 // ===============================
 
+// Preload alphabet PCM files into the cache for low-latency letter playback
+export function preloadAlphabetPCM(): void {
+    try {
+        const baseDir = config.alphabetPath();
+        for (let i = 0; i < 26; i++) {
+            const letter = String.fromCharCode(97 + i);
+            const filePath = path.join(baseDir, `${letter}.pcm`);
+            audioPlayer.preloadPcm(filePath);
+        }
+        logInfo('[Preload] Alphabet PCM preloaded');
+    } catch (err) {
+        logWarning(`[Preload] Failed to preload alphabet PCM: ${err}`);
+    }
+}
+
 export async function speakToken(
     token: string,
     category?: string,
@@ -1745,6 +1836,161 @@ export type TokenChunk = {
     category?: string;
     panning?: number;
 };
+
+/**
+ * Speak text using GPT TTS specifically - for notifications and important messages
+ * Includes timeout and fallback mechanisms to prevent delayed responses
+ */
+export async function speakGPT(text: string, signal?: AbortSignal): Promise<void> {
+    const startTime = Date.now();
+    const TIMEOUT_MS = 3000; // 3 second timeout for GPT TTS
+    const currentTime = Date.now();
+    
+    // Cancel any previous GPT TTS request to prevent delayed responses
+    if (activeGPTTTSController) {
+        log(`[speakGPT] Cancelling previous GPT TTS request to prevent delayed response`);
+        activeGPTTTSController.abort();
+        activeGPTTTSController = null;
+    }
+    
+    // Check if we're making requests too frequently (debounce)
+    if (currentTime - lastGPTTTSTime < 500) { // 500ms debounce
+        log(`[speakGPT] Debouncing GPT TTS request, using fast fallback: "${text}"`);
+        await speakFastFallback(text, signal);
+        return;
+    }
+    
+    lastGPTTTSTime = currentTime;
+    
+    try {
+        log(`[speakGPT] Speaking with GPT TTS: "${text}"`);
+        
+        // Create a new controller for this request
+        activeGPTTTSController = new AbortController();
+        const combinedSignal = signal || activeGPTTTSController.signal;
+        
+        // Create a timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => {
+                reject(new Error('GPT TTS timeout'));
+            }, TIMEOUT_MS);
+        });
+        
+        // Create the TTS promise
+        const ttsPromise = async () => {
+            // Force GPT TTS by using 'vibe_text' category
+            const chunks: TokenChunk[] = [{
+                tokens: [text],
+                category: 'vibe_text', // This forces OpenAI/GPT TTS
+                panning: undefined
+            }];
+            
+            await speakTokenList(chunks, combinedSignal);
+        };
+        
+        // Race between TTS and timeout
+        try {
+            await Promise.race([ttsPromise(), timeoutPromise]);
+            const duration = Date.now() - startTime;
+            log(`[speakGPT] Successfully spoke with GPT TTS in ${duration}ms: "${text}"`);
+        } catch (timeoutError) {
+            const duration = Date.now() - startTime;
+            log(`[speakGPT] GPT TTS timeout after ${duration}ms, falling back to fast TTS: "${text}"`);
+            
+            // Cancel the ongoing request
+            if (activeGPTTTSController) {
+                activeGPTTTSController.abort();
+            }
+            
+            // Fallback to faster espeak TTS for immediate feedback
+            await speakFastFallback(text, signal);
+        }
+    } catch (error: any) {
+        if (error?.name === 'AbortError') {
+            log(`[speakGPT] GPT TTS request was cancelled: "${text}"`);
+            return; // Don't fallback if cancelled intentionally
+        }
+        
+        log(`[speakGPT] Error speaking with GPT TTS: ${error}`);
+        // Fallback to fast TTS on any error
+        try {
+            await speakFastFallback(text, signal);
+        } catch (fallbackError) {
+            log(`[speakGPT] Fallback TTS also failed: ${fallbackError}`);
+            throw error; // Throw original error
+        }
+    } finally {
+        // Clean up the controller
+        if (activeGPTTTSController) {
+            activeGPTTTSController = null;
+        }
+    }
+}
+
+/**
+ * Fast fallback TTS using espeak for immediate feedback
+ */
+async function speakFastFallback(text: string, signal?: AbortSignal): Promise<void> {
+    try {
+        log(`[speakGPT] Using fast fallback TTS for: "${text}"`);
+        
+        // Use espeak directly for immediate response
+        const chunks: TokenChunk[] = [{
+            tokens: [text],
+            category: 'comment', // Use comment voice which is typically espeak
+            panning: undefined
+        }];
+        
+        await speakTokenList(chunks, signal);
+        log(`[speakGPT] Fast fallback TTS completed: "${text}"`);
+    } catch (error) {
+        log(`[speakGPT] Fast fallback TTS failed: ${error}`);
+        throw error;
+    }
+}
+
+/**
+ * Read tokens using Espeak TTS - combines all tokens (except indentation earcons) into one TTS call
+ * Similar to speakGPT but forces Espeak backend for faster reading
+ */
+export async function readInEspeak(chunks: TokenChunk[], signal?: AbortSignal): Promise<void> {
+    try {
+        // Filter out indentation earcons and combine all tokens into a single string
+        const textTokens: string[] = [];
+        
+        for (const chunk of chunks) {
+            for (const token of chunk.tokens) {
+                // Skip indentation earcons (they are typically single characters or specific patterns)
+                // We'll let earcons play separately and only combine actual text tokens
+                if (token && token.trim().length > 0) {
+                    textTokens.push(token);
+                }
+            }
+        }
+        
+        if (textTokens.length === 0) {
+            log(`[readInEspeak] No text tokens to speak`);
+            return;
+        }
+        
+        const combinedText = textTokens.join(' ');
+        log(`[readInEspeak] Reading combined text with Espeak: "${combinedText}"`);
+        
+        // Force Espeak TTS by creating a single chunk with no specific category
+        // This will use the current TTS backend's Espeak component
+        const espeakChunk: TokenChunk = {
+            tokens: [combinedText],
+            category: undefined, // Let it use default category to route to Espeak
+            panning: undefined
+        };
+        
+        await speakTokenList([espeakChunk], signal);
+        log(`[readInEspeak] Successfully read with Espeak: "${combinedText}"`);
+    } catch (error) {
+        log(`[readInEspeak] Error reading with Espeak: ${error}`);
+        throw error;
+    }
+}
 
 export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal): Promise<void> {
     let aborted = false;
@@ -1847,8 +2093,24 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     expandedTokens.push(...wordChunks);
                     log(`[speakTokenList] uncategorized "${token}" → [${wordChunks.join(', ')}] (word logic applied)`);
                 } else {
-                    // Keep other tokens as-is
-                    expandedTokens.push(token);
+                    // Check if this is a numeric token that might be a date format
+                    if (/^\d+$/.test(token) && (category === 'literal' || category === 'number' || !category)) {
+                        const { isDateLikeFormat } = require('./features/word_logic');
+                        if (isDateLikeFormat(token)) {
+                            // Split date-like numeric tokens into individual digits
+                            const digits = token.split('');
+                            expandedTokens.push(...digits);
+                            log(`[speakTokenList] Date-like ${category || 'numeric'} "${token}" → split into digits: [${digits.join(', ')}]`);
+                        } else {
+                            // Keep regular numbers as-is
+                            expandedTokens.push(token);
+                            log(`[speakTokenList] ${category || 'no-category'} "${token}" → kept as regular number`);
+                        }
+                    } else {
+                        // Keep other tokens as-is
+                        expandedTokens.push(token);
+                        log(`[speakTokenList] ${category || 'no-category'} "${token}" → kept as-is`);
+                    }
                 }
             }
             
@@ -1917,6 +2179,18 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         
         // Use optimized chunks for the rest of the function
         chunks = optimizedChunks;
+
+        // TEXT AGGREGATION: For code reading, merge contiguous text tokens within a chunk
+        // to eliminate inter-token gaps (applies to literal/comment text)
+        const aggregatedChunks: TokenChunk[] = chunks.map((chunk) => {
+            const cat = chunk.category || 'default';
+            if (cat === 'literal' || cat === 'comment_text') {
+                const combined = chunk.tokens.join(' ').replace(/\s+/g, ' ').trim();
+                return { ...chunk, tokens: combined ? [combined] : [] };
+            }
+            return chunk;
+        });
+        chunks = aggregatedChunks;
         
         // PARALLEL TTS PRE-GENERATION: Use both workers simultaneously
         log(`[speakTokenList] Pre-generating TTS for all tokens in parallel...`);
@@ -1970,6 +2244,25 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
             
             const { tokens, category, panning } = chunks[chunkIndex];
             log(`[speakTokenList] Processing chunk ${chunkIndex + 1}/${chunks.length}: ${tokens.length} tokens [${tokens.join(', ')}] with category "${category}"`);
+
+            // FAST-PATH: Vibe Coding text → generate one GPT TTS clip to remove inter-token gaps
+            if (category === 'vibe_text') {
+                try {
+                    // Triple-check abort before heavy TTS call
+                    if (signal?.aborted || aborted) return;
+                    const combined = tokens.join(' ').replace(/\s+/g, ' ').trim();
+                    log(`[speakTokenList] *** VIBE_TEXT FAST-PATH *** → single GPT TTS for: "${combined.slice(0, 120)}${combined.length > 120 ? '…' : ''}"`);
+                    const ttsFilePath = await genTokenAudio(combined, 'vibe_text', { abortSignal: signal });
+                    if (signal?.aborted || aborted) return;
+                    await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                    log(`[speakTokenList] *** VIBE_TEXT FAST-PATH COMPLETED *** for: "${combined.slice(0, 50)}${combined.length > 50 ? '...' : ''}"`);
+                    // Proceed to next chunk
+                    continue;
+                } catch (e) {
+                    log(`[speakTokenList] VIBE_TEXT fast-path failed, falling back to tokenized playback: ${e}`);
+                    // Fall through to regular per-token flow
+                }
+            }
             
             for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
                 const token = tokens[tokenIndex];
@@ -2321,6 +2614,9 @@ export function playWave(
     // Apply global playspeed if no specific rate is provided
     const effectiveRate = opts?.rate ?? config.playSpeed;
     
+    // Check if this is an alphabet character - for faster processing
+    const isAlphabetChar = filePath.includes('/alphabet/') || filePath.includes('\\alphabet\\');
+    
     // Check if this is a Korean TTS file (contains 'openai_ko' in filename)
     const isKoreanTTS = path.basename(filePath).includes('openai_ko');
     const volumeBoost = isKoreanTTS ? openaiTTSConfig.volumeBoost : undefined;
@@ -2344,8 +2640,13 @@ export function playWave(
     }
     
     // Use audio processing if pitch preservation is enabled, rate != 1.0, or volume boost is needed
-    const needsProcessing = (config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) || 
-                           (volumeBoost && Math.abs(volumeBoost - 1.0) > 0.01);
+    // BUT skip pitch-preserving for alphabet characters to avoid delay
+    const needsProcessing = ((config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01 && !isAlphabetChar) || 
+                           (volumeBoost && Math.abs(volumeBoost - 1.0) > 0.01));
+    
+    if (isAlphabetChar && config.preservePitch && Math.abs(effectiveRate - 1.0) > 0.01) {
+        log(`[playWave] Using FAST sample-rate method for alphabet char (bypassing pitch-preserving): ${path.basename(filePath)}`);
+    }
     
     if (needsProcessing) {
         return applyAudioProcessing(filePath, effectiveRate, volumeBoost)

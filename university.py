@@ -4,6 +4,9 @@ University Management System
 A simple example for testing file opening functionality in lipcoder
 """
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 class University:
     def __init__(self, name: str, location: str):
         self.name = name
@@ -63,6 +66,79 @@ class University:
 
     def __repr__(self) -> str:
         return f"University(name='{self.name}', location='{self.location}')"
+    
+    def plot_statistics(self, use_different_colors: bool = False) -> None:
+        """Plot university statistics with optional different colors for each bar"""
+        categories = ['Students', 'Faculty', 'Departments']
+        counts = [self.get_student_count(), self.get_faculty_count(), self.get_department_count()]
+        
+        plt.figure(figsize=(10, 6))
+        
+        if use_different_colors:
+            # Use different colors for each bar
+            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']  # Red, Teal, Blue
+            bars = plt.bar(categories, counts, color=colors)
+        else:
+            # Use default single color
+            bars = plt.bar(categories, counts)
+        
+        plt.title(f'{self.name} Statistics', fontsize=16, fontweight='bold')
+        plt.xlabel('Category', fontsize=12)
+        plt.ylabel('Count', fontsize=12)
+        
+        # Add value labels on top of bars
+        for bar, count in zip(bars, counts):
+            plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
+                    str(count), ha='center', va='bottom', fontweight='bold')
+        
+        plt.grid(axis='y', alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+    
+    def plot_department_comparison(self) -> None:
+        """Plot comparison of students and faculty by department with different colors"""
+        if not self.departments:
+            print("No departments to plot")
+            return
+        
+        dept_names = [dept['name'] for dept in self.departments]
+        
+        # Count students and faculty by department
+        student_counts = []
+        faculty_counts = []
+        
+        for dept in self.departments:
+            dept_name = dept['name']
+            student_count = sum(1 for student in self.students if student['major'] == dept_name)
+            faculty_count = sum(1 for faculty in self.faculty if faculty['department'] == dept_name)
+            student_counts.append(student_count)
+            faculty_counts.append(faculty_count)
+        
+        x = np.arange(len(dept_names))
+        width = 0.35
+        
+        plt.figure(figsize=(12, 6))
+        
+        # Use different colors for students and faculty bars
+        bars1 = plt.bar(x - width/2, student_counts, width, label='Students', color='#FF9999')
+        bars2 = plt.bar(x + width/2, faculty_counts, width, label='Faculty', color='#66B2FF')
+        
+        plt.title(f'{self.name} - Department Comparison', fontsize=16, fontweight='bold')
+        plt.xlabel('Department', fontsize=12)
+        plt.ylabel('Count', fontsize=12)
+        plt.xticks(x, dept_names)
+        plt.legend()
+        
+        # Add value labels on bars
+        for bars in [bars1, bars2]:
+            for bar in bars:
+                height = bar.get_height()
+                plt.text(bar.get_x() + bar.get_width()/2, height + 0.05,
+                        str(int(height)), ha='center', va='bottom', fontweight='bold')
+        
+        plt.grid(axis='y', alpha=0.3)
+        plt.tight_layout()
+        plt.show()
 
 
 def main():
@@ -98,6 +174,11 @@ def main():
     print("\nFaculty:")
     for faculty in university.faculty:
         print(f"  - {faculty['name']} ({faculty['id']}) - {faculty['department']}")
+    
+    # Plot statistics with different colors
+    print("\nGenerating plots...")
+    university.plot_statistics(use_different_colors=True)
+    university.plot_department_comparison()
 
 
 if __name__ == "__main__":

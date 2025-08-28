@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, TokenChunk, playWave } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk, playWave } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { logWarning, logError, logSuccess } from '../utils';
 import { logFeatureUsage } from '../activity_logger';
@@ -294,7 +294,7 @@ export function registerEditorWordNav(context: ExtensionContext) {
             
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
-                await speakTokenList([{ tokens: ['No active editor'], category: undefined }]);
+                await speakGPT('No active editor');
                 return;
             }
             
@@ -318,7 +318,7 @@ export function registerEditorWordNav(context: ExtensionContext) {
                 const endEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
                 await playWave(endEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 await new Promise(resolve => setTimeout(resolve, 100));
-                await speakTokenList([{ tokens: ['End of line'], category: undefined }]);
+                await speakGPT('End of line');
                 return;
             }
             
@@ -398,7 +398,7 @@ export function registerEditorWordNav(context: ExtensionContext) {
             
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
-                await speakTokenList([{ tokens: ['No active editor'], category: undefined }]);
+                await speakGPT('No active editor');
                 return;
             }
             

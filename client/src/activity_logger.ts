@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 
 export interface ActivityLogEntry {
     timestamp: string;
-    type: 'cursor_movement' | 'asr_command' | 'vibe_coding' | 'feature_usage' | 'command_execution' | 'file_operation' | 'error' | 'interaction_turn' | 'audio_event' | 'navigation' | 'timing';
+    type: 'cursor_movement' | 'asr_command' | 'vibe_coding' | 'feature_usage' | 'command_execution' | 'file_operation' | 'error' | 'interaction_turn' | 'audio_event' | 'navigation' | 'timing' | 'text_change' | 'selection_change' | 'window_focus' | 'tab_change' | 'keyboard_input' | 'mouse_input' | 'extension_lifecycle' | 'feature_start' | 'feature_stop' | 'feature_interrupt' | 'system';
     category?: string;
     action: string;
     details?: any;
@@ -29,6 +29,18 @@ export interface ActivityLogEntry {
     tts_chars?: number;
     overlap_events?: number;
     rewind_count?: number;
+    // Additional fields for comprehensive tracking
+    selection_start?: { line: number; character: number };
+    selection_end?: { line: number; character: number };
+    text_content?: string;
+    change_type?: 'insert' | 'delete' | 'replace';
+    key_combination?: string;
+    mouse_button?: 'left' | 'right' | 'middle';
+    mouse_position?: { x: number; y: number };
+    window_state?: 'focused' | 'unfocused';
+    tab_id?: string;
+    feature_name?: string;
+    interrupt_reason?: string;
 }
 
 class ActivityLogger {
@@ -387,6 +399,156 @@ class ActivityLogger {
         
         this.lastActivityTime = now;
     }
+
+    // New comprehensive logging methods
+    
+    public logTextChange(file: string, change: vscode.TextDocumentContentChangeEvent, changeType: 'insert' | 'delete' | 'replace'): void {
+        this.log({
+            type: 'text_change',
+            action: 'document_modified',
+            file,
+            line: change.range.start.line,
+            character: change.range.start.character,
+            change_type: changeType,
+            text_content: change.text.length > 100 ? change.text.substring(0, 100) + '...' : change.text,
+            details: {
+                rangeLength: change.rangeLength,
+                textLength: change.text.length,
+                startLine: change.range.start.line,
+                startChar: change.range.start.character,
+                endLine: change.range.end.line,
+                endChar: change.range.end.character
+            }
+        });
+    }
+
+    public logSelectionChange(file: string, selection: vscode.Selection): void {
+        this.log({
+            type: 'selection_change',
+            action: 'selection_changed',
+            file,
+            line: selection.active.line,
+            character: selection.active.character,
+            selection_start: { line: selection.start.line, character: selection.start.character },
+            selection_end: { line: selection.end.line, character: selection.end.character },
+            details: {
+                isEmpty: selection.isEmpty,
+                isReversed: selection.isReversed,
+                selectedText: selection.isEmpty ? null : 'text_selected'
+            }
+        });
+    }
+
+    public logWindowFocus(focused: boolean): void {
+        this.log({
+            type: 'window_focus',
+            action: focused ? 'window_focused' : 'window_unfocused',
+            window_state: focused ? 'focused' : 'unfocused'
+        });
+    }
+
+    public logTabChange(file: string, action: 'opened' | 'closed' | 'switched'): void {
+        this.log({
+            type: 'tab_change',
+            action: `tab_${action}`,
+            file,
+            tab_id: file
+        });
+    }
+
+    public logKeyboardInput(key: string, modifiers?: string[]): void {
+        this.log({
+            type: 'keyboard_input',
+            action: 'key_pressed',
+            key_combination: modifiers ? `${modifiers.join('+')}+${key}` : key,
+            details: {
+                key,
+                modifiers: modifiers || []
+            }
+        });
+    }
+
+    public logMouseInput(button: 'left' | 'right' | 'middle', action: 'click' | 'double_click' | 'drag', position?: { x: number; y: number }): void {
+        this.log({
+            type: 'mouse_input',
+            action: `mouse_${action}`,
+            mouse_button: button,
+            mouse_position: position,
+            details: {
+                button,
+                action,
+                position
+            }
+        });
+    }
+
+    public logFeatureStart(featureName: string, details?: any): void {
+        this.log({
+            type: 'feature_start',
+            action: 'feature_started',
+            feature_name: featureName,
+            details: {
+                featureName,
+                startTime: Date.now(),
+                ...details
+            }
+        });
+    }
+
+    public logFeatureStop(featureName: string, success: boolean, duration?: number, details?: any): void {
+        this.log({
+            type: 'feature_stop',
+            action: 'feature_stopped',
+            feature_name: featureName,
+            success_flag: success,
+            duration,
+            details: {
+                featureName,
+                success,
+                duration,
+                endTime: Date.now(),
+                ...details
+            }
+        });
+    }
+
+    public logFeatureInterrupt(featureName: string, reason: string, details?: any): void {
+        this.log({
+            type: 'feature_interrupt',
+            action: 'feature_interrupted',
+            feature_name: featureName,
+            interrupt_reason: reason,
+            details: {
+                featureName,
+                reason,
+                interruptTime: Date.now(),
+                ...details
+            }
+        });
+    }
+
+    public logExtensionLifecycle(action: 'activate' | 'deactivate' | 'reload', details?: any): void {
+        this.log({
+            type: 'extension_lifecycle',
+            action: `extension_${action}`,
+            details: {
+                action,
+                timestamp: Date.now(),
+                ...details
+            }
+        });
+    }
+
+    public logSystemEvent(action: string, details?: any): void {
+        this.log({
+            type: 'system',
+            action,
+            details: {
+                systemTime: Date.now(),
+                ...details
+            }
+        });
+    }
     
     private generateInteractionId(): string {
         return `IT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -506,4 +668,49 @@ export function logAudioEvent(eventType: 'overlap' | 'rewind' | 'cancel', detail
 
 export function logFlowBreak(breakType: 'silence' | 'repair_utterance' | 'focus_switch', duration?: number): void {
     activityLogger.logFlowBreak(breakType, duration);
+}
+
+// New convenience functions for comprehensive logging
+export function logTextChange(file: string, change: vscode.TextDocumentContentChangeEvent, changeType: 'insert' | 'delete' | 'replace'): void {
+    activityLogger.logTextChange(file, change, changeType);
+}
+
+export function logSelectionChange(file: string, selection: vscode.Selection): void {
+    activityLogger.logSelectionChange(file, selection);
+}
+
+export function logWindowFocus(focused: boolean): void {
+    activityLogger.logWindowFocus(focused);
+}
+
+export function logTabChange(file: string, action: 'opened' | 'closed' | 'switched'): void {
+    activityLogger.logTabChange(file, action);
+}
+
+export function logKeyboardInput(key: string, modifiers?: string[]): void {
+    activityLogger.logKeyboardInput(key, modifiers);
+}
+
+export function logMouseInput(button: 'left' | 'right' | 'middle', action: 'click' | 'double_click' | 'drag', position?: { x: number; y: number }): void {
+    activityLogger.logMouseInput(button, action, position);
+}
+
+export function logFeatureStart(featureName: string, details?: any): void {
+    activityLogger.logFeatureStart(featureName, details);
+}
+
+export function logFeatureStop(featureName: string, success: boolean, duration?: number, details?: any): void {
+    activityLogger.logFeatureStop(featureName, success, duration, details);
+}
+
+export function logFeatureInterrupt(featureName: string, reason: string, details?: any): void {
+    activityLogger.logFeatureInterrupt(featureName, reason, details);
+}
+
+export function logExtensionLifecycle(action: 'activate' | 'deactivate' | 'reload', details?: any): void {
+    activityLogger.logExtensionLifecycle(action, details);
+}
+
+export function logSystemEvent(action: string, details?: any): void {
+    activityLogger.logSystemEvent(action, details);
 }

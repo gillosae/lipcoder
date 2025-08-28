@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { log } from '../utils';
-import { playWave, speakTokenList, TokenChunk, clearAudioStoppingState } from '../audio';
+import { playWave, speakTokenList, speakGPT, TokenChunk, clearAudioStoppingState, readInEspeak } from '../audio';
 import { stopAllAudio } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 
@@ -99,14 +99,13 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     
-                    // Use fast variable processing like code reading for function names
+                    // Use readInEspeak for fast combined reading of function names
                     const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
-                    // speakTokenList will automatically call splitWordChunks for 'variable' category
                     const chunks: TokenChunk[] = [{ 
                         tokens: [functionName], 
                         category: 'variable' // This triggers fast PCM processing with automatic word chunking
                     }];
-                    speakTokenList(chunks);
+                    readInEspeak(chunks).catch(console.error);
                 }
             });
 
@@ -122,14 +121,14 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
                     playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     
-                    // Use fast variable processing for the confirmation message
+                    // Use readInEspeak for fast combined reading of confirmation message
                     const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces
                     const chunks: TokenChunk[] = [
                         { tokens: ['moved', 'to', 'function'], category: undefined },
                         { tokens: [functionName], category: 'variable' }, // Auto word chunking
                         { tokens: ['line', (line + 1).toString()], category: undefined }
                     ];
-                    speakTokenList(chunks);
+                    readInEspeak(chunks).catch(console.error);
                 }
                 quickPick.hide();
             });
@@ -142,14 +141,14 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const pos = originalSelection.active;
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
-                    speakTokenList([{ tokens: [`back to line ${pos.line + 1}`], category: undefined }]);
+                    speakGPT(`back to line ${pos.line + 1}`);
                 }
                 quickPick.dispose();
             });
 
             const MAX_INDENT_UNITS = 5;
             quickPick.show();
-            speakTokenList([{ tokens: ['functions'], category: undefined }]);
+            speakGPT('functions');
 
             // Automatically walk through items, reading each every second
             // Wait a bit before starting auto-iteration to avoid simultaneous speech

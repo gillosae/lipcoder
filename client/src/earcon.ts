@@ -4,7 +4,7 @@ import Speaker from 'speaker';
 import { spawn, ChildProcess } from 'child_process';
 import { getTokenSound } from './tokens';
 import { log, logWarning, logMemory } from './utils';
-import { config } from './config';
+import { config, EarconMode, earconTextMap, earconModeState } from './config';
 import { isEarcon, getSpecialCharSpoken } from './mapping';
 import * as os from 'os';
 
@@ -87,12 +87,21 @@ export function findTokenSound(token: string): string | null {
     // Special‐tokens folder: map single-char token to its spoken name
     const specialName = getSpecialCharSpoken(token);
     if (specialName) {
-        // First check the "special" folder (underbar, equals, etc.)
-        const specialFile = path.join(config.specialPath(), `${specialName}.pcm`);
-        if (fs.existsSync(specialFile)) return specialFile;
-        // Then fall back to the earcon folder (for punctuation like bigquote)
-        const fallbackEarcon = path.join(config.earconPath(), `${specialName}.pcm`);
-        if (fs.existsSync(fallbackEarcon)) return fallbackEarcon;
+        // First check backend-specific special folder
+        const specPcm = path.join(config.specialPath(), `${specialName}.pcm`);
+        const specWav = path.join(config.specialPath(), `${specialName}.wav`);
+        if (fs.existsSync(specPcm)) return specPcm;
+        if (fs.existsSync(specWav)) return specWav;
+        // Legacy fallback: old 'special' folder without suffix
+        const legacyPcm = path.join(config.audioPath(), 'special', `${specialName}.pcm`);
+        const legacyWav = path.join(config.audioPath(), 'special', `${specialName}.wav`);
+        if (fs.existsSync(legacyPcm)) return legacyPcm;
+        if (fs.existsSync(legacyWav)) return legacyWav;
+        // Then fall back to the static earcon folder
+        const fallbackEarconPcm = path.join(config.earconPath(), `${specialName}.pcm`);
+        const fallbackEarconWav = path.join(config.earconPath(), `${specialName}.wav`);
+        if (fs.existsSync(fallbackEarconPcm)) return fallbackEarconPcm;
+        if (fs.existsSync(fallbackEarconWav)) return fallbackEarconWav;
     }
 
     // Check alert folder for special alert sounds (copy, paste, etc.)
@@ -133,10 +142,134 @@ function applyEarconPanning(pcm: Buffer, format: any, pan: number): Buffer {
 }
 
 /**
+ * Play a text-based earcon using TTS or pre-generated text PCM files
+ */
+async function playTextEarcon(token: string, pan?: number): Promise<void> {
+    const spokenText = earconTextMap[token];
+    if (!spokenText) {
+        log(`[playTextEarcon] No text mapping for token: "${token}"`);
+        return Promise.resolve();
+    }
+    
+    // Try to find pre-generated text earcon PCM file first
+    const textEarconFile = findTextEarconSound(token);
+    if (textEarconFile && fs.existsSync(textEarconFile)) {
+        log(`[playTextEarcon] Using pre-generated text earcon: ${textEarconFile}`);
+        const { playWave } = require('./audio');
+        return playWave(textEarconFile, { isEarcon: true, immediate: true, panning: pan });
+    }
+    
+    // Fallback to live TTS generation
+    log(`[playTextEarcon] Generating TTS for "${spokenText}"`);
+    try {
+        const { genTokenAudio } = require('./tts');
+        const audioPath = await genTokenAudio(spokenText, 'earcon_text');
+        const { playWave } = require('./audio');
+        return playWave(audioPath, { isEarcon: true, immediate: true, panning: pan });
+    } catch (error) {
+        log(`[playTextEarcon] TTS generation failed for "${spokenText}": ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve();
+    }
+}
+
+/**
+ * Find pre-generated text earcon sound file
+ */
+function findTextEarconSound(token: string): string | null {
+    // Map token to filename (same as charToFileName in generation script)
+    const charToFileName: Record<string, string> = {
+        '(': 'parenthesis',
+        ')': 'parenthesis2',
+        '[': 'squarebracket',
+        ']': 'squarebracket2',
+        '{': 'brace',
+        '}': 'brace2',
+        '<': 'anglebracket',
+        '>': 'anglebracket2',
+        '"': 'bigquote',
+        "'": 'quote',
+        '`': 'backtick',
+        '.': 'dot',
+        ',': 'comma',
+        ';': 'semicolon',
+        ':': 'colon',
+        '_': 'underscore',
+        '-': 'dash',
+        '=': 'equals',
+        '+': 'plus',
+        '*': 'asterisk',
+        '/': 'slash',
+        '\\': 'backslash',
+        '|': 'bar',
+        '&': 'ampersand',
+        '!': 'excitation',
+        '@': 'at',
+        '#': 'sharp',
+        '$': 'dollar',
+        '%': 'percent',
+        '^': 'caret',
+        '?': 'question',
+        '~': 'tilde',
+        '₩': 'won',
+        '++': 'plus_plus',
+        '--': 'minus_minus',
+        '+=': 'plus_equals',
+        '-=': 'minus_equals',
+        '*=': 'times_equals',
+        '/=': 'divide_equals',
+        '==': 'equals_equals',
+        '!=': 'not_equal',
+        '===': 'triple_equals',
+        '!==': 'not_triple_equals',
+        '<=': 'less_than_or_equal',
+        '>=': 'greater_than_or_equal',
+        '&&': 'and_and',
+        '||': 'or_or',
+        '//': 'slash_slash',
+        '=>': 'arrow',
+        ' ': 'space'
+    };
+    
+    const fileName = charToFileName[token];
+    if (!fileName) {
+        return null;
+    }
+    
+    const textEarconDir = path.join(config.audioPath(), 'special_espeak_text');
+    const pcmPath = path.join(textEarconDir, `${fileName}.pcm`);
+    const wavPath = path.join(textEarconDir, `${fileName}.wav`);
+    
+    // Prefer PCM, fallback to WAV
+    if (fs.existsSync(pcmPath)) {
+        return pcmPath;
+    }
+    if (fs.existsSync(wavPath)) {
+        return wavPath;
+    }
+    
+    return null;
+}
+
+/**
  * Play an earcon token using cached PCM data
  */
 export function playEarcon(token: string, pan?: number): Promise<void> {
     log(`[playEarcon] Starting playback for token: "${token}" with panning: ${pan}`);
+    
+    // Check earcon mode and decide whether to use text or sound
+    if (earconModeState.mode === EarconMode.Text && earconTextMap[token]) {
+        log(`[playEarcon] Text mode enabled, using TTS for "${token}" → "${earconTextMap[token]}"`);
+        return playTextEarcon(token, pan);
+    } else if (earconModeState.mode === EarconMode.ParenthesesOnly && earconTextMap[token]) {
+        // In ParenthesesOnly mode, use earcon sounds for ( ), and enter, text for everything else
+        if (token === '(' || token === ')' || token === 'enter') {
+            log(`[playEarcon] ParenthesesOnly mode: using earcon sound for "${token}"`);
+            // Continue to regular earcon playback below
+        } else {
+            log(`[playEarcon] ParenthesesOnly mode: using TTS for "${token}" → "${earconTextMap[token]}"`);
+            return playTextEarcon(token, pan);
+        }
+    }
     
     const file = findTokenSound(token);
     log(`[playEarcon] findTokenSound("${token}") returned: ${file}`);
@@ -145,6 +278,15 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         log(`[playEarcon] No earcon file found for token: "${token}", resolving immediately`);
         // no earcon mapped
         return Promise.resolve();
+    }
+
+    // If the resolved earcon is a WAV file, play it directly at neutral rate (no pitch change)
+    // This avoids any time-stretching or sample-rate tricks that could alter pitch
+    const ext = path.extname(file).toLowerCase();
+    if (ext === '.wav') {
+        const { playWave } = require('./audio');
+        // Let playWave use global playspeed (with pitch preservation if enabled)
+        return playWave(file, { isEarcon: true, immediate: true, panning: pan });
     }
 
     // For pitch-preserving earcons, convert PCM to WAV and use time stretching
@@ -209,6 +351,7 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
             
             // Use the regular playWave function which will handle pitch-preserving time stretching
             const { playWave } = require('./audio');
+            // Use global playspeed; audio.ts will pitch-preserve when enabled
             return playWave(tempWavPath, { isEarcon: true, immediate: true, panning: pan })
                 .finally(() => {
                     // Clean up temp file
@@ -279,9 +422,8 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         // Stop any current earcon playback
         stopEarconPlayback();
         
-        // When pitch-preserving fails, earcons should still play at normal speed
-        // Don't apply global playspeed to earcons - they should provide immediate feedback
-        const adjustedFormat = { ...format };
+        // When pitch-preserving fails, apply global playspeed via sample-rate change
+        const adjustedFormat = { ...format, sampleRate: Math.floor(format.sampleRate * Math.max(0.1, config.playSpeed)) } as any;
         
         if (isSpaceToken) {
             log(`[playEarcon] FAST SPACE: sample rate ${adjustedFormat.sampleRate}Hz for ultra-low latency`);

@@ -68,30 +68,49 @@ export function getASRRecordingActive(): boolean {
 
 export function stopAllAudio(): void {
 	// COMPREHENSIVE AUDIO STOPPING - Stop all types of audio immediately
+	console.log('[stopAllAudio] 🛑 STOP ALL AUDIO CALLED - starting comprehensive cleanup');
 	
 	// 1. Stop main audio player (TTS, PCM, WAV files)
+	console.log('[stopAllAudio] 1. Stopping main audio playback');
 	stopPlayback(); // Single call is sufficient - reduces audio crackling
 	
 	// 2. Stop earcon playback (punctuation sounds, etc.)
+	console.log('[stopAllAudio] 2. Stopping earcon playback');
 	stopEarconPlayback();
 	
 	// 3. Stop audio minimap (continuous tones during fast navigation) 
+	console.log('[stopAllAudio] 3. Cleaning up audio minimap');
 	cleanupAudioMinimap();
 	
-	// 4. Abort the line reading controller
+	// 4. Abort the line reading controller (this will also stop image descriptions)
+	console.log('[stopAllAudio] 4. Aborting line reading controller');
 	lineAbortController.abort();
 	
 	// 5. Create a new controller for the next reading session
+	console.log('[stopAllAudio] 5. Creating new abort controller');
 	// @ts-ignore
 	lineAbortController = new AbortController();
 	
-	// 6. Clear the active flag
+	// 6. Clear the active flags
+	console.log('[stopAllAudio] 6. Clearing active flags');
 	setLineTokenReadingActive(false);
 	
-	// 7. Force additional stop calls to ensure everything is terminated
+	// 7. Clear image description active flag if it's running
+	console.log('[stopAllAudio] 7. Clearing image description active flag');
+	try {
+		const { setImageDescriptionActive } = require('./image_description');
+		setImageDescriptionActive(false);
+		console.log('[stopAllAudio] 7a. Image description active flag cleared');
+	} catch (error) {
+		console.log('[stopAllAudio] 7b. Image description module not available (normal)');
+	}
+	
+	// 8. Force additional stop calls to ensure everything is terminated
+	console.log('[stopAllAudio] 8. Final safety stop call');
 	stopPlayback();
 	
 	// Note: stopping state will be cleared explicitly by callers when they want to start new audio
+	console.log('[stopAllAudio] 🛑 ALL AUDIO STOPPED - comprehensive cleanup completed');
 }
 
 // Legacy function name for backward compatibility  
@@ -127,10 +146,12 @@ export function stopForNewLineReading(): void {
 export function registerStopReading(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.stopReadLineTokens', () => {
+			console.log('[stopReadLineTokens] Command called - delegating to stopAllAudio');
 			stopAllAudio();
 		}),
 		
 		vscode.commands.registerCommand('lipcoder.stopAllAudio', () => {
+			console.log('[stopAllAudio] Command called directly');
 			stopAllAudio();
 		})
 	);

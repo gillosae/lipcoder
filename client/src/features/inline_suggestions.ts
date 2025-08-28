@@ -4,7 +4,7 @@ import * as path from 'path';
 import { InlineCompletionItem, InlineCompletionItemProvider, InlineCompletionContext, InlineCompletionTriggerKind } from 'vscode';
 import { callLLMForCompletion, stripFences, isLineSuppressed, lastSuggestion, clearLastSuggestion, setLastSuggestion, markSuggestionRead } from '../llm';
 import { playWave, speakTokenList, TokenChunk, playEarcon, isAudioPlaying } from '../audio';
-import { stopAllAudio, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
+import { stopAllAudio, getLineTokenReadingActive, getASRRecordingActive, lineAbortController } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
 
@@ -51,11 +51,12 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
         dispose: () => clearInterval(periodicCheck)
     });
 
-    // Trigger inline suggest after 5s of cursor idle
+    // Clear suggestions when cursor moves (no automatic triggering)
     const selectionListener = vscode.window.onDidChangeTextEditorSelection(event => {
         suggestionInvoked = false;
         if (idleTimer) {
             clearTimeout(idleTimer);
+            idleTimer = null;
         }
         
         // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active OR ASR is recording
@@ -67,26 +68,6 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             }
             return;
         }
-        
-        idleTimer = setTimeout(() => {
-            // Don't trigger suggestions if line token reading is active OR audio is playing OR Korean TTS is active OR ASR is recording
-            const koreanTTSActive = (global as any).koreanTTSActive || false;
-            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
-                if (koreanTTSActive) {
-                    log(`[InlineSuggestions] Skipping idle trigger during Korean TTS playback`);
-                } else if (getASRRecordingActive()) {
-                    log(`[InlineSuggestions] Skipping idle trigger during ASR recording`);
-                } else {
-                    log(`[InlineSuggestions] Skipping idle trigger during line token reading or audio playback`);
-                }
-                return;
-            }
-            
-            if (!suggestionInvoked) {
-                vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
-                suggestionInvoked = true;
-            }
-        }, 5000);
     });
     
     context.subscriptions.push(selectionListener);
@@ -103,9 +84,9 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 return { items: [] };
             }
             
-            // Only allow after manual invoke or our idle trigger
-            if (!suggestionInvoked && context.triggerKind !== InlineCompletionTriggerKind.Invoke) {
-                log(`[InlineSuggestions] Blocking non-invoked suggestion (trigger: ${context.triggerKind}, suggestionInvoked: ${suggestionInvoked})`);
+            // Only allow manual invocation (Shift+Enter trigger)
+            if (context.triggerKind !== InlineCompletionTriggerKind.Invoke) {
+                log(`[InlineSuggestions] Blocking automatic suggestion (trigger: ${context.triggerKind})`);
                 return { items: [] };
             }
             // Skip suppressed lines
@@ -175,7 +156,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
             }
             
             if (!lastSuggestion.read) {
-                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }]);
+                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
                 lastSuggestion.read = true;
             } else {
                 const editor = vscode.window.activeTextEditor;
@@ -197,6 +178,25 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
         })
     );
 
+    // Command to manually trigger inline suggestions
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.triggerInlineSuggestion', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) return;
+            
+            // Don't trigger if line reading is active or audio is playing
+            const koreanTTSActive = (global as any).koreanTTSActive || false;
+            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
+                log(`[InlineSuggestions] Manual trigger blocked - audio/reading active`);
+                return;
+            }
+            
+            log(`[InlineSuggestions] Manual trigger requested`);
+            await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+            suggestionInvoked = true;
+        })
+    );
+
     // Commands: accept or reject suggestions via Shift+Enter / Backspace
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.acceptSuggestion', async () => {
@@ -214,7 +214,7 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
                 }
                 
                 playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert
-                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }]);
+                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
                 markSuggestionRead();
             } else {
                 // Second Shift+Enter: accept suggestion

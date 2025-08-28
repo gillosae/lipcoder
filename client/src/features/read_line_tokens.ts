@@ -222,8 +222,15 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
 export function registerReadLineTokens(context: ExtensionContext, client: LanguageClient) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.readLineTokens', async (editorArg?: vscode.TextEditor) => {
+            log(`[readLineTokens] 🎯 COMMAND CALLED - editorArg provided: ${!!editorArg}`);
+            
             const editor = isEditorActive(editorArg);
-            if (!editor) return;
+            if (!editor) {
+                log(`[readLineTokens] ❌ BLOCKED - no active editor`);
+                return;
+            }
+            
+            log(`[readLineTokens] ✅ Active editor found: ${editor.document.fileName}, line: ${editor.selection.active.line}`);
 
             logFeatureUsage('read_line_tokens', 'command_executed', {
                 file: editor.document.fileName,
@@ -234,9 +241,11 @@ export function registerReadLineTokens(context: ExtensionContext, client: Langua
 
             // Check if ASR is currently recording - if so, don't start token reading
             if (getASRRecordingActive()) {
-                log(`[readLineTokens] Command called but ASR is recording - ignoring to avoid interference`);
+                log(`[readLineTokens] ❌ BLOCKED - ASR is recording - ignoring to avoid interference`);
                 return;
             }
+            
+            log(`[readLineTokens] 🔄 Proceeding with line reading execution...`);
 
             // IMMEDIATELY cancel any ongoing execution
             if (currentReadLineTokensExecution) {

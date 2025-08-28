@@ -9,7 +9,8 @@ export const SPECIAL_CHAR_FILES: Record<string, string> = {
     '+': 'plus.pcm', '~': 'tilde.pcm', '|': 'bar.pcm', '?': 'question.pcm',
     '₩': 'won.pcm', '=': 'equals.pcm', '`': 'backtick.pcm', '\\': 'backslash.pcm',
     '-': 'dash.pcm', '/': 'slash.pcm', ':': 'colon.pcm', ';': 'semicolon.pcm',
-    ',': 'comma.pcm', '.': 'dot.pcm', '_': 'underbar.pcm', ' ': 'space.pcm'
+    ',': 'comma.pcm', '.': 'dot.pcm', '_': 'underscore.pcm', ' ': 'space.pcm',
+    'enter': 'enter.pcm', 'backspace': 'backspace.pcm'
 };
 
 // Multi-character operators and symbols
@@ -41,10 +42,10 @@ export const numberMap: Record<string, string> = {
 // Earcon characters (punctuation that should use earcons instead of TTS)
 const EARCON_CHARS = new Set([
     '(', ')', '[', ']', '{', '}', '<', '>',
-    '"', "'", '`', ',', '.', ';', ':', '_', '=',
+    '"', "'", '`', ',', '.', ';', ':', '=',
     '+', '&', '*', '@', '^', '$', '!', '%', '?', '#', '~', '₩',
     '-', '/', '|', '\\',
-    ' ', '\t', '\n'
+    ' ', '\t', '\n', 'enter', 'backspace', 'indent_increase', 'indent_decrease'
 ]);
 
 // Two-character exceptions for word splitting
@@ -108,6 +109,10 @@ export function getSpecialCharSpoken(char: string): string | null {
         case '\t': return 'tab';
         case '\n': return 'newline';
         case '\r': return 'return';
+        case 'enter': return 'enter';
+        case 'backspace': return 'backspace';
+        case 'indent_increase': return 'indent_increase';
+        case 'indent_decrease': return 'indent_decrease';
         default: return null;
     }
 }
@@ -141,7 +146,7 @@ export function createAudioMap(context?: any): Map<string, string> {
     }
     
     // Add underscore for the extension check
-    audioMap.set('_', 'underbar.pcm');
+    audioMap.set('_', 'underscore.pcm');
     
     return audioMap;
 }

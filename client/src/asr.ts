@@ -1,4 +1,5 @@
 import { log, logError, logWarning, logSuccess, logInfo } from './utils';
+import { comprehensiveEventTracker } from './comprehensive_event_tracker';
 import { handleASRErrorSimple } from './asr_error_handler';
 import { serverManager } from './server_manager';
 
@@ -160,6 +161,9 @@ export class ASRClient {
             logSuccess('[ASR] Real microphone stream started successfully');
             log(`[ASR] Recording session started at: ${new Date(this.startTime).toISOString()}`);
             
+            // Log ASR start with comprehensive tracking
+            comprehensiveEventTracker.trackASRStart();
+            
             // Set up audio chunk processing
             this.setupAudioChunkProcessing();
             
@@ -251,6 +255,9 @@ export class ASRClient {
         
         log(`[ASR] Recording session statistics: sessionDuration=${sessionDuration}ms, chunksProcessed=${this.chunkCount}, averageChunkTime=${averageChunkTime.toFixed(2)}ms, totalAudioProcessed=${this.totalAudioProcessed} bytes`);
         
+        // Log ASR stop with comprehensive tracking
+        comprehensiveEventTracker.trackASRStop();
+        
         // Clear audio buffer to free memory
         this.audioBuffer = [];
         this.isRecording = false;
@@ -288,6 +295,10 @@ export class ASRClient {
             
             if (transcription) {
                 log(`[ASR] Real transcription received: "${transcription}"`);
+                
+                // Log ASR command with comprehensive tracking
+                comprehensiveEventTracker.trackASRCommand('voice_transcription', transcription, undefined, Date.now() - this.startTime);
+                
                 if (this.options.onTranscription) {
                     const asrChunk: ASRChunk = {
                         text: transcription,

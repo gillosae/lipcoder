@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { speakTokenList } from '../audio';
+import { speakTokenList, speakGPT } from '../audio';
 import { currentLLMBackend, LLMBackend, setLLMBackend, claudeConfig } from '../config';
 import { log } from '../utils';
 
@@ -32,7 +32,7 @@ export function registerLLMBackendSwitch(context: vscode.ExtensionContext) {
             await config.update('llmBackend', selected.backend, vscode.ConfigurationTarget.Global);
             
             const backendName = selected.backend === LLMBackend.Claude ? 'Claude' : 'ChatGPT';
-            await speakTokenList([{ tokens: [`Switched to ${backendName}`], category: undefined }]);
+            await speakGPT(`Switched to ${backendName}`);
             vscode.window.showInformationMessage(`LLM Backend switched to ${backendName}`);
             log(`[LLM] Backend switched to ${backendName}`);
         }
@@ -46,7 +46,7 @@ export function registerLLMBackendSwitch(context: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('lipcoder');
         await config.update('llmBackend', 'chatgpt', vscode.ConfigurationTarget.Global);
         
-        await speakTokenList([{ tokens: ['Switched to ChatGPT'], category: undefined }]);
+        await speakGPT('Switched to ChatGPT');
         vscode.window.showInformationMessage('LLM Backend switched to ChatGPT');
         log('[LLM] Backend switched to ChatGPT');
     });
@@ -59,7 +59,7 @@ export function registerLLMBackendSwitch(context: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('lipcoder');
         await config.update('llmBackend', 'claude', vscode.ConfigurationTarget.Global);
         
-        await speakTokenList([{ tokens: ['Switched to Claude'], category: undefined }]);
+        await speakGPT('Switched to Claude');
         vscode.window.showInformationMessage('LLM Backend switched to Claude');
         log('[LLM] Backend switched to Claude');
     });
@@ -81,7 +81,7 @@ export function registerLLMBackendSwitch(context: vscode.ExtensionContext) {
             statusMessage += `\nAPI Key: ${openaiKey ? 'Configured' : 'Not Set'}`;
         }
 
-        await speakTokenList([{ tokens: [`Current LLM backend is ${backendName}`], category: undefined }]);
+        await speakGPT(`Current LLM backend is ${backendName}`);
         vscode.window.showInformationMessage(statusMessage);
         log(`[LLM] Status: ${statusMessage.replace(/\n/g, ', ')}`);
     });
@@ -101,7 +101,7 @@ export function registerLLMBackendSwitch(context: vscode.ExtensionContext) {
             
             claudeConfig.apiKey = apiKey;
             
-            await speakTokenList([{ tokens: ['Claude API key set'], category: undefined }]);
+            await speakGPT('Claude API key set');
             vscode.window.showInformationMessage('Claude API key has been set successfully!');
             log('[LLM] Claude API key configured');
         }

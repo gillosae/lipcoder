@@ -44,5 +44,7 @@
     ],
     "eslint.options": {
         "extensions": [".ts", ".js"]
-    }
+    },
+    "lipcoder.vibeCoding.diffMode": "singleEditor",
+    "files.saveConflictResolution": "overwriteFileOnDisk"
 }

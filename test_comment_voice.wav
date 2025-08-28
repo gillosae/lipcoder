@@ -1,1 +1,0 @@
-{"error":"TTS generation failed: 'GPT2InferenceModel' object has no attribute 'generate'"}

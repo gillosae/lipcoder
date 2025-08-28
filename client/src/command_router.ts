@@ -5,8 +5,10 @@ import { analyzeCodeWithQuestion } from './features/code_analysis';
 import { askLLMQuestion } from './features/llm_question';
 import { startThinkingAudio, stopThinkingAudio, speakTokenList, TokenChunk } from './audio';
 import { logCommandExecution, logFeatureUsage } from './activity_logger';
+import { comprehensiveEventTracker } from './comprehensive_event_tracker';
 import { getLastActiveEditor, getLastActiveEditorTabAware, openFileTabAware } from './features/last_editor_tracker';
 import { isEditorActive } from './ide/active';
+import { executeFile, isExecutableFile, getSupportedExtensions } from './features/file_executor';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -707,10 +709,10 @@ Available command categories:
 4. PARENT_NAVIGATION - Navigate to parent scope (e.g., "go to parent", "move up", "parent")
 5. LIPCODER_COMMAND - LipCoder specific commands (e.g., "symbol tree", "function list", "breadcrumb")
 6. SYNTAX_ERROR_COMMAND - Syntax error and diagnostic commands (e.g., "syntax error list", "error list", "errors", "next error", "previous error")
-7. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file")
+7. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file", "파이썬 파일 열어줘", "open python file", "자바스크립트 파일 열어", "open javascript file")
 8. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
 9. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
-10. PYTHON_EXECUTION - Execute Python files via bash (e.g., "run main.py", "execute test.py", "run university.py")
+10. FILE_EXECUTION - Execute files based on their extension (e.g., "run main.py", "execute test.js", "run university.py", "실행해 script.sh", "이 파일 실행해줘", "실행해줘")
 11. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
 12. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
 13. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
@@ -728,6 +730,7 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "syntaxErrorAction": "list|next|previous",
     "operation": "save",
     "filename": "main.py",
+    "fileType": "python",
     "codeDescription": "function that gets parameter x and y and returns sum",
     "generationType": "complete|create|test",
     "question": "what does this function do?",
@@ -830,15 +833,15 @@ Only include parameters relevant to the category. Use null for missing parameter
                 case 'NAVIGATION_OPERATION':
                     return await this.executeLLMNavigationOperation(parameters, originalText);
                 
-                case 'PYTHON_EXECUTION':
-                    return await this.executeLLMPythonExecution(parameters, originalText);
+                case 'FILE_EXECUTION':
+                    return await this.executeLLMFileExecution(parameters, originalText);
                 
                 case 'CODE_GENERATION':
-                    // Route all code generation to enhanced ASR code editing workflow
+                    // Route all code generation to vibe coding
                     if (this.options.enableLogging) {
-                        log(`[CommandRouter] 🎨 Routing code generation to ASR code editing with instruction: "${originalText}"`);
+                        log(`[CommandRouter] 🎨 Routing code generation to vibe coding with instruction: "${originalText}"`);
                     }
-                    await vscode.commands.executeCommand('lipcoder.asrCodeEdit', originalText);
+                    await vscode.commands.executeCommand('lipcoder.vibeCoding', originalText);
                     return true;
                 
                 case 'CODE_ANALYSIS':
@@ -1131,7 +1134,7 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         const actionMap: { [key: string]: string } = {
-            'list': 'lipcoder.syntaxErrorList',
+            'list': 'lipcoderDev.syntaxErrorList',
             'next': 'lipcoder.nextSyntaxError',
             'previous': 'lipcoder.previousSyntaxError'
         };
@@ -1155,11 +1158,126 @@ Only include parameters relevant to the category. Use null for missing parameter
     }
 
     /**
+     * Find files by extension in workspace
+     */
+    private async findFilesByExtension(extension: string): Promise<vscode.Uri[]> {
+        const pattern = `**/*.${extension}`;
+        return await vscode.workspace.findFiles(pattern, '**/node_modules/**');
+    }
+
+    /**
+     * Find files by type (language)
+     */
+    private async findFilesByType(fileType: string): Promise<vscode.Uri[]> {
+        const typeToExtensions: { [key: string]: string[] } = {
+            'python': ['py'],
+            'javascript': ['js', 'mjs'],
+            'typescript': ['ts'],
+            'json': ['json'],
+            'markdown': ['md'],
+            'text': ['txt'],
+            'css': ['css'],
+            'html': ['html', 'htm'],
+            'java': ['java'],
+            'cpp': ['cpp', 'cc', 'cxx'],
+            'c': ['c'],
+            'shell': ['sh', 'bash'],
+            '파이썬': ['py'],
+            '자바스크립트': ['js', 'mjs'],
+            '타입스크립트': ['ts'],
+            '제이슨': ['json'],
+            '마크다운': ['md'],
+            '텍스트': ['txt'],
+            '씨에스에스': ['css'],
+            '에이치티엠엘': ['html', 'htm'],
+            '자바': ['java'],
+            '씨플플': ['cpp', 'cc', 'cxx'],
+            '씨': ['c'],
+            '쉘': ['sh', 'bash']
+        };
+
+        const extensions = typeToExtensions[fileType.toLowerCase()];
+        if (!extensions) {
+            return [];
+        }
+
+        const allFiles: vscode.Uri[] = [];
+        for (const ext of extensions) {
+            const files = await this.findFilesByExtension(ext);
+            allFiles.push(...files);
+        }
+        
+        return allFiles;
+    }
+
+    /**
      * Execute file operation command
      */
     private async executeLLMFileOperation(parameters: any, originalText: string): Promise<boolean> {
         const operation = parameters?.operation;
+        const filename = parameters?.filename;
+        const fileType = parameters?.fileType;
         
+        // Handle file type opening (e.g., "파이썬 파일 열어줘", "open python file")
+        if (operation === 'open' && fileType && !filename) {
+            try {
+                const files = await this.findFilesByType(fileType);
+                
+                if (files.length === 0) {
+                    vscode.window.showWarningMessage(`${fileType} 파일을 찾을 수 없습니다.`);
+                    return false;
+                } else if (files.length === 1) {
+                    // Only one file found - open it directly
+                    const file = files[0];
+                    await vscode.commands.executeCommand('vscode.open', file);
+                    const fileName = path.basename(file.fsPath);
+                    vscode.window.showInformationMessage(`📁 ${fileName} 파일을 열었습니다.`);
+                    
+                    if (this.options.enableLogging) {
+                        log(`[CommandRouter] 📁 Opened ${fileType} file: ${fileName}`);
+                    }
+                    return true;
+                } else {
+                    // Multiple files found - show quick pick
+                    const items = files.map(file => ({
+                        label: path.basename(file.fsPath),
+                        description: vscode.workspace.asRelativePath(file),
+                        uri: file
+                    }));
+                    
+                    const selected = await vscode.window.showQuickPick(items, {
+                        placeHolder: `${fileType} 파일을 선택하세요 (${files.length}개 발견)`
+                    });
+                    
+                    if (selected) {
+                        await vscode.commands.executeCommand('vscode.open', selected.uri);
+                        vscode.window.showInformationMessage(`📁 ${selected.label} 파일을 열었습니다.`);
+                        
+                        if (this.options.enableLogging) {
+                            log(`[CommandRouter] 📁 Opened selected ${fileType} file: ${selected.label}`);
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            } catch (error) {
+                vscode.window.showErrorMessage(`${fileType} 파일 열기 실패: ${error}`);
+                return false;
+            }
+        }
+        
+        // Handle specific filename opening
+        if (operation === 'open' && filename) {
+            try {
+                await vscode.commands.executeCommand('lipcoder.openFile', filename);
+                return true;
+            } catch (error) {
+                vscode.window.showErrorMessage(`파일 열기 실패: ${error}`);
+                return false;
+            }
+        }
+        
+        // Handle basic file operations
         const operationMap: { [key: string]: string } = {
             'save': 'workbench.action.files.save',
             'open': 'workbench.action.quickOpen',
@@ -1241,175 +1359,91 @@ Only include parameters relevant to the category. Use null for missing parameter
     }
 
     /**
-     * Execute Python file via bash command - with intelligent file finding
+     * Execute file based on extension - with intelligent file finding
      */
-    private async executeLLMPythonExecution(parameters: any, originalText: string): Promise<boolean> {
-        const filename = parameters?.filename;
+    private async executeLLMFileExecution(parameters: any, originalText: string): Promise<boolean> {
+        let filename = parameters?.filename;
         
+        // If no filename provided, try to get from active editor
         if (!filename) {
-            if (this.options.enableLogging) {
-                log(`[CommandRouter] ❌ No filename provided for Python execution`);
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor) {
+                filename = path.basename(activeEditor.document.fileName);
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] 📄 Using current active file: ${filename}`);
+                }
+            } else {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ❌ No filename provided and no active editor`);
+                }
+                vscode.window.showErrorMessage('실행할 파일을 지정하거나 파일을 열어주세요');
+                return false;
             }
-            vscode.window.showErrorMessage('No Python file specified to run');
-            return false;
         }
 
         try {
             if (this.options.enableLogging) {
-                log(`[CommandRouter] 🐍 Finding and executing Python file: ${filename}`);
+                log(`[CommandRouter] 🚀 Finding and executing file: ${filename}`);
             }
 
-            // Get the workspace folder
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders || workspaceFolders.length === 0) {
-                vscode.window.showErrorMessage('No workspace folder found');
-                return false;
-            }
-
-            const workspaceRoot = workspaceFolders[0].uri.fsPath;
-
-            // First, try to find the file using the universal file checker
-            let actualFilePath: string | null = null;
-            
-            // Import the file finding functions
-            const { findFilesWithBash, speakFileSearchResults } = require('./features/universal_file_checker');
-            
-            if (this.options.enableLogging) {
-                log(`[CommandRouter] 🔍 Searching for Python file: ${filename}`);
-            }
-
-            // Try multiple search patterns to find the file
-            const searchPatterns = [
-                filename,                           // Exact filename
-                `*${filename}*`,                   // Contains filename
-                `${filename}.*`,                   // Filename with any extension
-                filename.replace(/\.[^/.]+$/, "") + ".py", // Add .py if missing
-                `*${filename.replace(/\.[^/.]+$/, "")}*.py` // Fuzzy match with .py
-            ];
-
-            let searchResult = null;
-            for (const pattern of searchPatterns) {
-                try {
-                    searchResult = await findFilesWithBash(pattern);
-                    if (searchResult.files.length > 0) {
-                        // Filter to only Python files
-                        searchResult.files = searchResult.files.filter((file: any) => 
-                            file.extension === '.py' || file.name.endsWith('.py')
-                        );
-                        
-                        if (searchResult.files.length > 0) {
-                            if (this.options.enableLogging) {
-                                log(`[CommandRouter] ✅ Found ${searchResult.files.length} Python file(s) with pattern: ${pattern}`);
-                            }
-                            break;
-                        }
-                    }
-                } catch (error) {
-                    if (this.options.enableLogging) {
-                        log(`[CommandRouter] ⚠️ Search pattern failed: ${pattern} - ${error}`);
-                    }
-                }
-            }
-
-            if (!searchResult || searchResult.files.length === 0) {
-                // Speak the error and show message
+            // Check if the file extension is supported
+            if (!isExecutableFile(filename)) {
+                const supportedExts = getSupportedExtensions().join(', ');
+                const message = `지원하지 않는 파일 형식입니다. 지원되는 확장자: ${supportedExts}`;
+                vscode.window.showErrorMessage(message);
+                
                 await speakTokenList([
-                    { tokens: ['Python'], category: 'keyword_python' },
-                    { tokens: ['file'], category: 'comment' },
-                    { tokens: [filename], category: 'variable' },
-                    { tokens: ['not'], category: 'comment' },
-                    { tokens: ['found'], category: 'comment' }
+                    { tokens: ['지원하지'], category: 'comment' },
+                    { tokens: ['않는'], category: 'comment' },
+                    { tokens: ['파일'], category: 'comment' },
+                    { tokens: ['형식'], category: 'comment' }
                 ]);
                 
-                vscode.window.showErrorMessage(`Python file not found: ${filename}. Searched workspace for Python files matching the name.`);
                 return false;
             }
 
-            // If multiple files found, let user choose or pick the best match
-            if (searchResult.files.length === 1) {
-                actualFilePath = searchResult.files[0].path;
-            } else {
-                // Multiple files found - pick the best match or let user choose
+            // Use the new file executor
+            const result = await executeFile(filename);
+            
+            if (result.success) {
                 if (this.options.enableLogging) {
-                    log(`[CommandRouter] 🤔 Multiple Python files found: ${searchResult.files.map((f: any) => f.name).join(', ')}`);
+                    log(`[CommandRouter] ✅ File execution started: ${result.message}`);
                 }
-
-                // Try to find exact match first
-                const exactMatch = searchResult.files.find((file: any) => 
-                    file.name === filename || 
-                    file.name === filename + '.py' ||
-                    path.basename(file.name, '.py') === path.basename(filename, '.py')
-                );
-
-                if (exactMatch) {
-                    actualFilePath = exactMatch.path;
-                    if (this.options.enableLogging) {
-                        log(`[CommandRouter] ✅ Found exact match: ${exactMatch.name}`);
-                    }
-                } else {
-                    // Show quick pick for user to choose
-                    const items = searchResult.files.map((file: any) => ({
-                        label: file.name,
-                        description: `${file.lines || 0} lines`,
-                        detail: vscode.workspace.asRelativePath(file.path),
-                        filePath: file.path
-                    }));
-
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: `Multiple Python files found for "${filename}". Select one to run:`
-                    });
-
-                    if (!selected) {
-                        vscode.window.showInformationMessage('Python execution cancelled');
-                        return false;
-                    }
-
-                    actualFilePath = (selected as any).filePath;
+                
+                // Provide audio feedback [[memory:6411078]]
+                vscode.window.setStatusBarMessage(`🚀 ${result.message}`, 3000);
+                
+                // Speak confirmation using TTS
+                await speakTokenList([
+                    { tokens: [result.message], category: 'comment' }
+                ]);
+                
+                return true;
+            } else {
+                if (this.options.enableLogging) {
+                    log(`[CommandRouter] ❌ File execution failed: ${result.message}`);
                 }
-            }
-
-            if (!actualFilePath) {
-                vscode.window.showErrorMessage('Could not determine which Python file to run');
+                
+                vscode.window.showErrorMessage(result.message);
+                
+                await speakTokenList([
+                    { tokens: ['실행'], category: 'comment' },
+                    { tokens: ['실패'], category: 'comment' }
+                ]);
+                
                 return false;
             }
-
-            // Get relative path for execution
-            const relativePath = path.relative(workspaceRoot, actualFilePath);
-            const displayName = path.basename(actualFilePath);
-
-            if (this.options.enableLogging) {
-                log(`[CommandRouter] 🚀 Executing Python file: ${actualFilePath}`);
-            }
-
-            // Create and show terminal
-            const terminal = vscode.window.createTerminal({
-                name: `Run ${displayName}`,
-                cwd: workspaceRoot
-            });
-            
-            terminal.show();
-            
-            // Execute the Python file using relative path
-            terminal.sendText(`python3 "${relativePath}"`);
-            
-            // Provide audio feedback [[memory:6411078]]
-            vscode.window.setStatusBarMessage(`🐍 Running ${displayName}...`, 3000);
-            
-            // Speak confirmation using TTS
-            await speakTokenList([
-                { tokens: ['Running'], category: 'comment' },
-                { tokens: [displayName.replace('.py', '')], category: 'variable' }
-            ]);
-
-            if (this.options.enableLogging) {
-                log(`[CommandRouter] ✅ Python file execution started: ${displayName} (${relativePath})`);
-            }
-
-            return true;
 
         } catch (error) {
-            logError(`[CommandRouter] Python execution error: ${error}`);
-            vscode.window.showErrorMessage(`Failed to run Python file: ${error}`);
+            logError(`[CommandRouter] File execution error: ${error}`);
+            vscode.window.showErrorMessage(`파일 실행 중 오류가 발생했습니다: ${error}`);
+            
+            await speakTokenList([
+                { tokens: ['파일'], category: 'comment' },
+                { tokens: ['실행'], category: 'comment' },
+                { tokens: ['오류'], category: 'comment' }
+            ]);
+            
             return false;
         }
     }
@@ -1659,22 +1693,35 @@ Generate appropriate ${languageId} code that:
                 preventDefault: true
             },
             
-            // Python execution
+            // File execution (supports multiple file types)
             {
-                pattern: /(?:run|execute)\s+([a-zA-Z0-9_.-]+(?:\.py)?)/i,
+                pattern: /(?:run|execute|실행해?)\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)/i,
                 command: '',
-                description: 'Run Python file via terminal with intelligent file finding',
+                description: 'Execute file based on extension with intelligent file finding',
                 preventDefault: true,
                 isRegex: true,
                 customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
                     const filename = match[1]?.trim();
                     if (!filename) {
-                        vscode.window.showErrorMessage('Please specify a Python file to run');
+                        vscode.window.showErrorMessage('실행할 파일을 지정해주세요');
                         return false;
                     }
 
                     // Use the same logic as the LLM execution method
-                    return await this.executeLLMPythonExecution({ filename }, originalText);
+                    return await this.executeLLMFileExecution({ filename }, originalText);
+                }
+            },
+            
+            // Execute current file (no filename specified)
+            {
+                pattern: /^(?:이\s*파일\s*실행해?(?:줘)?|실행해?(?:줘)?|run\s*this\s*file|execute\s*this\s*file|run\s*current\s*file|execute\s*current\s*file)$/i,
+                command: '',
+                description: 'Execute current active file',
+                preventDefault: true,
+                isRegex: true,
+                customHandler: async (match: RegExpMatchArray | string[], originalText: string) => {
+                    // Execute current file without specifying filename
+                    return await this.executeLLMFileExecution({}, originalText);
                 }
             },
             
@@ -2187,7 +2234,7 @@ Generate appropriate ${languageId} code that:
             },
             {
                 pattern: /^(syntax errors|syntax error list|error list|errors)$/i,
-                command: 'lipcoder.syntaxErrorList',
+                command: 'lipcoderDev.syntaxErrorList',
                 description: 'Show syntax error list',
                 preventDefault: true
             },
@@ -2262,6 +2309,66 @@ Generate appropriate ${languageId} code that:
                 pattern: /^(switch panel|panel)$/i,
                 command: 'lipcoder.switchPanel',
                 description: 'Switch between panels',
+                preventDefault: true
+            },
+
+            // Image Analysis Commands - 이미지 분석 관련 명령어들
+            {
+                pattern: /^(이미지 분석|그림 분석|image analysis|analyze image|describe image|이 이미지|이 그림)$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Analyze and describe image',
+                preventDefault: true
+            },
+            {
+                pattern: /^(이미지에.*있니|그림에.*있니|이미지.*뭐야|그림.*뭐야|이미지.*설명|그림.*설명).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Analyze image content',
+                preventDefault: true,
+                isRegex: true
+            },
+            // "이 이미지에 동물 그림이 있니?" 같은 패턴 매칭
+            {
+                pattern: /^.*?(이|이것|이거|this).*?(이미지|그림|image|picture).*?(동물|사람|물체|색깔|텍스트|글자|숫자|차트|그래프|도표|내용|뭐|무엇).*?(있니|있나|있어|뭐야|설명|describe).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Analyze specific content in this image',
+                preventDefault: true,
+                isRegex: true
+            },
+            // "동물 그림이 있니?" 같은 패턴
+            {
+                pattern: /^.*?(동물|사람|물체|색깔|텍스트|글자|숫자|차트|그래프|도표).*?(그림|이미지|image|picture).*?(있니|있나|있어|뭐야|설명|describe).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Analyze specific content in image',
+                preventDefault: true,
+                isRegex: true
+            },
+            // "그림에 동물이 있니?" 같은 패턴 (순서 바뀐 경우)
+            {
+                pattern: /^.*?(그림|이미지|image|picture).*?(동물|사람|물체|색깔|텍스트|글자|숫자|차트|그래프|도표|내용|뭐|무엇).*?(있니|있나|있어|뭐야|설명|describe).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Analyze specific content in image (reverse order)',
+                preventDefault: true,
+                isRegex: true
+            },
+            // 더 일반적인 이미지 질문 패턴들
+            {
+                pattern: /^.*?(뭐가|무엇이|what).*?(그림|이미지|image|picture).*?(있니|있나|있어|보여|shows?).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Ask what is in the image',
+                preventDefault: true,
+                isRegex: true
+            },
+            {
+                pattern: /^.*?(그림|이미지|image|picture).*?(뭐야|무엇|what|내용|content).*$/i,
+                command: 'lipcoder.selectAndAnalyzeImage',
+                description: 'Ask about image content',
+                preventDefault: true,
+                isRegex: true
+            },
+            {
+                pattern: /^(png 파일|png 열기|open png|png file|png 파일 열기)$/i,
+                command: 'lipcoder.openPngFile',
+                description: 'Open PNG file',
                 preventDefault: true
             },
 
@@ -2485,6 +2592,46 @@ Response:`;
             log(`[CommandRouter] ==========================================`);
             log(`[CommandRouter] Processing transcription: "${trimmedText}"`);
             log(`[CommandRouter] Using LLM-based command classification`);
+        }
+
+        // Early intercept: direct file open commands (bypass LLM)
+        try {
+            const lower = trimmedText.toLowerCase();
+
+            // English: "open <filename>"
+            if (lower.startsWith('open ')) {
+                const filename = trimmedText.slice(5).trim();
+                if (filename) {
+                    await vscode.commands.executeCommand('lipcoder.openFile', filename);
+                    return true;
+                }
+            }
+
+            // Korean trailing forms: "<name> 열어", "<name> 열어줘", "<name> 파일 열어", "<name> 파일 열기"
+            // Also handle Korean particles: "<name>을/를 열어주세요"
+            const krMatch = trimmedText.match(/^(.+?)\s*(?:을|를)?\s*(?:파일\s*)?(?:열어주세요|열어줘|열어|열기)\s*$/i);
+            if (krMatch && krMatch[1]) {
+                let filenameKr = krMatch[1].trim();
+                
+                // Translate Korean file names to English equivalents
+                const koreanToEnglishFiles: { [key: string]: string } = {
+                    '유니버시티': 'university.py',
+                    '리드미': 'README.md',
+                    '레드미': 'README.md'
+                };
+                
+                // Check if we have a direct translation
+                if (koreanToEnglishFiles[filenameKr]) {
+                    filenameKr = koreanToEnglishFiles[filenameKr];
+                }
+                
+                if (filenameKr) {
+                    await vscode.commands.executeCommand('lipcoder.openFile', filenameKr);
+                    return true;
+                }
+            }
+        } catch (e) {
+            // Fall through to normal processing on any error
         }
         
         // SPECIAL DEBUG: Log all line navigation attempts

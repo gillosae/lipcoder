@@ -1,4 +1,6 @@
 const esbuild = require("esbuild");
+const fs = require('fs');
+const path = require('path');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -23,6 +25,32 @@ const esbuildProblemMatcherPlugin = {
 	},
 };
 
+/**
+ * Post-process bundled output to strip "node:" prefixes in core module imports.
+ * This avoids extension-host issues resolving module roots from node:internal/* frames.
+ */
+const postProcessNodePrefixPlugin = {
+    name: 'postprocess-node-prefix',
+    setup(build) {
+        build.onEnd((result) => {
+            try {
+                const outFile = path.resolve(process.cwd(), 'dist/client/extension.js');
+                if (!fs.existsSync(outFile)) return;
+                const orig = fs.readFileSync(outFile, 'utf8');
+                if (orig.includes('node:')) {
+                    const replaced = orig
+                        .replace(/require\(["']node:/g, 'require("')
+                        .replace(/from ["']node:/g, 'from "');
+                    fs.writeFileSync(outFile, replaced, 'utf8');
+                    console.log('[postprocess] stripped node: prefixes in bundled output');
+                }
+            } catch (e) {
+                console.warn('[postprocess] failed to strip node: prefixes:', e && e.message);
+            }
+        });
+    }
+};
+
 async function main() {
 	const ctx = await esbuild.context({
 		entryPoints: [
@@ -31,10 +59,10 @@ async function main() {
 		bundle: true,
 		format: 'cjs',
 		minify: production,
-		sourcemap: !production,
+		sourcemap: false,
 		sourcesContent: false,
 		platform: 'node',
-		target: 'node16',
+		target: 'node18',
 		outfile: 'dist/client/extension.js',
 		external: ['vscode', 'node-pty', 'node-pty-prebuilt-multiarch'],
 		logLevel: 'silent',
@@ -44,6 +72,7 @@ async function main() {
 		plugins: [
 			/* add to the end of plugins array */
 			esbuildProblemMatcherPlugin,
+			postProcessNodePrefixPlugin,
 		],
 	});
 	if (watch) {

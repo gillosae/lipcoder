@@ -36,16 +36,32 @@ export async function genTokenAudio(
     log(`[genTokenAudio] START token="${token}" category="${category}" backend="${currentBackend}"`);
     log(`[genTokenAudio] Call stack: ${new Error().stack?.split('\n')[2]?.trim()}`);
 
-    // 0) Pre-generated keyword audio? (same for both backends)
-    if (category && category.startsWith('keyword_')) {
-        const lang = category.split('_')[1];      // "python" or "typescript"
-        const filename = token.toLowerCase();     // match your saved filenames
-        const filePath = path.join(config.earconPath(), lang, `${filename}.pcm`);
-        log(`[genTokenAudio] looking up keyword WAV at ${filePath}, exists=${fs.existsSync(filePath)}`);
-        if (fs.existsSync(filePath)) {
-            log(`[genTokenAudio] keyword bypass: using pre-generated audio at ${filePath}`);
-            return filePath;  // skip TTS entirely
+    // 0) Pre-generated keyword audio (backend-specific folders)
+    if (category && (category === 'keyword' || category.includes('keyword'))) {
+        const filename = token.toLowerCase();
+        const dirs: string[] = [];
+        if (category.includes('python')) {
+            dirs.push(config.pythonKeywordsPath());
+        } else if (category.includes('typescript')) {
+            dirs.push(config.typescriptKeywordsPath());
+        } else {
+            // If language not specified in category, try both
+            dirs.push(config.pythonKeywordsPath(), config.typescriptKeywordsPath());
         }
+        for (const baseDir of dirs) {
+            const wavPath = path.join(baseDir, `${filename}.wav`);
+            const pcmPath = path.join(baseDir, `${filename}.pcm`);
+            log(`[genTokenAudio] looking up keyword asset at ${wavPath} or ${pcmPath}`);
+            if (fs.existsSync(wavPath)) {
+                log(`[genTokenAudio] keyword bypass (WAV): using ${wavPath}`);
+                return wavPath;  // prefer WAV to match playTtsAsPcm
+            }
+            if (fs.existsSync(pcmPath)) {
+                log(`[genTokenAudio] keyword bypass (PCM): using ${pcmPath}`);
+                return pcmPath;  // fallback to PCM if WAV missing
+            }
+        }
+        log(`[genTokenAudio] keyword asset not found for "${token}" (${category}), falling back to TTS`);
     }
 
     // 0.1) Pre-generated alphabet audio for single letters
@@ -58,14 +74,18 @@ export async function genTokenAudio(
     
     if (useAlphabetPCM) {
         const filename = token.toLowerCase();
-        const filePath = path.join(config.audioPath(), 'alphabet', `${filename}.pcm`);
-        log(`[genTokenAudio] looking up alphabet PCM at ${filePath}, exists=${fs.existsSync(filePath)}`);
-        if (fs.existsSync(filePath)) {
-            log(`[genTokenAudio] *** ALPHABET BYPASS: using pre-generated PCM for "${token}" (${category}) at ${filePath} ***`);
-            return filePath;  // skip TTS entirely for fast alphabet playback
-        } else {
-            log(`[genTokenAudio] Alphabet PCM not found for "${token}" (${category}), falling back to TTS`);
+        const pcmPath = path.join(config.alphabetPath(), `${filename}.pcm`);
+        const wavPath = path.join(config.alphabetPath(), `${filename}.wav`);
+        log(`[genTokenAudio] looking up alphabet assets at ${pcmPath} or ${wavPath}`);
+        if (fs.existsSync(pcmPath)) {
+            log(`[genTokenAudio] *** ALPHABET BYPASS (PCM): ${pcmPath}`);
+            return pcmPath;
         }
+        if (fs.existsSync(wavPath)) {
+            log(`[genTokenAudio] *** ALPHABET BYPASS (WAV): ${wavPath}`);
+            return wavPath;
+        }
+        log(`[genTokenAudio] Alphabet asset not found for "${token}" (${category}), falling back to TTS`);
     } else if (token.length === 1 && isAlphabet(token)) {
         log(`[genTokenAudio] Single letter "${token}" with category "${category}" - not using alphabet PCM (useAlphabetPCM=${useAlphabetPCM})`);
     }
@@ -74,11 +94,16 @@ export async function genTokenAudio(
     // Use PCM files for single digits in variable names, literals, etc.
     if (token.length === 1 && isNumber(token) && (category === 'special' || category === 'variable' || category === 'literal')) {
         const filename = token;  // digits are already 0-9
-        const filePath = path.join(config.audioPath(), 'number', `${filename}.pcm`);
-        log(`[genTokenAudio] looking up number PCM at ${filePath}, exists=${fs.existsSync(filePath)}`);
-        if (fs.existsSync(filePath)) {
-            log(`[genTokenAudio] *** NUMBER BYPASS: using pre-generated PCM for "${token}" (${category}) at ${filePath} ***`);
-            return filePath;  // skip TTS entirely for fast number playback
+        const numPcmPath = path.join(config.numberPath(), `${filename}.pcm`);
+        const numWavPath = path.join(config.numberPath(), `${filename}.wav`);
+        log(`[genTokenAudio] looking up number assets at ${numPcmPath} or ${numWavPath}`);
+        if (fs.existsSync(numPcmPath)) {
+            log(`[genTokenAudio] *** NUMBER BYPASS (PCM): ${numPcmPath}`);
+            return numPcmPath;  // skip TTS entirely for fast number playback
+        }
+        if (fs.existsSync(numWavPath)) {
+            log(`[genTokenAudio] *** NUMBER BYPASS (WAV): ${numWavPath}`);
+            return numWavPath;  // skip TTS entirely for fast number playback
         }
     }
 
@@ -104,8 +129,19 @@ export async function genTokenAudio(
             sanitized = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
             log(`[genTokenAudio] Korean token "${token}" → hash: ${sanitized}`);
         } else {
-            // For English text, use the original sanitization
-            sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            // For English text, use sanitization with length limit to prevent filename too long errors
+            let baseSanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            
+            // If the sanitized filename is too long, use a hash approach similar to Korean
+            if (baseSanitized.length > 100) {
+                const crypto = require('crypto');
+                const hash = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
+                const truncated = baseSanitized.substring(0, 50); // Keep first 50 chars for readability
+                sanitized = `${truncated}_${hash}`;
+                log(`[genTokenAudio] Long English token (${baseSanitized.length} chars) → truncated: ${sanitized}`);
+            } else {
+                sanitized = baseSanitized;
+            }
         }
         
         // Ensure category is properly included in cache key to prevent voice conflicts
@@ -130,8 +166,25 @@ export async function genTokenAudio(
     const useKoreanTTS = detectedLanguage === DetectedLanguage.Korean; // Direct check instead of function call
     log(`[genTokenAudio] Language detection for "${token}": ${detectedLanguage}, useKoreanTTS: ${useKoreanTTS}`);
     
-    // Handle the three combined backend options
-    if (currentBackend === TTSBackend.SileroGPT) {
+    // If this is vibe coding text OR vibe coding is currently active, force OpenAI TTS (GPT)
+    let isVibeCodingActive = false;
+    try {
+        const { getVibeCodingTTSActive } = await import('./features/vibe_coding.js');
+        isVibeCodingActive = getVibeCodingTTSActive();
+    } catch (error) {
+        log(`[genTokenAudio] Warning: Could not import vibe coding state: ${error}`);
+    }
+    
+    // Enhanced logging for debugging
+    log(`[genTokenAudio] TTS routing check: category="${category}", isVibeCodingActive=${isVibeCodingActive}, backend="${currentBackend}"`);
+    
+    if (category === 'vibe_text' || isVibeCodingActive) {
+        const gptOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker)
+            ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
+            : { abortSignal: opts?.abortSignal };
+        log(`[genTokenAudio] *** FORCING OPENAI TTS *** - Vibe coding detected (category: ${category}, active: ${isVibeCodingActive}) for: "${token}"`);
+        wavBuffer = await generateOpenAITTS(token, category, gptOpts);
+    } else if (currentBackend === TTSBackend.SileroGPT) {
         // Silero for English + GPT for Korean
         if (useKoreanTTS) {
             log(`[genTokenAudio] Korean text detected, using OpenAI TTS (Silero+GPT backend): "${token}"`);
@@ -155,6 +208,10 @@ export async function genTokenAudio(
             log(`[genTokenAudio] English text detected, using Espeak TTS (Espeak+GPT backend): "${token}"`);
             wavBuffer = await generateEspeakTTS(token, category, opts);
         }
+    } else if (currentBackend === TTSBackend.Espeak) {
+        // Espeak for all languages (including Korean)
+        log(`[genTokenAudio] Using Espeak TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
+        wavBuffer = await generateEspeakTTS(token, category, opts);
     } else if (currentBackend === TTSBackend.XTTSV2) {
         // XTTS-v2 for both Korean and English
         const xttsV2Port = serverManager.getServerPort('xtts_v2');
@@ -210,8 +267,19 @@ export async function genTokenAudio(
                 const crypto = require('crypto');
                 sanitized = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
             } else {
-                // For English text, use the original sanitization
-                sanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                // For English text, use sanitization with length limit to prevent filename too long errors
+                let baseSanitized = token.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                
+                // If the sanitized filename is too long, use a hash approach similar to Korean
+                if (baseSanitized.length > 100) {
+                    const crypto = require('crypto');
+                    const hash = crypto.createHash('md5').update(token).digest('hex').substring(0, 8);
+                    const truncated = baseSanitized.substring(0, 50); // Keep first 50 chars for readability
+                    sanitized = `${truncated}_${hash}`;
+                    log(`[genTokenAudio] Long English token (${baseSanitized.length} chars) → truncated: ${sanitized}`);
+                } else {
+                    sanitized = baseSanitized;
+                }
             }
             
             const safeCategory = category || 'text';
@@ -295,6 +363,23 @@ async function generateSileroTTS(
 /**
  * Generate TTS using espeak-ng backend
  */
+// Load balancer for dual espeak servers
+let espeakServerIndex = 0;
+function getNextEspeakServer(): number {
+    const primaryPort = serverManager.getServerPort('espeak_tts');
+    const secondaryPort = serverManager.getServerPort('espeak_tts_2');
+    
+    // If both servers are available, alternate between them
+    if (primaryPort && secondaryPort) {
+        const port = espeakServerIndex === 0 ? primaryPort : secondaryPort;
+        espeakServerIndex = (espeakServerIndex + 1) % 2; // Alternate between 0 and 1
+        return port;
+    }
+    
+    // Fallback to whichever server is available
+    return primaryPort || secondaryPort || 0;
+}
+
 async function generateEspeakTTS(
     token: string,
     category?: string,
@@ -306,18 +391,25 @@ async function generateEspeakTTS(
     const categorySettings = (baseCategory && espeakCategoryVoiceMap[baseCategory]) || {};
     const espeakSettings = { ...espeakConfig, ...categorySettings };
     
+    // Detect language and set appropriate voice
+    const detectedLanguage = detectLanguage(token);
+    if (detectedLanguage === DetectedLanguage.Korean) {
+        espeakSettings.defaultVoice = 'ko';  // Use Korean voice for Korean text
+        log(`[generateEspeakTTS] Korean text detected, using Korean voice: "${token}"`);
+    }
+    
     // Allow override via opts (using speaker as voice for compatibility)
     if (opts?.speaker) {
         espeakSettings.defaultVoice = opts.speaker;
     }
     
-    // Send text to long-running espeak server
-    const espeakPort = serverManager.getServerPort('espeak_tts');
+    // Get next available espeak server (load balancing)
+    const espeakPort = getNextEspeakServer();
     if (!espeakPort) {
-        throw new Error('Espeak TTS server is not running. Try switching to espeak-ng TTS backend first.');
+        throw new Error('No Espeak TTS servers are running. Try switching to espeak-ng TTS backend first.');
     }
     
-    log(`[generateEspeakTTS] Using espeak server on port ${espeakPort} for token "${token}"`);
+    log(`[generateEspeakTTS] Using espeak server on port ${espeakPort} for token "${token}" (load balanced)`);
     
     const res = await fetch(`http://localhost:${espeakPort}/tts`, {
         method: 'POST',
@@ -619,6 +711,15 @@ export function getSpeakerForCategory(category?: string, opts?: { speaker?: stri
         const voice = espeakSettings.defaultVoice;
         if (category?.includes('comment')) {
             log(`[getSpeakerForCategory] Returning Espeak voice for comment (Espeak+GPT): ${voice}`);
+        }
+        return voice;
+    } else if (currentBackend === TTSBackend.Espeak) {
+        // For pure Espeak backend, use Espeak voices for all languages
+        const categorySettings = (baseCategory && espeakCategoryVoiceMap[baseCategory]) || {};
+        const espeakSettings = { ...espeakConfig, ...categorySettings };
+        const voice = espeakSettings.defaultVoice;
+        if (category?.includes('comment')) {
+            log(`[getSpeakerForCategory] Returning Espeak voice for comment (Pure Espeak): ${voice}`);
         }
         return voice;
     } else if (currentBackend === TTSBackend.XTTSV2) {

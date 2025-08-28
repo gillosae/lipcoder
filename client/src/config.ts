@@ -12,6 +12,7 @@ export function initConfig(context: ExtensionContext) {
 export enum TTSBackend {
     SileroGPT = 'silero-gpt',     // Silero for English + GPT for Korean
     EspeakGPT = 'espeak-gpt',     // Espeak for English + GPT for Korean  
+    Espeak = 'espeak',           // Espeak for all languages (including Korean)
     XTTSV2 = 'xtts-v2',          // XTTS-v2 for both Korean and English
 }
 
@@ -86,7 +87,11 @@ export interface ClaudeConfig {
     temperature: number;  // 0.0 to 1.0 (default: 0.1 for code)
 }
 
-export let currentBackend = TTSBackend.XTTSV2;
+export interface VibeCodingConfig {
+    showPopups: boolean;
+}
+
+export let currentBackend = TTSBackend.Espeak;
 
 // ASR Configuration ─────────────────────────────────────────────────────
 export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
@@ -120,10 +125,10 @@ export let sileroConfig: SileroConfig = {
 export let espeakConfig: EspeakConfig = {
     language: 'en',
     defaultVoice: 'en-us',  // Use valid espeak-ng voice name
-    speed: 175,
+    speed: 220,  // Increased from 175 for faster speech
     pitch: 50,
     amplitude: 100,
-    gap: 0,
+    gap: 0,  // No gap between words
     sampleRate: 24000,
 };
 
@@ -150,6 +155,10 @@ export let claudeConfig: ClaudeConfig = {
     model: 'claude-sonnet-4-20250514', // Latest Sonnet model
     maxTokens: 2000, // Max tokens for code modifications
     temperature: 0.1, // Low temperature for consistent code generation
+};
+
+export let vibeCodingConfig: VibeCodingConfig = {
+    showPopups: false,  // Default to no popups per user preference
 };
 
 export const categoryVoiceMap: Record<string, string> = {
@@ -230,28 +239,28 @@ export const espeakCategoryVoiceMap: Record<string, Partial<EspeakConfig>> = {
     // Note: espeak-ng doesn't have multiple speakers like Silero, so we use different
     // language variants and parameter changes to create variety
     
-    variable: { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },     // Variables, function names - default US voice
-    operator: { defaultVoice: 'en-gb', pitch: 60, speed: 180, amplitude: 110 },    // Math operators - higher pitch British voice
-    type: { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 160, amplitude: 90 },   // Punctuation & symbols - lower pitch RP voice
-    comment: { defaultVoice: 'en-us', pitch: 45, speed: 165, amplitude: 85 },      // Comments - softer US voice
+    variable: { defaultVoice: 'en-us', pitch: 50, speed: 220, amplitude: 100 },     // Variables, function names - default US voice
+    operator: { defaultVoice: 'en-gb', pitch: 60, speed: 230, amplitude: 110 },    // Math operators - higher pitch British voice
+    type: { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 210, amplitude: 90 },   // Punctuation & symbols - lower pitch RP voice
+    comment: { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },      // Comments - softer US voice
     
     // Future semantic categories
-    keyword: { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 105 },                // Keywords - British voice
-    'keyword.control': { defaultVoice: 'en-gb', pitch: 55, speed: 170, amplitude: 105 },
-    'keyword.operator': { defaultVoice: 'en-gb', pitch: 60, speed: 180, amplitude: 110 },
-    'keyword.import': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 165, amplitude: 95 },
+    keyword: { defaultVoice: 'en+f2', pitch: 55, speed: 220, amplitude: 105 },                // Keywords - English female voice
+    'keyword.control': { defaultVoice: 'en+f2', pitch: 55, speed: 220, amplitude: 105 },
+    'keyword.operator': { defaultVoice: 'en+f2', pitch: 60, speed: 230, amplitude: 110 },
+    'keyword.import': { defaultVoice: 'en+f2', pitch: 48, speed: 210, amplitude: 95 },
     
-    'function.name': { defaultVoice: 'en-us', pitch: 52, speed: 175, amplitude: 100 },
-    'function.call': { defaultVoice: 'en-us', pitch: 50, speed: 175, amplitude: 100 },
-    'function.builtin': { defaultVoice: 'en-gb', pitch: 58, speed: 180, amplitude: 105 },
+    'function.name': { defaultVoice: 'en-us', pitch: 52, speed: 220, amplitude: 100 },
+    'function.call': { defaultVoice: 'en-us', pitch: 50, speed: 220, amplitude: 100 },
+    'function.builtin': { defaultVoice: 'en-gb', pitch: 58, speed: 230, amplitude: 105 },
     
-    'string': { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
-    'string.quoted': { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
-    literal: { defaultVoice: 'en-us', pitch: 45, speed: 160, amplitude: 85 },
+    'string': { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
+    'string.quoted': { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
+    literal: { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
     
-    'number': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 185, amplitude: 100 },
-    'number.integer': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 185, amplitude: 100 },
-    'number.float': { defaultVoice: 'en-gb-x-rp', pitch: 53, speed: 180, amplitude: 100 },
+    'number': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 230, amplitude: 100 },
+    'number.integer': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 230, amplitude: 100 },
+    'number.float': { defaultVoice: 'en-gb-x-rp', pitch: 53, speed: 220, amplitude: 100 },
     
     'type.class': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 170, amplitude: 95 },
     'class.name': { defaultVoice: 'en-gb-scotland', pitch: 48, speed: 170, amplitude: 95 },
@@ -368,6 +377,93 @@ export function setLLMBackend(backend: LLMBackend, claudePartial?: Partial<Claud
     }
 }
 
+// Earcon Mode Configuration ─────────────────────────────────────────────────────
+export enum EarconMode {
+    Sound = 'sound',           // Play earcon sounds for all characters
+    Text = 'text',             // Speak earcons as text for all characters
+    ParenthesesOnly = 'paren'  // Use earcon sounds for ( ), and enter; text for everything else
+}
+
+// Mutable earcon mode state
+export const earconModeState = {
+    mode: EarconMode.ParenthesesOnly  // Default to parentheses-only earcon mode
+};
+
+// Earcon to spoken text mappings for text mode
+export const earconTextMap: Record<string, string> = {
+    // Parentheses & brackets
+    '(': 'left parenthesis',
+    ')': 'right parenthesis',
+    '[': 'left bracket',
+    ']': 'right bracket',
+    '{': 'left brace',
+    '}': 'right brace',
+    '<': 'less than',
+    '>': 'greater than',
+
+    // Quotes
+    '"': 'double quote',
+    "'": 'single quote',
+    '`': 'backtick',
+
+    // Basic punctuation
+    '.': 'dot',
+    ',': 'comma',
+    ';': 'semicolon',
+    ':': 'colon',
+    '_': 'underscore',     // changed from underbar
+    '-': 'minus',          // better than dash (used in math & code)
+
+    // Operators
+    '=': 'equals',
+    '+': 'plus',
+    '*': 'asterisk',
+    '/': 'slash',
+    '\\': 'backslash',
+    '|': 'vertical bar',   // pipe is slang; vertical bar is canonical
+    '&': 'ampersand',
+
+    // Special characters
+    '!': 'exclamation mark',
+    '@': 'at sign',
+    '#': 'hash',
+    '$': 'dollar',
+    '%': 'percent',
+    '^': 'caret',
+    '?': 'question mark',
+    '~': 'tilde',
+    '₩': 'won sign',
+
+    // Multi-character operators
+    '++': 'plus plus',                // often read literally
+    '--': 'minus minus',
+    '+=': 'plus equals',
+    '-=': 'minus equals',
+    '*=': 'times equals',
+    '/=': 'divide equals',
+    '==': 'equals equals',
+    '!=': 'not equals',
+    '===': 'triple equals',
+    '!==': 'not triple equals',
+    '<=': 'less than or equal',
+    '>=': 'greater than or equal',
+    '&&': 'logical and',
+    '||': 'logical or',
+    '//': 'double slash',
+    '=>': 'arrow',
+
+    // Whitespace
+    ' ': 'space',
+    '\t': 'tab',
+    '\n': 'newline',
+    
+    // Special tokens
+    'enter': 'enter',
+    'backspace': 'backspace',
+    'indent_increase': 'indent increase',
+    'indent_decrease': 'indent decrease'
+};
+
 // Path and Etc Config ─────────────────────────────────────────────────────
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
@@ -378,6 +474,10 @@ export const config = {
     globalPanningEnabled: true,  // enable global panning system for ALL audio
     gentleAudioStopping: true,   // reduce aggressive audio stopping to minimize crackling
     backspaceEarconEnabled: false, // enable/disable backspace earcon playback
+    
+    // Latency Optimization ──────────────────────────────────────────────────────────
+    reduceInterTokenDelay: true,  // minimize delays between spoken tokens for faster reading
+    aggressiveAudioPipeline: true, // use smaller audio buffers for lower latency
 
     // Audio Minimap Configuration
     audioMinimapEnabled: true,   // enable audio minimap when cursor moves quickly
@@ -385,12 +485,37 @@ export const config = {
     audioMinimapTimeout: 150,    // minimum milliseconds between line changes to calculate speed (reduced for more responsive detection)
 
     audioPath: () => path.join(extRoot, 'client', 'audio'),
-    alphabetPath: () => path.join(extRoot, 'client', 'audio', 'alphabet'),
+    alphabetPath: () => path.join(
+        extRoot,
+        'client',
+        'audio',
+        `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+    ),
     earconPath: () => path.join(extRoot, 'client', 'audio', 'earcon'),
-    numberPath: () => path.join(extRoot, 'client', 'audio', 'number'),
+    numberPath: () => path.join(
+        extRoot,
+        'client',
+        'audio',
+        `number${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+    ),
+    pythonKeywordsPath: () => path.join(
+        extRoot,
+        'client',
+        'audio',
+        `python${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+    ),
+    typescriptKeywordsPath: () => path.join(
+        extRoot,
+        'client',
+        'audio',
+        `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+    ),
     pythonPath: () => path.join(extRoot, 'client', 'src', 'python', 'bin', 'python'),
     scriptPath: () => path.join(extRoot, 'client', 'src', 'python', 'silero_tts_infer.py'),
-    specialPath: () => path.join(config.audioPath(), 'special'),
+    specialPath: () => path.join(
+        config.audioPath(),
+        `special${currentBackend === TTSBackend.Espeak ? '_espeak' : '_silero'}`
+    ),
     musicalPath: () => path.join(config.audioPath(), 'musical'),
     alertPath: () => path.join(config.audioPath(), 'alert'),
 
@@ -403,6 +528,8 @@ export const config = {
     globalPanningEnabled: boolean;
     gentleAudioStopping: boolean;
     backspaceEarconEnabled: boolean;
+    reduceInterTokenDelay: boolean;
+    aggressiveAudioPipeline: boolean;
     audioMinimapEnabled: boolean;
     audioMinimapSpeedThreshold: number;
     audioMinimapTimeout: number;
@@ -411,6 +538,8 @@ export const config = {
     alphabetPath: () => string;
     earconPath: () => string;
     numberPath: () => string;
+    pythonKeywordsPath: () => string;
+    typescriptKeywordsPath: () => string;
     pythonPath: () => string;
     scriptPath: () => string;
     specialPath: () => string;
@@ -474,11 +603,13 @@ export function loadConfigFromSettings() {
         openaiTTSConfig.volumeBoost = ttsVolumeBoost;
         
         // Load TTS backend selection
-        const ttsBackend = config.get('ttsBackend', 'xtts-v2') as string;
+        const ttsBackend = config.get('ttsBackend', 'espeak') as string;
         if (ttsBackend === 'silero-gpt') {
             currentBackend = TTSBackend.SileroGPT;
         } else if (ttsBackend === 'espeak-gpt') {
             currentBackend = TTSBackend.EspeakGPT;
+        } else if (ttsBackend === 'espeak') {
+            currentBackend = TTSBackend.Espeak;
         } else if (ttsBackend === 'xtts-v2') {
             currentBackend = TTSBackend.XTTSV2;
         }
@@ -520,6 +651,10 @@ export function loadConfigFromSettings() {
         
         const claudeTemperature = config.get('claudeTemperature', 0.1) as number;
         claudeConfig.temperature = claudeTemperature;
+        
+        // Load vibe coding popup preferences
+        const vibeCodingShowPopups = config.get('vibeCodingShowPopups', false) as boolean;
+        vibeCodingConfig.showPopups = vibeCodingShowPopups;
         
         console.log('[Config] Configuration loaded successfully');
     } catch (error) {

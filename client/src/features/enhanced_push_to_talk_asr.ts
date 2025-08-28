@@ -11,6 +11,7 @@ import { speakTokenList, TokenChunk } from '../audio';
 import { playEarcon } from '../earcon';
 import { handleASRError } from '../asr_error_handler';
 import { getLastActiveEditor, isEditorActive } from '../ide/active';
+import { goToLastDetectedError } from './terminal';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -269,6 +270,15 @@ function initializeASRClients(): void {
                 }
                 
                 log('[Enhanced-ASR] CommandRouter initialized successfully');
+                try {
+                    commandRouter?.addPattern({
+                        pattern: /^(go\s*to\s*error|jump\s*to\s*error|navigate\s*to\s*error)$/i,
+                        command: 'lipcoder.goToErrorLine',
+                        description: 'Go to last detected error line'
+                    });
+                } catch (e) {
+                    logWarning(`[Enhanced-ASR] Failed to add go-to-error pattern: ${e}`);
+                }
             } catch (error) {
                 logError(`[Enhanced-ASR] Failed to initialize CommandRouter: ${error}`);
                 commandRouter = null; // Ensure it's explicitly null on failure
@@ -941,6 +951,10 @@ export function registerEnhancedPushToTalkASR(extensionContext: vscode.Extension
         vscode.commands.registerCommand('lipcoder.stopASRCommandMode', stopASRCommandMode),
         vscode.commands.registerCommand('lipcoder.startASRWriteMode', startASRWriteMode),
         vscode.commands.registerCommand('lipcoder.stopASRWriteMode', stopASRWriteMode),
+
+        vscode.commands.registerCommand('lipcoder.goToErrorLine', async () => {
+            await goToLastDetectedError();
+        }),
         
         // Backend management
         vscode.commands.registerCommand('lipcoder.switchASRBackend', switchASRBackend),

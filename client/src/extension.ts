@@ -21,6 +21,7 @@ import { registerSwitchPanel } from './features/switch_panel';
 import { registerFunctionList } from './features/function_list';
 import { registerFileTree } from './features/file_tree';
 import { registerFileSearchExplorer } from './features/file_search_explorer';
+import { registerFileExecutor } from './features/file_executor';
 import { registerCSVFileChecker } from './features/csv_file_checker';
 import { registerUniversalFileChecker } from './features/universal_file_checker';
 import { registerLLMBashGenerator } from './features/llm_bash_generator';
@@ -34,24 +35,31 @@ import { registerPlaySpeed } from './features/playspeed';
 import { registerChatCompletions } from './llm';
 import { registerSetAPIKey } from './features/set_api_key';
 import { registerVibeCodingCommands } from './features/vibe_coding';
-import { registerASRCodeEditing } from './features/asr_code_editing';
+
 import { registerCodeAnalysis } from './features/code_analysis';
 import { registerLLMQuestion } from './features/llm_question';
 import { registerEnhancedPushToTalkASR } from './features/enhanced_push_to_talk_asr';
 import { registerTogglePanning } from './features/toggle_panning';
 import { registerTTSBackendSwitch } from './features/tts_backend_switch';
 import { registerLLMBackendSwitch } from './features/llm_backend_switch';
+import { registerEarconModeCommands } from './features/earcon_mode_toggle';
 import { registerOpenFile } from './features/open_file';
+import { registerOpenPng } from './features/open_png';
 import { registerSyntaxErrors } from './features/syntax_errors';
 import { registerTestKoreanTTS } from './features/test_korean_tts';
 import { registerTestXTTSInference } from './features/test_xtts_inference';
 import { registerDebugOutput } from './features/debug_output';
 import { registerClipboardAudio } from './features/clipboard_audio';
 import { serverManager } from './server_manager';
-import { activityLogger, logFeatureUsage } from './activity_logger';
+import { activityLogger, logFeatureUsage, logExtensionLifecycle } from './activity_logger';
 import { initializeEditorTracking } from './features/last_editor_tracker';
 import { initializeTabTracking } from './features/tab_tracker';
+import { comprehensiveEventTracker } from './comprehensive_event_tracker';
 import { registerTestTabTracker } from './features/test_tab_tracker';
+import { disposeCommandsWithPrefix } from './command_utils';
+import { registerImageDescription } from './features/image_description';
+import { registerExactCommandPalette, registerShowExactCommandsHelp } from './features/exact_command_palette';
+import { registerNaturalLanguageCommand } from './features/natural_language_command';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
@@ -115,11 +123,57 @@ function stopMemoryMonitoring(): void {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    // Prevent duplicate activation within the same Extension Host
+    if ((global as any).__lipcoderActivated) {
+        logWarning('[Extension] Duplicate activation detected, skipping.');
+        return;
+    }
+    (global as any).__lipcoderActivated = true;
+    
+    // Track activation start time
+    const activationStartTime = Date.now();
+    
     // Initialize logging first so debug output is visible
     initializeLogging();
     
     // Store context for global cleanup
     (global as any).lipcoderContext = context;
+    
+    // Clean up any existing lipcoder commands to prevent duplicate registration
+    try {
+        // Clear any existing subscriptions first
+        if (context.subscriptions.length > 0) {
+            log(`[Extension] Disposing ${context.subscriptions.length} existing subscriptions`);
+            context.subscriptions.forEach(disposable => {
+                try {
+                    disposable.dispose();
+                } catch (e) {
+                    // Ignore disposal errors
+                }
+            });
+            context.subscriptions.length = 0;
+        }
+        
+        // Check for existing lipcoder commands and log them
+        const { commandExists } = require('./command_utils');
+        const lipcoderCommands = [
+            'lipcoder.syntaxErrorList',
+            'lipcoder.nextSyntaxError', 
+            'lipcoder.previousSyntaxError',
+            'lipcoder.firstSyntaxError'
+        ];
+        
+        for (const cmd of lipcoderCommands) {
+            const exists = await commandExists(cmd);
+            if (exists) {
+                logWarning(`[Extension] Command ${cmd} already exists in VS Code registry`);
+            }
+        }
+        
+        log('[Extension] Cleaned up existing subscriptions and checked command registry');
+    } catch (error) {
+        logWarning(`[Extension] Failed to clean up existing subscriptions: ${error}`);
+    }
     
 	// 0) Dependency installation in parallel ──────────────────────────────────────────────
 	log('Extension Host running on Electron v' + process.versions.electron);
@@ -251,6 +305,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 3) Pre-generate earcons into cache ────────────────────────────
 	preloadEverything(context);
 
+	// 3.1) Warm up alphabet PCM cache for low-latency letter playback
+	try {
+		const { preloadAlphabetPCM } = require('./audio');
+		preloadAlphabetPCM();
+		log('✅ Alphabet PCM cache preloaded');
+	} catch (err) {
+		logWarning(`⚠️ Failed to preload alphabet PCM: ${err}`);
+	}
+
 	// 4) Build the unified audioMap ─────────────────────────────────────────────
 	console.log('[EXTENSION] About to create audioMap...');
 	const audioMapObj = createAudioMap(context);
@@ -313,6 +376,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		registerFileSearchExplorer(context);
 		log('✅ registerFileSearchExplorer completed');
 		
+		registerFileExecutor(context);
+		log('✅ registerFileExecutor completed');
+		
 		registerCSVFileChecker(context);
 		log('✅ registerCSVFileChecker completed');
 		
@@ -346,8 +412,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		registerVibeCodingCommands(context);
 		log('✅ registerVibeCodingCommands completed');
 		
-		registerASRCodeEditing(context);
-		log('✅ registerASRCodeEditing completed');
+
 		
 		registerCodeAnalysis(context);
 		log('✅ registerCodeAnalysis completed');
@@ -368,10 +433,16 @@ export async function activate(context: vscode.ExtensionContext) {
 		registerLLMBackendSwitch(context);
 		log('✅ registerLLMBackendSwitch completed');
 		
+		registerEarconModeCommands(context);
+		log('✅ registerEarconModeCommands completed');
+		
 		registerOpenFile(context);
 		log('✅ registerOpenFile completed');
 		
-		registerSyntaxErrors(context);
+		registerOpenPng(context);
+		log('✅ registerOpenPng completed');
+		
+		await registerSyntaxErrors(context);
 		log('✅ registerSyntaxErrors completed');
 		
 		registerTestKoreanTTS(context);
@@ -401,9 +472,23 @@ export async function activate(context: vscode.ExtensionContext) {
 	
 	registerSpeedTestCommand(context);
 	log('✅ registerSpeedTestCommand completed');
+	
+	registerImageDescription(context);
+	log('✅ registerImageDescription completed');
 
 	registerTestSuggestionStorage(context);
 	log('✅ registerTestSuggestionStorage completed');
+
+	// Register exact commands for Command Palette access
+	registerExactCommandPalette(context);
+	log('✅ registerExactCommandPalette completed');
+	
+	registerShowExactCommandsHelp(context);
+	log('✅ registerShowExactCommandsHelp completed');
+
+	// Register natural language command functionality
+	registerNaturalLanguageCommand(context);
+	log('✅ registerNaturalLanguageCommand completed');
 
 	// Add command to restart language server
 	try {
@@ -448,38 +533,6 @@ export async function activate(context: vscode.ExtensionContext) {
 		throw error; // Re-throw to see the full error
 	}
 
-	// Add command to continue with saved suggestions
-	context.subscriptions.push(
-		vscode.commands.registerCommand('lipcoder.continueWithSuggestions', async () => {
-			try {
-				const { showCurrentSuggestions, hasCurrentSuggestions } = await import('./features/suggestion_storage.js');
-				
-				if (!hasCurrentSuggestions()) {
-					vscode.window.showInformationMessage('No saved suggestions available. Use ASR commands to generate suggestions first.');
-					return;
-				}
-				
-				const selectedAction = await showCurrentSuggestions();
-				if (selectedAction) {
-					// Execute the selected action
-					const { getConversationalProcessor } = await import('./conversational_asr.js');
-					const processor = getConversationalProcessor();
-					if (processor && 'executeSuggestionAction' in processor) {
-						await (processor as any).executeSuggestionAction(selectedAction);
-						// Silent execution - no popup message
-					} else {
-						// Fallback execution
-						const { activateVibeCoding } = await import('./features/vibe_coding.js');
-						if (selectedAction.command === 'vibe_coding' && selectedAction.parameters?.instruction) {
-							await activateVibeCoding(selectedAction.parameters.instruction);
-						}
-					}
-				}
-			} catch (error) {
-				vscode.window.showErrorMessage(`Continue with suggestions failed: ${error}`);
-			}
-		})
-	);
 
 	// Add command to test comment voice
 	context.subscriptions.push(
@@ -707,6 +760,24 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// Initialize comprehensive event tracking
+	try {
+		comprehensiveEventTracker.initialize(context);
+		logSuccess('✅ Comprehensive event tracking initialized');
+	} catch (error) {
+		logError(`❌ Failed to initialize comprehensive event tracking: ${error}`);
+	}
+
+	// Log extension activation
+	logExtensionLifecycle('activate', {
+		version: context.extension.packageJSON.version,
+		extensionId: context.extension.id,
+		activationTime: Date.now() - activationStartTime
+	});
+
+	logSuccess("🎉 lipcoder extension activated successfully with comprehensive logging!");
+	logMemory(`[Memory] Post-activation: Heap: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB, RSS: ${(process.memoryUsage().rss / 1024 / 1024).toFixed(2)}MB`);
+
 }
 
 export async function deactivate() {
@@ -725,7 +796,20 @@ export async function deactivate() {
 	}, 8000); // 8 second timeout
 	
 	try {
-		// Dispose activity logger first
+		// Log extension deactivation
+		logExtensionLifecycle('deactivate', {
+			deactivationStartTime: Date.now()
+		});
+
+		// Dispose comprehensive event tracker first
+		try {
+			comprehensiveEventTracker.dispose();
+			logSuccess('✅ Comprehensive event tracker disposed');
+		} catch (error) {
+			logError(`❌ Failed to dispose comprehensive event tracker: ${error}`);
+		}
+
+		// Dispose activity logger
 		try {
 			await activityLogger.dispose();
 			logSuccess('✅ Activity logger disposed');

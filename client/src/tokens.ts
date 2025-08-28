@@ -13,7 +13,7 @@ export const earconTokens = [
     // Characters that have earcon files in special directory
     '+', '&', '*', '@', '`', '^', '$', '!', '%', '?', '#', '~', '₩',
     // Characters moved from TTS to PCM files for better performance
-    '.', ',', ':', '-', '_', '=', '/', '|',
+    '.', ',', ':', '-', '=', '/', '|',
     // Multi-character sequences
     '//', '<=', '>=', '==', '!=', '===', '!==', '&&', '||', '++', '--', '+=', '-=', '*=', '/=', '=>'
 ];
@@ -48,19 +48,41 @@ export function getTokenSound(token: string): string | null {
         // Removed characters that user prefers as TTS: ',', '_', '.', ':', '-', '/'
     };
     
-    // Check earcon folder first
+    // Check earcon folder first (support .pcm and .wav)
     if (map[token]) {
-        return path.join(config.audioPath(), 'earcon', map[token]);
+        const base = path.join(config.audioPath(), 'earcon', path.basename(map[token], '.pcm'));
+        const pcm = `${base}.pcm`;
+        const wav = `${base}.wav`;
+        if (fs.existsSync(pcm)) return pcm;
+        if (fs.existsSync(wav)) return wav;
     }
     
-    // Check special folder using the imported mapping
+    // Check backend-specific special folder for single char tokens
     if (SPECIAL_CHAR_FILES[token]) {
-        return path.join(config.audioPath(), 'special', SPECIAL_CHAR_FILES[token]);
+        const baseName = path.basename(SPECIAL_CHAR_FILES[token], '.pcm');
+        const pcm = path.join(config.specialPath(), `${baseName}.pcm`);
+        const wav = path.join(config.specialPath(), `${baseName}.wav`);
+        if (fs.existsSync(pcm)) return pcm;
+        if (fs.existsSync(wav)) return wav;
+        // Legacy fallback to old special folder
+        const legacyPcm = path.join(config.audioPath(), 'special', `${baseName}.pcm`);
+        const legacyWav = path.join(config.audioPath(), 'special', `${baseName}.wav`);
+        if (fs.existsSync(legacyPcm)) return legacyPcm;
+        if (fs.existsSync(legacyWav)) return legacyWav;
     }
     
-    // Check multi-character sequences
+    // Check backend-specific special folder for multi-character sequences
     if (MULTI_CHAR_FILES[token]) {
-        return path.join(config.audioPath(), 'special', MULTI_CHAR_FILES[token]);
+        const baseName = path.basename(MULTI_CHAR_FILES[token], '.pcm');
+        const pcm = path.join(config.specialPath(), `${baseName}.pcm`);
+        const wav = path.join(config.specialPath(), `${baseName}.wav`);
+        if (fs.existsSync(pcm)) return pcm;
+        if (fs.existsSync(wav)) return wav;
+        // Legacy fallback
+        const legacyPcm = path.join(config.audioPath(), 'special', `${baseName}.pcm`);
+        const legacyWav = path.join(config.audioPath(), 'special', `${baseName}.wav`);
+        if (fs.existsSync(legacyPcm)) return legacyPcm;
+        if (fs.existsSync(legacyWav)) return legacyWav;
     }
     
     return null;

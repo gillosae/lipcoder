@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { log } from '../utils';
 import { debugTabTracking, getTabPosition, openFileInRememberedTab } from './tab_tracker';
 import { debugEditorTracking, openFileTabAware } from './last_editor_tracker';
-import { speakTokenList } from '../audio';
+import { speakTokenList, speakGPT } from '../audio';
 
 export function registerTestTabTracker(context: vscode.ExtensionContext) {
     // Command to debug tab tracking
@@ -11,7 +11,7 @@ export function registerTestTabTracker(context: vscode.ExtensionContext) {
             debugTabTracking();
             debugEditorTracking();
             
-            await speakTokenList([{ tokens: ['Tab tracking debug info logged'], category: undefined }]);
+            await speakGPT('Tab tracking debug info logged');
         })
     );
 
@@ -20,7 +20,7 @@ export function registerTestTabTracker(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('lipcoder.testTabAwareOpen', async () => {
             const activeEditor = vscode.window.activeTextEditor;
             if (!activeEditor) {
-                await speakTokenList([{ tokens: ['No active editor to test with'], category: undefined }]);
+                await speakGPT('No active editor to test with');
                 return;
             }
 
@@ -39,13 +39,13 @@ export function registerTestTabTracker(context: vscode.ExtensionContext) {
                     log(`[TestTabTracker] Testing tab-aware reopening of ${filePath}`);
                     const editor = await openFileTabAware(filePath);
                     if (editor) {
-                        await speakTokenList([{ tokens: ['File reopened in remembered tab'], category: undefined }]);
+                        await speakGPT('File reopened in remembered tab');
                     } else {
-                        await speakTokenList([{ tokens: ['Failed to reopen file'], category: undefined }]);
+                        await speakGPT('Failed to reopen file');
                     }
                 }, 1000);
             } else {
-                await speakTokenList([{ tokens: ['No tab info found for current file'], category: undefined }]);
+                await speakGPT('No tab info found for current file');
             }
         })
     );
@@ -61,7 +61,7 @@ export function registerTestTabTracker(context: vscode.ExtensionContext) {
                 message += `Group ${idx} has ${group.tabs.length} tabs, `;
             });
             
-            await speakTokenList([{ tokens: [message], category: undefined }]);
+            await speakGPT(message);
             
             // Log detailed info
             tabGroups.all.forEach((group, idx) => {

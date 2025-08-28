@@ -34,6 +34,12 @@ class ServerManager {
             defaultPort: 5005
         });
         
+        this.servers.set('espeak_tts_2', {
+            name: 'Espeak TTS Server 2',
+            script: 'start_espeak_tts.sh',
+            defaultPort: 5007  // Second espeak server on different port
+        });
+        
         this.servers.set('asr', {
             name: 'ASR Server', 
             script: 'start_asr.sh',
@@ -199,18 +205,36 @@ class ServerManager {
         });
     }
 
-    // Start all servers (modified to only start default TTS backend)
+    // Start all servers (modified to start default TTS backend based on config)
     async startServers(): Promise<void> {
         log('[ServerManager] Starting servers with default TTS backend...');
         
         try {
-            await Promise.all([
-                this.startServer('tts'),      // Start with Silero as default for English
-                this.startServer('xtts_v2'),  // Start XTTS-v2 for Korean
-                this.startServer('asr')       // Always start ASR
-                // Don't start espeak_tts by default - it will be started when user switches
-            ]);
-            logSuccess('✅ Default servers started successfully (Silero + XTTS-v2 + ASR)');
+            // Import config to check current backend
+            const { currentBackend, TTSBackend } = await import('./config.js');
+            
+            const serverPromises = [
+                this.startServer('asr')  // Always start ASR
+            ];
+            
+            // Start appropriate TTS servers based on current backend
+            if (currentBackend === TTSBackend.SileroGPT) {
+                serverPromises.push(this.startServer('tts'));  // Silero for English
+                log('[ServerManager] Starting Silero TTS for English (Silero+GPT backend)');
+            } else if (currentBackend === TTSBackend.EspeakGPT) {
+                serverPromises.push(this.startServer('espeak_tts'));  // Espeak for English
+                log('[ServerManager] Starting Espeak TTS for English (Espeak+GPT backend)');
+            } else if (currentBackend === TTSBackend.Espeak) {
+                serverPromises.push(this.startServer('espeak_tts'));    // Primary espeak server
+                serverPromises.push(this.startServer('espeak_tts_2'));  // Secondary espeak server for parallel processing
+                log('[ServerManager] Starting dual Espeak TTS servers for parallel processing (all languages including Korean)');
+            } else if (currentBackend === TTSBackend.XTTSV2) {
+                serverPromises.push(this.startServer('xtts_v2'));  // XTTS-v2 for both
+                log('[ServerManager] Starting XTTS-v2 for both Korean and English');
+            }
+            
+            await Promise.all(serverPromises);
+            logSuccess(`✅ Default servers started successfully (${currentBackend} + ASR)`);
         } catch (error) {
             logError(`Failed to start servers: ${error}`);
             // Clean up any partially started servers
@@ -281,7 +305,7 @@ class ServerManager {
     }
 
     // Switch TTS backend by stopping current and starting new one
-    async switchTTSBackend(newBackend: 'silero' | 'espeak' | 'xtts-v2'): Promise<void> {
+    async switchTTSBackend(newBackend: 'silero' | 'espeak' | 'espeak-all' | 'xtts-v2'): Promise<void> {
         const currentTTSServers = ['tts', 'espeak_tts', 'xtts_v2'];
         
         log(`[ServerManager] Switching TTS backend to: ${newBackend}`);
@@ -300,7 +324,7 @@ class ServerManager {
         let targetServer: string;
         if (newBackend === 'silero') {
             targetServer = 'tts';
-        } else if (newBackend === 'espeak') {
+        } else if (newBackend === 'espeak' || newBackend === 'espeak-all') {
             targetServer = 'espeak_tts';
         } else if (newBackend === 'xtts-v2') {
             targetServer = 'xtts_v2';
