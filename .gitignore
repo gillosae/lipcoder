@@ -7,6 +7,9 @@ node_modules
 # Don’t commit large model files:
 client/src/models/silero/**
 
-# Don’t commit the Python site-packages (we’ll install on the end user’s machine instead):
+# Don't commit the Python site-packages (we'll install on the end user's machine instead):
 client/src/python/lib/
 client/src/python/include/
+
+# Node.js version cache for automatic native module rebuilding:
+.node-version-cache

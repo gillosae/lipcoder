@@ -20,15 +20,8 @@ LipCoder는 이제 **Python 가상환경 기반 의존성 관리**를 사용합�
 # Homebrew 설치 (아직 없다면)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# 기본 도구들 설치 (정확한 버전)
-brew install node@23 python@3.10 ffmpeg sox git
-
-# 설치된 버전 확인
-node --version    # v23.11.0
-npm --version     # 10.9.2
-python3 --version # Python 3.10.17
-ffmpeg -version | head -1  # ffmpeg version 7.1.1
-brew list sox --versions   # sox 14.4.2_6
+# 기본 도구들 설치
+brew install python@3.10 python@3.11 node npm git ffmpeg sox
 ```
 
 ### 2단계: LipCoder 프로젝트 클론
@@ -60,22 +53,6 @@ npm run build
    - 설치 완료까지 기다리기
 
 ## 🎯 자동 설치되는 내용
-
-### 시스템 요구사항 (정확한 버전)
-```
-Node.js: v23.11.0
-npm: 10.9.2
-Python: 3.10.17
-Homebrew: 4.6.7
-FFmpeg: 7.1.1_2
-SoX: 14.4.2_6
-```
-
-### Node.js 네이티브 모듈
-```
-node-pty: 1.0.0          # 터미널 기능
-speaker: 0.5.5            # 오디오 출력
-```
 
 ### Python 가상환경 (`server/lipcoder_venv/`)
 LipCoder 전용 가상환경에 다음 패키지들이 정확한 버전으로 설치됩니다:

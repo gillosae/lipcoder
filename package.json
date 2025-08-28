@@ -6,7 +6,8 @@
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.74.0",
-    "node": ">=16.14.2"
+    "node": "23.11.0",
+    "npm": "10.9.2"
   },
   "private": true,
   "categories": [
@@ -687,18 +688,18 @@
         "category": "LipCoder"
       },
       {
-        "command": "lipcoder.checkDependencies",
-        "title": "LipCoder: Check Dependencies",
+        "command": "lipcoder.setupVenv",
+        "title": "LipCoder: Setup Python Virtual Environment",
         "category": "Setup"
       },
       {
-        "command": "lipcoder.showDependencyStatus",
-        "title": "LipCoder: Show Dependency Status",
+        "command": "lipcoder.checkVenvStatus",
+        "title": "LipCoder: Check Virtual Environment Status",
         "category": "Setup"
       },
       {
-        "command": "lipcoder.checkNodeJS",
-        "title": "LipCoder: Check Node.js Installation",
+        "command": "lipcoder.resetVenv",
+        "title": "LipCoder: Reset Virtual Environment",
         "category": "Setup"
       },
       {
@@ -1018,8 +1019,8 @@
         "lipcoder.macosVolume": {
           "type": "number",
           "default": 0.7,
-          "minimum": 0.0,
-          "maximum": 1.0,
+          "minimum": 0,
+          "maximum": 1,
           "description": "Volume level for macOS TTS (0.0 = silent, 1.0 = maximum)."
         },
         "lipcoder.macosSampleRate": {
@@ -1054,7 +1055,9 @@
     "test": "vscode-test",
     "build": "tsc -b shared && tsc -b server && tsc -b client",
     "watch:build": "tsc -b server --watch & tsc -b client --watch",
-    "postinstall": "node ./scripts/download-silero-models.js"
+    "postinstall": "node ./scripts/download-silero-models.js",
+    "setup-node": "node scripts/find-node-path.js",
+    "setup": "npm run setup-node && npm run build"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",
@@ -1074,14 +1077,20 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
+    "@types/diff": "7.0.2",
+    "@types/wav": "1.0.4",
+    "diff": "8.0.2",
     "node-fetch": "^2.7.0",
+    "node-microphone": "0.1.6",
     "node-pty": "^1.0.0",
-    "speaker": "^0.5.5",
+    "openai": "5.16.0",
+    "speaker": "0.5.5",
     "ts-node": "^10.9.2",
     "undici": "^7.11.0",
     "vscode-languageclient": "^9.0.0",
     "vscode-languageserver": "^9.0.1",
-    "wav": "^1.0.2",
+    "vscode-languageserver-textdocument": "1.0.12",
+    "wav": "1.0.2",
     "word-list": "^4.1.0"
   }
 }

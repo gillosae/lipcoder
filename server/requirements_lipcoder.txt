@@ -1,0 +1,27 @@
+# LipCoder Python Dependencies
+# 이 파일은 LipCoder 전용 가상환경에서 사용됩니다
+# Python 버전: 3.10.17
+# 테스트된 시스템: macOS (Homebrew 4.6.7)
+
+# Web Server Framework
+Flask==2.3.3
+flask-cors==6.0.1
+uvicorn==0.35.0
+asgiref==3.9.1
+
+# Machine Learning & AI
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+TTS==0.22.0
+
+# Audio Processing
+soundfile==0.12.1
+numpy==1.22.0
+
+# Additional Dependencies (automatically resolved)
+pytorch-lightning==2.4.0
+torchmetrics==1.6.0
+torchsde==0.2.6
+torchdiffeq==0.2.5
+clip-anytorch==2.6.0

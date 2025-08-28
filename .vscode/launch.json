@@ -18,11 +18,17 @@
 			"name": "Launch Server",
 			"type": "node",
 			"request": "launch",
+			"runtimeExecutable": "/opt/homebrew/bin/node",
 			"program": "${workspaceFolder}/dist/server/server.js",
 			"args": [
 				"--node-ipc"
 			],
-			"cwd": "${workspaceFolder}"
+			"cwd": "${workspaceFolder}",
+			"runtimeExecutable": "node",
+			"console": "integratedTerminal",
+			"skipFiles": [
+				"<node_internals>/**"
+			]
 		},
 		{
 			"name": "Launch Client",

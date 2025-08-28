@@ -60,7 +60,7 @@ import { disposeCommandsWithPrefix } from './command_utils';
 import { registerImageDescription } from './features/image_description';
 import { registerExactCommandPalette, registerShowExactCommandsHelp } from './features/exact_command_palette';
 import { registerNaturalLanguageCommand } from './features/natural_language_command';
-import { registerDependencyCommands, checkAndInstallAllDependencies } from './features/dependency_installer';
+import { registerVenvCommands, setupVirtualEnvironment, getVenvStatus } from './features/venv_installer';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
@@ -187,25 +187,53 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 기존 간단한 의존성 체크 (백그라운드)
 	installDependencies().catch(err => console.error('installDependencies failed:', err));
 	
-	// 새로운 포괄적인 의존성 체크 (사용자 상호작용 포함)
+	// 가상환경 상태 체크 및 설정 안내
 	// 첫 번째 활성화에서만 실행하도록 설정
-	const hasRunDependencyCheck = context.globalState.get('lipcoderDependencyCheckCompleted', false);
-	if (!hasRunDependencyCheck) {
-		log('🔧 첫 번째 실행: 포괄적인 의존성 체크를 시작합니다...');
+	const hasRunVenvCheck = context.globalState.get('lipcoderVenvCheckCompleted', false);
+	if (!hasRunVenvCheck) {
+		log('🔧 첫 번째 실행: 가상환경 상태를 체크합니다...');
 		
 		// 비동기로 실행하여 확장 활성화를 차단하지 않음
 		setTimeout(async () => {
 			try {
-				await checkAndInstallAllDependencies();
+				const venvStatus = getVenvStatus();
+				
+				if (!venvStatus.ready) {
+					log('⚠️ LipCoder 가상환경이 설정되지 않았습니다');
+					
+					const userChoice = await vscode.window.showInformationMessage(
+						'🐍 LipCoder Python 가상환경이 설정되지 않았습니다.\\n\\n' +
+						'LipCoder의 TTS/ASR 기능을 사용하려면 Python 가상환경 설정이 필요합니다.',
+						'🚀 지금 설정하기',
+						'⏭️ 나중에 설정',
+						'ℹ️ 자세히 보기'
+					);
+					
+					if (userChoice === '🚀 지금 설정하기') {
+						await setupVirtualEnvironment();
+					} else if (userChoice === 'ℹ️ 자세히 보기') {
+						vscode.window.showInformationMessage(
+							'💡 가상환경 설정 방법:\\n\\n' +
+							'1. Cmd+Shift+P로 명령 팔레트 열기\\n' +
+							'2. "LipCoder: Setup Python Virtual Environment" 실행\\n\\n' +
+							'또는 수동으로:\\n' +
+							'• "LipCoder: Check Virtual Environment Status"로 상태 확인\\n' +
+							'• "LipCoder: Reset Virtual Environment"로 재설정'
+						);
+					}
+				} else {
+					log('✅ LipCoder 가상환경이 정상적으로 설정되어 있습니다');
+				}
+				
 				// 체크 완료 표시
-				context.globalState.update('lipcoderDependencyCheckCompleted', true);
-				log('✅ 의존성 체크가 완료되었습니다');
+				context.globalState.update('lipcoderVenvCheckCompleted', true);
+				log('✅ 가상환경 체크가 완료되었습니다');
 			} catch (error) {
-				logError(`❌ 의존성 체크 중 오류 발생: ${error}`);
+				logError(`❌ 가상환경 체크 중 오류 발생: ${error}`);
 			}
 		}, 2000); // 2초 후 실행 (확장 로딩 완료 후)
 	} else {
-		log('ℹ️ 의존성 체크를 이미 완료했습니다. 수동으로 다시 실행하려면 "LipCoder: Check Dependencies" 명령어를 사용하세요.');
+		log('ℹ️ 가상환경 체크를 이미 완료했습니다. 수동으로 다시 실행하려면 "LipCoder: Check Virtual Environment Status" 명령어를 사용하세요.');
 	}
 
 	// Start memory monitoring
@@ -519,9 +547,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerNaturalLanguageCommand(context);
 	log('✅ registerNaturalLanguageCommand completed');
 	
-	// Register Dependency Management Commands
-	registerDependencyCommands(context);
-	log('✅ registerDependencyCommands completed');
+	// Register Virtual Environment Management Commands
+	registerVenvCommands(context);
+	log('✅ registerVenvCommands completed');
 
 	// Add command to restart language server
 	try {

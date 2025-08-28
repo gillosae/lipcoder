@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { log, logError, logSuccess, logWarning } from '../utils';
@@ -183,6 +184,94 @@ async function checkCommandAvailable(command: string[]): Promise<boolean> {
             resolve(false);
         });
     });
+}
+
+/**
+ * Node.js 버전 변경 감지 및 자동 재빌드
+ */
+async function checkAndRebuildIfNeeded(): Promise<void> {
+    try {
+        const currentNodeVersion = process.version;
+        const versionFile = path.join(__dirname, '..', '..', '..', '.node-version-cache');
+        
+        let lastNodeVersion = '';
+        try {
+            lastNodeVersion = fs.readFileSync(versionFile, 'utf8').trim();
+        } catch (error) {
+            // 파일이 없으면 첫 실행
+            log('🔧 첫 실행 또는 버전 캐시 파일 없음');
+        }
+        
+        if (currentNodeVersion !== lastNodeVersion) {
+            log(`🔄 Node.js 버전 변경 감지: ${lastNodeVersion} → ${currentNodeVersion}`);
+            log('🔧 네이티브 모듈 자동 재빌드를 시작합니다...');
+            
+            // 네이티브 모듈 재빌드
+            const rebuildSuccess = await rebuildAllNativeModules();
+            
+            if (rebuildSuccess) {
+                // 성공하면 버전 캐시 업데이트
+                fs.writeFileSync(versionFile, currentNodeVersion);
+                logSuccess('✅ 네이티브 모듈 재빌드 완료 및 버전 캐시 업데이트');
+            } else {
+                logWarning('⚠️ 네이티브 모듈 재빌드 실패, 하지만 fallback으로 동작합니다');
+            }
+        }
+    } catch (error) {
+        logError(`❌ Node.js 버전 체크 중 오류: ${error}`);
+    }
+}
+
+/**
+ * 모든 네이티브 모듈 재빌드
+ */
+async function rebuildAllNativeModules(): Promise<boolean> {
+    try {
+        log('🔧 npm rebuild 실행 중...');
+        
+        return new Promise((resolve) => {
+            const rebuildProcess = cp.spawn('npm', ['rebuild'], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                timeout: 60000 // 1분 타임아웃
+            });
+            
+            let output = '';
+            let errorOutput = '';
+            
+            rebuildProcess.stdout?.on('data', (data) => {
+                output += data.toString();
+            });
+            
+            rebuildProcess.stderr?.on('data', (data) => {
+                errorOutput += data.toString();
+            });
+            
+            rebuildProcess.on('exit', (code) => {
+                if (code === 0) {
+                    logSuccess('✅ npm rebuild 성공');
+                    resolve(true);
+                } else {
+                    logError(`❌ npm rebuild 실패 (exit code: ${code})`);
+                    if (errorOutput) logError(`   stderr: ${errorOutput.trim()}`);
+                    resolve(false);
+                }
+            });
+            
+            rebuildProcess.on('error', (error) => {
+                logError(`❌ npm rebuild 프로세스 오류: ${error.message}`);
+                resolve(false);
+            });
+            
+            rebuildProcess.on('timeout', () => {
+                logWarning('⏰ npm rebuild 타임아웃');
+                rebuildProcess.kill();
+                resolve(false);
+            });
+        });
+    } catch (error) {
+        logError(`❌ 네이티브 모듈 재빌드 중 오류: ${error}`);
+        return false;
+    }
 }
 
 /**
@@ -699,6 +788,9 @@ export async function checkAndInstallAllDependencies(): Promise<void> {
     }
     
     log('🔧 시스템 의존성 체크를 시작합니다...');
+    
+    // Node.js 버전 변경 감지 및 자동 재빌드
+    await checkAndRebuildIfNeeded();
     
     const results: { [key: string]: boolean } = {};
     let hasFailures = false;
