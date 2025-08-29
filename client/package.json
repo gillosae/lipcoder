@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "mic": "^2.1.2",
     "node-microphone": "^0.1.6"
   }
 }

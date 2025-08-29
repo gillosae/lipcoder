@@ -56,27 +56,70 @@ export class GPT4oASRClient {
             logSuccess('🔴 [GPT4o-ASR-DEBUG] About to initialize microphone...');
             log('[Whisper-ASR] Starting Whisper ASR recording...');
             
-            // Initialize microphone
-            logSuccess('🔴 [GPT4o-ASR-DEBUG] Requiring node-microphone...');
-            const Microphone = require('node-microphone');
+            // Initialize microphone with fallback
+            let microphoneInitialized = false;
             
-            logSuccess('🔴 [GPT4o-ASR-DEBUG] Creating microphone instance...');
-            this.microphone = new Microphone({
-                rate: gpt4oASRConfig.sampleRate,
-                channels: 1,
-                debug: false,
-                exitOnSilence: 6
-            });
+            // Try node-microphone first
+            try {
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Trying node-microphone...');
+                const Microphone = require('node-microphone');
+                
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Creating node-microphone instance...');
+                this.microphone = new Microphone({
+                    rate: gpt4oASRConfig.sampleRate,
+                    channels: 1,
+                    debug: false,
+                    exitOnSilence: 6
+                });
 
-            // Clear audio buffer
-            this.audioBuffer = [];
-            this.recordingStartTime = Date.now();
+                // Clear audio buffer
+                this.audioBuffer = [];
+                this.recordingStartTime = Date.now();
 
-            // Start recording
-            logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting microphone recording...');
-            this.audioStream = this.microphone.startRecording();
-            this.isRecording = true;
-            logSuccess('🔴 [GPT4o-ASR-DEBUG] Microphone recording started, setting up event handlers...');
+                // Start recording
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting node-microphone recording...');
+                this.audioStream = this.microphone.startRecording();
+                this.isRecording = true;
+                microphoneInitialized = true;
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] node-microphone recording started successfully!');
+
+            } catch (nodeMicError) {
+                logError(`🔴 [GPT4o-ASR-DEBUG] node-microphone failed: ${nodeMicError}`);
+                
+                // Fallback to mic package
+                try {
+                    logSuccess('🔴 [GPT4o-ASR-DEBUG] Falling back to mic package...');
+                    const mic = require('mic');
+                    
+                    const micInstance = mic({
+                        rate: gpt4oASRConfig.sampleRate,
+                        channels: '1',
+                        debug: false,
+                        exitOnSilence: 6
+                    });
+
+                    // Clear audio buffer
+                    this.audioBuffer = [];
+                    this.recordingStartTime = Date.now();
+
+                    // Start recording
+                    logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting mic package recording...');
+                    this.audioStream = micInstance.getAudioStream();
+                    micInstance.start();
+                    this.isRecording = true;
+                    this.microphone = micInstance; // Store for cleanup
+                    microphoneInitialized = true;
+                    logSuccess('🔴 [GPT4o-ASR-DEBUG] mic package recording started successfully!');
+
+                } catch (micError) {
+                    logError(`🔴 [GPT4o-ASR-DEBUG] mic package also failed: ${micError}`);
+                    throw new Error(`Both microphone packages failed. node-microphone: ${nodeMicError}, mic: ${micError}`);
+                }
+            }
+
+            if (!microphoneInitialized) {
+                throw new Error('Failed to initialize any microphone package');
+            }
 
             // Handle audio data
             this.audioStream.on('data', (chunk: Buffer) => {

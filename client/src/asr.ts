@@ -139,19 +139,60 @@ export class ASRClient {
             logInfo('[ASR] Starting real microphone stream...');
             log(`[ASR] Stream configuration: chunkDuration=${this.options.chunkDuration}, sampleRate=${this.options.sampleRate}, serverUrl=${this.options.serverUrl}`);
             
-            // Import microphone module
-            const Microphone = require('node-microphone');
-            this.microphone = new Microphone({
-                rate: this.options.sampleRate,
-                channels: 1,
-                debug: false,
-                exitOnSilence: 6
-            });
+            // Import microphone module with fallback
+            let microphoneInitialized = false;
             
-            log('[ASR] Microphone initialized');
-            
-            // Start recording
-            this.audioStream = this.microphone.startRecording();
+            // Try node-microphone first
+            try {
+                logSuccess('🔴 [ASR-DEBUG] Trying node-microphone...');
+                const Microphone = require('node-microphone');
+                this.microphone = new Microphone({
+                    rate: this.options.sampleRate,
+                    channels: 1,
+                    debug: false,
+                    exitOnSilence: 6
+                });
+                
+                log('[ASR] node-microphone initialized');
+                
+                // Start recording
+                this.audioStream = this.microphone.startRecording();
+                microphoneInitialized = true;
+                logSuccess('🔴 [ASR-DEBUG] node-microphone recording started successfully!');
+                
+            } catch (nodeMicError) {
+                logError(`🔴 [ASR-DEBUG] node-microphone failed: ${nodeMicError}`);
+                
+                // Fallback to mic package
+                try {
+                    logSuccess('🔴 [ASR-DEBUG] Falling back to mic package...');
+                    const mic = require('mic');
+                    
+                    const micInstance = mic({
+                        rate: this.options.sampleRate,
+                        channels: '1',
+                        debug: false,
+                        exitOnSilence: 6
+                    });
+
+                    log('[ASR] mic package initialized');
+                    
+                    // Start recording
+                    this.audioStream = micInstance.getAudioStream();
+                    micInstance.start();
+                    this.microphone = micInstance; // Store for cleanup
+                    microphoneInitialized = true;
+                    logSuccess('🔴 [ASR-DEBUG] mic package recording started successfully!');
+
+                } catch (micError) {
+                    logError(`🔴 [ASR-DEBUG] mic package also failed: ${micError}`);
+                    throw new Error(`Both microphone packages failed. node-microphone: ${nodeMicError}, mic: ${micError}`);
+                }
+            }
+
+            if (!microphoneInitialized) {
+                throw new Error('Failed to initialize any microphone package');
+            }
             this.isRecording = true;
             this.startTime = Date.now();
             this.chunkCount = 0;
