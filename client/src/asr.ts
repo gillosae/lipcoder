@@ -167,6 +167,9 @@ export class ASRClient {
             // Set up audio chunk processing
             this.setupAudioChunkProcessing();
             
+            // Add microphone readiness check with timeout
+            this.checkMicrophoneReadiness();
+            
             // Play ASR start sound now that microphone is actually working
             if (this.options.onASRReady) {
                 this.options.onASRReady();
@@ -176,6 +179,45 @@ export class ASRClient {
             logError(`[ASR] Error starting microphone stream: ${error}`);
             throw error;
         }
+    }
+
+    /**
+     * Check if microphone is actually receiving data
+     */
+    private checkMicrophoneReadiness(): void {
+        let micDataReceived = false;
+        let readinessCheckTimer: NodeJS.Timeout;
+        
+        // Listen for first audio data to confirm mic is working
+        const onFirstData = () => {
+            micDataReceived = true;
+            logSuccess('🎤 [ASR] MIC READY - Audio data received successfully');
+            if (readinessCheckTimer) {
+                clearTimeout(readinessCheckTimer);
+            }
+        };
+        
+        // Set up one-time listener for first audio chunk
+        if (this.audioStream) {
+            this.audioStream.once('data', onFirstData);
+        }
+        
+        // Set timeout to check if mic is not receiving data
+        readinessCheckTimer = setTimeout(() => {
+            if (!micDataReceived) {
+                logError('🔴 [ASR] MIC NOT READY - No audio data received after 3 seconds');
+                logError('🔴 [ASR] Possible causes:');
+                logError('🔴   - Microphone permission not granted');
+                logError('🔴   - Microphone device not available');
+                logError('🔴   - Audio driver issues');
+                logError('🔴   - VS Code microphone access blocked');
+                
+                // Remove the listener if timeout occurs
+                if (this.audioStream) {
+                    this.audioStream.removeListener('data', onFirstData);
+                }
+            }
+        }, 3000); // 3 second timeout
     }
 
     /**
@@ -194,7 +236,7 @@ export class ASRClient {
         // Handle incoming audio data from microphone
         this.audioStream.on('data', (chunk: Buffer) => {
             if (this.isRecording) {
-                log(`[ASR] Received real audio chunk: ${chunk.length} bytes`);
+                log(`🎤 [ASR] Received real audio chunk: ${chunk.length} bytes`);
                 
                 // Prevent buffer from growing too large
                 const currentBufferSize = this.audioBuffer.reduce((total, buf) => total + buf.length, 0);
