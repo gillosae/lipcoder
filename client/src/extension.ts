@@ -682,7 +682,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerTerminalErrorFixer(context);
 	log('✅ registerTerminalErrorFixer completed');
 
-	registerInlineSuggestions(context);
+	await registerInlineSuggestions(context);
 	log('✅ registerInlineSuggestions completed');
 
 	// Register exact commands for Command Palette access

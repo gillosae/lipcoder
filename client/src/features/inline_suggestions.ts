@@ -7,6 +7,7 @@ import { playWave, speakTokenList, TokenChunk, playEarcon, isAudioPlaying } from
 import { stopAllAudio, getLineTokenReadingActive, getASRRecordingActive, lineAbortController } from './stop_reading';
 import { log } from '../utils';
 import { config } from '../config';
+import { safeRegisterCommand } from '../command_utils';
 
 // Idle-based inline suggestion trigger state
 let idleTimer: NodeJS.Timeout | null = null;
@@ -32,7 +33,7 @@ function cleanupInlineSuggestions(): void {
 /**
  * Register inline suggestion provider and related commands.
  */
-export function registerInlineSuggestions(context: vscode.ExtensionContext) {
+export async function registerInlineSuggestions(context: vscode.ExtensionContext) {
     // Register cleanup function
     context.subscriptions.push({
         dispose: cleanupInlineSuggestions
@@ -159,92 +160,83 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     );
 
     // Command: read or apply suggestion on Shift+Enter
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.handleSuggestionKey', async () => {
-            if (!lastSuggestion) return;
-            
-            // Only stop reading if line token reading is not currently active
-            if (!getLineTokenReadingActive()) {
-                stopAllAudio(); // Use centralized stopping that includes clearing audio state
+    await safeRegisterCommand(context, 'lipcoder.handleSuggestionKey', async () => {
+        if (!lastSuggestion) return;
+        
+        // Only stop reading if line token reading is not currently active
+        if (!getLineTokenReadingActive()) {
+            stopAllAudio(); // Use centralized stopping that includes clearing audio state
+        }
+        
+        if (!lastSuggestion.read) {
+            await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
+            lastSuggestion.read = true;
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (editor) {
+                const { line, suggestion } = lastSuggestion;
+                const start = new vscode.Position(line, 0);
+                const end = editor.document.lineAt(line).range.end;
+                await editor.edit(b => b.replace(new vscode.Range(start, end), suggestion));
             }
-            
-            if (!lastSuggestion.read) {
-                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
-                lastSuggestion.read = true;
-            } else {
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    const { line, suggestion } = lastSuggestion;
-                    const start = new vscode.Position(line, 0);
-                    const end = editor.document.lineAt(line).range.end;
-                    await editor.edit(b => b.replace(new vscode.Range(start, end), suggestion));
-                }
-                clearLastSuggestion();
-            }
-        })
-    );
+            clearLastSuggestion();
+        }
+    });
 
     // Command: cancel suggestion on Backspace
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.cancelSuggestion', () => {
-            clearLastSuggestion();
-        })
-    );
+    await safeRegisterCommand(context, 'lipcoder.cancelSuggestion', () => {
+        clearLastSuggestion();
+    });
 
     // Command to manually trigger inline suggestions
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.triggerInlineSuggestion', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) return;
-            
-            // Don't trigger if line reading is active or audio is playing
-            const koreanTTSActive = (global as any).koreanTTSActive || false;
-            if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
-                log(`[InlineSuggestions] Manual trigger blocked - audio/reading active`);
-                return;
-            }
-            
-            log(`[InlineSuggestions] Manual trigger requested`);
-            await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
-            suggestionInvoked = true;
-        })
-    );
+    await safeRegisterCommand(context, 'lipcoder.triggerInlineSuggestion', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) return;
+        
+        // Don't trigger if line reading is active or audio is playing
+        const koreanTTSActive = (global as any).koreanTTSActive || false;
+        if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
+            log(`[InlineSuggestions] Manual trigger blocked - audio/reading active`);
+            return;
+        }
+        
+        log(`[InlineSuggestions] Manual trigger requested`);
+        await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+        suggestionInvoked = true;
+    });
 
     // Commands: accept or reject suggestions via Shift+Enter / Backspace
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.acceptSuggestion', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (
-                editor &&
-                lastSuggestion &&
-                editor.selection.active.line === lastSuggestion.line &&
-                !lastSuggestion.read
-            ) {
-                // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
-                // Only stop reading if line token reading is not currently active
-                if (!getLineTokenReadingActive()) {
-                    stopAllAudio(); // Use centralized stopping system
-                }
-                
-                playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert
-                await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
-                markSuggestionRead();
-            } else {
-                // Second Shift+Enter: accept suggestion
-                await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
-                clearLastSuggestion();
+    await safeRegisterCommand(context, 'lipcoder.acceptSuggestion', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (
+            editor &&
+            lastSuggestion &&
+            editor.selection.active.line === lastSuggestion.line &&
+            !lastSuggestion.read
+        ) {
+            // First Shift+Enter: stop any ongoing audio, then play alert beep and read suggestion
+            // Only stop reading if line token reading is not currently active
+            if (!getLineTokenReadingActive()) {
+                stopAllAudio(); // Use centralized stopping system
             }
-        })
-    );
-    context.subscriptions.push(
-        vscode.commands.registerCommand('lipcoder.rejectSuggestion', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (editor && lastSuggestion && editor.selection.active.line === lastSuggestion.line) {
-                await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
-                clearLastSuggestion();
-            }
-        })
-    );
+            
+            playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert
+            await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
+            markSuggestionRead();
+        } else {
+            // Second Shift+Enter: accept suggestion
+            await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
+            clearLastSuggestion();
+        }
+    });
+    
+    await safeRegisterCommand(context, 'lipcoder.rejectSuggestion', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && lastSuggestion && editor.selection.active.line === lastSuggestion.line) {
+            await vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            clearLastSuggestion();
+        }
+    });
 
     // Register context cleanup  
     context.subscriptions.push({ dispose: cleanupInlineSuggestions });
