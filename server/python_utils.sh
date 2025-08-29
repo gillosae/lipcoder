@@ -214,30 +214,34 @@ check_and_install_packages() {
     local python_cmd=$1
     shift  # Remove first argument (python_cmd)
     
-    # Parse remaining arguments as associative array pairs
-    declare -A required_packages
+    echo -e "${BLUE}🔍 Checking required packages...${NC}" >&2
+    
+    # Process package pairs directly without associative arrays
+    local missing_packages=()
+    local missing_pip_names=()
+    
     while [[ $# -gt 0 ]]; do
         local package=$1
         local pip_name=${2:-$package}
-        required_packages["$package"]="$pip_name"
-        shift 2
-    done
-    
-    echo -e "${BLUE}🔍 Checking required packages...${NC}" >&2
-    
-    local missing_packages=()
-    for package in "${!required_packages[@]}"; do
+        
+        # Skip built-in modules
         if [ "$package" != "subprocess" ] && ! $python_cmd -c "import $package" &> /dev/null; then
             missing_packages+=("$package")
+            missing_pip_names+=("$pip_name")
         fi
+        
+        shift 2
     done
     
     if [ ${#missing_packages[@]} -gt 0 ]; then
         echo -e "${YELLOW}⚠️  Missing packages detected: ${missing_packages[*]}${NC}" >&2
         echo -e "${BLUE}🔄 Installing missing packages...${NC}" >&2
         
-        for package in "${missing_packages[@]}"; do
-            local pip_name="${required_packages[$package]}"
+        # Install packages using parallel arrays
+        for i in "${!missing_packages[@]}"; do
+            local package="${missing_packages[$i]}"
+            local pip_name="${missing_pip_names[$i]}"
+            
             if ! install_package "$python_cmd" "$package" "$pip_name"; then
                 echo -e "${RED}❌ Error: Failed to install required package '$package'${NC}" >&2
                 echo -e "${YELLOW}💡 Manual installation commands:${NC}" >&2

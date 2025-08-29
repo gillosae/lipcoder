@@ -16,8 +16,13 @@ echo -e "${BLUE}🎤 Starting ASR Server...${NC}"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
-# Source common Python utilities
-source "$SCRIPT_DIR/python_utils.sh"
+# Source common Python utilities (ensure bash compatibility)
+if [ -n "$BASH_VERSION" ]; then
+    source "$SCRIPT_DIR/python_utils.sh"
+else
+    # If not bash, try to run with bash
+    exec bash "$0" "$@"
+fi
 
 # Setup Python environment
 PYTHON_CMD=$(setup_python_environment "ASR Server")
@@ -41,7 +46,10 @@ if ! check_and_install_packages "$PYTHON_CMD" \
     "flask" "flask" \
     "flask_cors" "flask-cors" \
     "numpy" "numpy" \
-    "asgiref" "asgiref"; then
+    "asgiref" "asgiref" \
+    "omegaconf" "omegaconf" \
+    "soundfile" "soundfile" \
+    "librosa" "librosa"; then
     exit 1
 fi
 
