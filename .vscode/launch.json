@@ -24,7 +24,7 @@
 				"--node-ipc"
 			],
 			"cwd": "${workspaceFolder}",
-			"runtimeExecutable": "node",
+			// "runtimeExecutable": "node",
 			"console": "integratedTerminal",
 			"skipFiles": [
 				"<node_internals>/**"
@@ -36,7 +36,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"/Users/gillosae/Desktop/lipcoder-test/debugging2",
+				"/Users/gillosae/Desktop/lipcoder-test/boost2",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

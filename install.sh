@@ -80,6 +80,19 @@ if [ $? -ne 0 ]; then
     echo "⚠️  Node.js 경로 설정에 실패했지만 계속 진행합니다."
 fi
 
+# Python 가상환경 경로 수정
+echo "🐍 Python 가상환경 경로를 수정합니다..."
+if [ -f "./fix_python_paths.py" ]; then
+    python3 ./fix_python_paths.py
+    if [ $? -eq 0 ]; then
+        echo "✅ Python 경로 수정 완료"
+    else
+        echo "⚠️  Python 경로 수정에 실패했지만 계속 진행합니다."
+    fi
+else
+    echo "⚠️  Python 경로 수정 스크립트를 찾을 수 없습니다."
+fi
+
 echo ""
 echo "🎉 LipCoder 설치가 완료되었습니다!"
 echo ""

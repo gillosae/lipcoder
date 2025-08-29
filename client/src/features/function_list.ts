@@ -24,6 +24,11 @@ function cleanupFunctionList(): void {
 }
 
 export function registerFunctionList(context: vscode.ExtensionContext) {
+    // Register cleanup function
+    context.subscriptions.push({
+        dispose: () => cleanupFunctionList()
+    });
+    
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.functionList', async (editorArg?: vscode.TextEditor) => {
             const editor = editorArg || vscode.window.activeTextEditor;
@@ -216,6 +221,6 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
     
     // Register cleanup disposal
     context.subscriptions.push({
-        dispose: cleanupFunctionList
+        dispose: () => cleanupFunctionList()
     });
 }

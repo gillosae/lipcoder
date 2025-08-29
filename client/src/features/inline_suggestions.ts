@@ -11,6 +11,7 @@ import { config } from '../config';
 // Idle-based inline suggestion trigger state
 let idleTimer: NodeJS.Timeout | null = null;
 let suggestionInvoked = false;
+let periodicCheckInterval: NodeJS.Timeout | null = null;
 
 /**
  * Clean up inline suggestions resources
@@ -20,6 +21,10 @@ function cleanupInlineSuggestions(): void {
         clearTimeout(idleTimer);
         idleTimer = null;
     }
+    if (periodicCheckInterval) {
+        clearInterval(periodicCheckInterval);
+        periodicCheckInterval = null;
+    }
     suggestionInvoked = false;
     log('[InlineSuggestions] Cleaned up resources');
 }
@@ -28,9 +33,13 @@ function cleanupInlineSuggestions(): void {
  * Register inline suggestion provider and related commands.
  */
 export function registerInlineSuggestions(context: vscode.ExtensionContext) {
+    // Register cleanup function
+    context.subscriptions.push({
+        dispose: cleanupInlineSuggestions
+    });
 
     // ULTRA-AGGRESSIVE: Periodic check to completely disable suggestions during line reading OR audio playing OR ASR recording
-    const periodicCheck = setInterval(() => {
+    periodicCheckInterval = setInterval(() => {
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
             // Hide suggestions

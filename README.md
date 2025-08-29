@@ -95,6 +95,16 @@ cd lipcoder
 - Clear npm cache: `npm cache clean --force`
 - Delete `node_modules` and reinstall: `rm -rf node_modules && npm install`
 
+**Python/Server errors:**
+- The installation script automatically detects Python paths
+- If ASR server fails to start, check Python installation: `python3 --version`
+- Install required packages: `pip install torch flask flask-cors gunicorn`
+
+**Path-related issues:**
+- The project now automatically detects installation paths
+- Log files are created in `~/Desktop/lipcoder-log` or fallback locations
+- If you move the project, run `./fix_python_paths.py` to update paths
+
 ## ⚙️ Configuration
 
 LipCoder can be customized through VS Code settings:

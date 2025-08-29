@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as vscode from 'vscode';
 
 export interface ActivityLogEntry {
@@ -61,9 +62,52 @@ class ActivityLogger {
     private rewindCount: number = 0;
 
     constructor() {
-        this.logDir = '/Users/gillosae/Desktop/lipcoder-log';
+        this.logDir = this.getLogDirectory();
         this.currentLogFile = this.generateLogFileName();
         this.initializeLogger();
+    }
+
+    private getLogDirectory(): string {
+        // Try to find a suitable log directory dynamically
+        const possibleDirs = [
+            // Desktop directory (most common)
+            path.join(os.homedir(), 'Desktop', 'lipcoder-log'),
+            // Documents directory
+            path.join(os.homedir(), 'Documents', 'lipcoder-log'),
+            // Home directory
+            path.join(os.homedir(), 'lipcoder-log'),
+            // Workspace directory (if available)
+            vscode.workspace.workspaceFolders?.[0] ? 
+                path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, 'lipcoder-log') : null,
+            // Temp directory as fallback
+            path.join(os.tmpdir(), 'lipcoder-log')
+        ].filter(Boolean) as string[];
+
+        // Try each directory in order of preference
+        for (const dir of possibleDirs) {
+            try {
+                // Try to create the directory if it doesn't exist
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
+                
+                // Test write access
+                const testFile = path.join(dir, '.write-test');
+                fs.writeFileSync(testFile, 'test');
+                fs.unlinkSync(testFile);
+                
+                console.log(`[ActivityLogger] Using log directory: ${dir}`);
+                return dir;
+            } catch (error) {
+                console.warn(`[ActivityLogger] Cannot use directory ${dir}: ${error}`);
+                continue;
+            }
+        }
+
+        // Fallback to temp directory (should always work)
+        const fallbackDir = path.join(os.tmpdir(), 'lipcoder-log');
+        console.warn(`[ActivityLogger] Using fallback log directory: ${fallbackDir}`);
+        return fallbackDir;
     }
 
     private generateLogFileName(): string {

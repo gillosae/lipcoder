@@ -60,6 +60,7 @@ import { disposeCommandsWithPrefix } from './command_utils';
 import { registerImageDescription } from './features/image_description';
 import { registerExactCommandPalette, registerShowExactCommandsHelp } from './features/exact_command_palette';
 import { registerNaturalLanguageCommand } from './features/natural_language_command';
+import { registerInlineSuggestions } from './features/inline_suggestions';
 import { registerVenvCommands, setupVirtualEnvironment, getVenvStatus } from './features/venv_installer';
 import { FirstTimeSetup, registerFirstTimeSetupCommands } from './features/first_time_setup';
 
@@ -144,22 +145,35 @@ function startMemoryMonitoring(): void {
         const rssUsedDelta = currentMemory.rss - lastMemoryUsage.rss;
         
         // Log more frequently and at lower thresholds to catch memory issues
-        if (logCounter % 5 === 0 || heapUsedDelta > 5 * 1024 * 1024) { // Every 2.5 minutes or 5MB growth
+        if (logCounter % 3 === 0 || heapUsedDelta > 3 * 1024 * 1024) { // Every 1.5 minutes or 3MB growth
             logMemory(`[Memory] Heap: ${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB (+${(heapUsedDelta / 1024 / 1024).toFixed(2)}MB), RSS: ${(currentMemory.rss / 1024 / 1024).toFixed(2)}MB (+${(rssUsedDelta / 1024 / 1024).toFixed(2)}MB)`);
         }
         
         // Trigger aggressive cleanup if memory usage is too high
-        if (currentMemory.heapUsed > 80 * 1024 * 1024) { // 80MB heap threshold
+        if (currentMemory.heapUsed > 60 * 1024 * 1024) { // Lowered to 60MB heap threshold
             logWarning(`[Memory] High memory usage detected (${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB), triggering cleanup`);
             try {
-                const { cleanupAudioResources } = require('./audio');
+                const { enhancedCleanupAudioResources } = require('./audio');
                 const { getLineTokenReadingActive } = require('./features/stop_reading');
                 
                 // Don't interrupt line token reading for memory cleanup
                 if (getLineTokenReadingActive()) {
                     logWarning(`[Memory] Skipping cleanup during line token reading to avoid interruption`);
                 } else {
-                    cleanupAudioResources();
+                    enhancedCleanupAudioResources();
+                    
+                    // Also cleanup old cache files
+                    cleanupOldCacheFiles();
+                    
+                    // Force garbage collection if available
+                    if (global.gc) {
+                        try {
+                            global.gc();
+                            logMemory('[Memory] Forced garbage collection');
+                        } catch (e) {
+                            // Ignore GC errors
+                        }
+                    }
                 }
             } catch (err) {
                 logError(`Failed to cleanup during high memory usage: ${err}`);
@@ -168,7 +182,7 @@ function startMemoryMonitoring(): void {
         
         lastMemoryUsage = currentMemory;
         logCounter++;
-    }, 30000); // Check every 30 seconds
+    }, 20000); // Check every 20 seconds (more frequent monitoring)
     
     logMemory('[Memory] Memory monitoring started');
 }
@@ -178,6 +192,59 @@ function stopMemoryMonitoring(): void {
         clearInterval(memoryMonitorInterval);
         memoryMonitorInterval = null;
         logMemory('[Memory] Memory monitoring stopped');
+    }
+}
+
+// Enhanced cache cleanup function
+function cleanupOldCacheFiles(): void {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        
+        const cacheDirectories = [
+            path.join(os.tmpdir(), 'lipcoder_timestretch'),
+            path.join(os.tmpdir(), 'lipcoder_volume'),
+            path.join(os.tmpdir(), 'lipcoder_cache')
+        ];
+        
+        let totalCleaned = 0;
+        const now = Date.now();
+        const maxAge = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+        
+        for (const cacheDir of cacheDirectories) {
+            if (fs.existsSync(cacheDir)) {
+                try {
+                    const files = fs.readdirSync(cacheDir);
+                    
+                    for (const file of files) {
+                        const filePath = path.join(cacheDir, file);
+                        try {
+                            const stats = fs.statSync(filePath);
+                            if (stats.isFile()) {
+                                const ageMs = now - stats.mtime.getTime();
+                                
+                                // Remove files older than 2 hours or very large files
+                                if (ageMs > maxAge || stats.size > 50 * 1024 * 1024) { // 50MB
+                                    fs.unlinkSync(filePath);
+                                    totalCleaned++;
+                                }
+                            }
+                        } catch (e) {
+                            // Ignore individual file errors
+                        }
+                    }
+                } catch (e) {
+                    // Ignore directory read errors
+                }
+            }
+        }
+        
+        if (totalCleaned > 0) {
+            logMemory(`[Memory] Cleaned up ${totalCleaned} old cache files`);
+        }
+    } catch (error) {
+        logWarning(`[Memory] Cache cleanup failed: ${error}`);
     }
 }
 
@@ -614,6 +681,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	registerTerminalErrorFixer(context);
 	log('✅ registerTerminalErrorFixer completed');
+
+	registerInlineSuggestions(context);
+	log('✅ registerInlineSuggestions completed');
 
 	// Register exact commands for Command Palette access
 	await registerExactCommandPalette(context);

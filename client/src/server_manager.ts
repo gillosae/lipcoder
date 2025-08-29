@@ -19,7 +19,7 @@ class ServerManager {
 
     constructor() {
         // Get the server directory relative to the client (dist/client -> ../../server)
-        this.serverDirectory = path.join(__dirname, '../../server');
+        this.serverDirectory = this.findServerDirectory();
         
         // Initialize server configurations with shell script wrappers
         this.servers.set('tts', {
@@ -59,7 +59,44 @@ class ServerManager {
         });
     }
 
+    private findServerDirectory(): string {
+        // Try different possible server directory locations
+        const possiblePaths = [
+            // Standard build structure: dist/client -> ../../server
+            path.join(__dirname, '../../server'),
+            // Development structure: client/src -> ../../server  
+            path.join(__dirname, '../../../server'),
+            // Alternative: from workspace root
+            path.join(process.cwd(), 'server'),
+            // If running from different location, try to find server relative to package.json
+            path.join(path.dirname(require.resolve('../../package.json')), 'server')
+        ];
 
+        for (const serverPath of possiblePaths) {
+            try {
+                // Check if the directory exists and contains expected files
+                if (fs.existsSync(serverPath)) {
+                    const expectedFiles = ['start_asr.sh', 'start_macos_tts.sh'];
+                    const hasExpectedFiles = expectedFiles.some(file => 
+                        fs.existsSync(path.join(serverPath, file))
+                    );
+                    
+                    if (hasExpectedFiles) {
+                        log(`[ServerManager] Found server directory: ${serverPath}`);
+                        return serverPath;
+                    }
+                }
+            } catch (error) {
+                // Continue to next path
+                continue;
+            }
+        }
+
+        // Fallback to the standard path even if it doesn't exist
+        const fallbackPath = path.join(__dirname, '../../server');
+        logWarning(`[ServerManager] Could not find server directory, using fallback: ${fallbackPath}`);
+        return fallbackPath;
+    }
 
     // Check if a port is available
     private async isPortAvailable(port: number): Promise<boolean> {
@@ -111,13 +148,23 @@ class ServerManager {
 
         // Verify script exists and is executable
         if (!fs.existsSync(scriptPath)) {
+            logError(`[ServerManager] Script not found: ${scriptPath}`);
+            logError(`[ServerManager] Server directory: ${this.serverDirectory}`);
+            logError(`[ServerManager] Available files: ${fs.existsSync(this.serverDirectory) ? fs.readdirSync(this.serverDirectory).join(', ') : 'directory not found'}`);
             throw new Error(`Script not found: ${scriptPath}`);
         }
 
         try {
             fs.accessSync(scriptPath, fs.constants.X_OK);
         } catch (error) {
-            throw new Error(`Script not executable: ${scriptPath}`);
+            logWarning(`[ServerManager] Script not executable, attempting to make executable: ${scriptPath}`);
+            try {
+                // Try to make the script executable
+                fs.chmodSync(scriptPath, '755');
+                log(`[ServerManager] Made script executable: ${scriptPath}`);
+            } catch (chmodError) {
+                throw new Error(`Script not executable and cannot be made executable: ${scriptPath}`);
+            }
         }
 
         log(`[ServerManager] Starting ${config.name} using script: ${scriptPath} ${args.join(' ')}`);

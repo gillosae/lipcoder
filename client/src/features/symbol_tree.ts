@@ -22,6 +22,11 @@ function cleanupSymbolTree(): void {
 }
 
 export function registerSymbolTree(context: ExtensionContext) {
+    // Register cleanup function
+    context.subscriptions.push({
+        dispose: cleanupSymbolTree
+    });
+    
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.symbolTree', async (editorArg?: vscode.TextEditor) => {
             const editor = editorArg || vscode.window.activeTextEditor;

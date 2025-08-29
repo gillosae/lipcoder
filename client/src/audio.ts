@@ -53,6 +53,9 @@ export { playEarcon, earconRaw } from './earcon';
 export let activeGPTTTSController: AbortController | null = null;
 let lastGPTTTSTime = 0;
 
+// Track active FFmpeg processes for cleanup
+const activeFFmpegProcesses = new Set<any>();
+
 // Function to stop GPT TTS controller from external modules
 export function stopGPTTTS(): void {
     if (activeGPTTTSController) {
@@ -60,6 +63,44 @@ export function stopGPTTTS(): void {
         activeGPTTTSController.abort();
         activeGPTTTSController = null;
     }
+}
+
+// Function to cleanup all active FFmpeg processes
+export function cleanupFFmpegProcesses(): void {
+    console.log(`[cleanupFFmpegProcesses] Cleaning up ${activeFFmpegProcesses.size} active FFmpeg processes`);
+    for (const process of activeFFmpegProcesses) {
+        try {
+            if (!process.killed) {
+                process.kill('SIGKILL');
+            }
+        } catch (e) {
+            // Ignore kill errors
+        }
+    }
+    activeFFmpegProcesses.clear();
+}
+
+// Enhanced audio resource cleanup function
+export function enhancedCleanupAudioResources(): void {
+    console.log('[enhancedCleanupAudioResources] Starting comprehensive audio cleanup');
+    
+    // Stop GPT TTS
+    stopGPTTTS();
+    
+    // Cleanup FFmpeg processes
+    cleanupFFmpegProcesses();
+    
+    // Call existing cleanup function
+    try {
+        const { cleanupAudioResources } = require('./audio');
+        if (typeof cleanupAudioResources === 'function') {
+            cleanupAudioResources();
+        }
+    } catch (e) {
+        // Ignore if function doesn't exist
+    }
+    
+    console.log('[enhancedCleanupAudioResources] Audio cleanup completed');
 }
 
 // ===============================
@@ -206,24 +247,62 @@ async function applyVolumeBoost(inputFilePath: string, volumeBoost: number): Pro
             stdio: ['ignore', 'pipe', 'pipe'] // Capture stdout and stderr
         });
         
+        // Track this process for cleanup
+        activeFFmpegProcesses.add(ffmpeg);
+        
         let stderr = '';
+        let isResolved = false;
+        
+        // Set timeout to prevent hanging processes
+        const timeout = setTimeout(() => {
+            if (!isResolved) {
+                logError(`[volumeBoost] FFmpeg timeout, killing process`);
+                try {
+                    ffmpeg.kill('SIGKILL');
+                } catch (e) {
+                    // Ignore kill errors
+                }
+                if (!isResolved) {
+                    isResolved = true;
+                    reject(new Error('FFmpeg process timeout'));
+                }
+            }
+        }, 30000); // 30 second timeout
+        
         ffmpeg.stderr.on('data', (data) => {
             stderr += data.toString();
         });
         
         ffmpeg.on('close', (code) => {
-            if (code === 0) {
-                log(`[volumeBoost] Successfully created volume-boosted file: ${outputFileName}`);
-                resolve(outputFilePath);
-            } else {
-                logError(`[volumeBoost] FFmpeg failed with code ${code}. stderr: ${stderr}`);
-                reject(new Error(`FFmpeg volume boost failed: ${stderr}`));
+            clearTimeout(timeout);
+            if (!isResolved) {
+                isResolved = true;
+                if (code === 0) {
+                    log(`[volumeBoost] Successfully created volume-boosted file: ${outputFileName}`);
+                    resolve(outputFilePath);
+                } else {
+                    logError(`[volumeBoost] FFmpeg failed with code ${code}. stderr: ${stderr}`);
+                    reject(new Error(`FFmpeg volume boost failed: ${stderr}`));
+                }
             }
         });
         
         ffmpeg.on('error', (err) => {
-            logError(`[volumeBoost] FFmpeg spawn error: ${err}`);
-            reject(err);
+            clearTimeout(timeout);
+            if (!isResolved) {
+                isResolved = true;
+                logError(`[volumeBoost] FFmpeg spawn error: ${err}`);
+                reject(err);
+            }
+        });
+        
+        // Ensure process cleanup on exit
+        ffmpeg.on('exit', (code, signal) => {
+            clearTimeout(timeout);
+            activeFFmpegProcesses.delete(ffmpeg);
+            if (signal === 'SIGKILL') {
+                logWarning(`[volumeBoost] FFmpeg process was killed`);
+            }
         });
     });
 }
@@ -356,26 +435,64 @@ async function applyAudioProcessingWithOriginal(inputFilePath: string, playSpeed
             stdio: ['ignore', 'pipe', 'pipe']
         });
         
+        // Track this process for cleanup
+        activeFFmpegProcesses.add(ffmpeg);
+        
         let stderr = '';
+        let isResolved = false;
+        
+        // Set timeout to prevent hanging processes
+        const timeout = setTimeout(() => {
+            if (!isResolved) {
+                logError(`[audioProcessing] FFmpeg timeout, killing process`);
+                try {
+                    ffmpeg.kill('SIGKILL');
+                } catch (e) {
+                    // Ignore kill errors
+                }
+                if (!isResolved) {
+                    isResolved = true;
+                    reject(new Error('FFmpeg process timeout'));
+                }
+            }
+        }, 30000); // 30 second timeout
+        
         ffmpeg.stderr.on('data', (data) => {
             stderr += data.toString();
         });
         
         ffmpeg.on('close', (code) => {
-            if (code === 0) {
-                log(`[audioProcessing] Successfully created processed file: ${outputFileName}`);
-                resolve(outputFilePath);
-            } else {
-                const error = new Error(`FFmpeg failed with code ${code}: ${stderr}`);
+            clearTimeout(timeout);
+            if (!isResolved) {
+                isResolved = true;
+                if (code === 0) {
+                    log(`[audioProcessing] Successfully created processed file: ${outputFileName}`);
+                    resolve(outputFilePath);
+                } else {
+                    const error = new Error(`FFmpeg failed with code ${code}: ${stderr}`);
+                    logError(`[audioProcessing] ${error.message}`);
+                    reject(error);
+                }
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            clearTimeout(timeout);
+            if (!isResolved) {
+                isResolved = true;
+                const error = new Error(`FFmpeg spawn error: ${err.message}`);
                 logError(`[audioProcessing] ${error.message}`);
                 reject(error);
             }
         });
         
-        ffmpeg.on('error', (err) => {
-            const error = new Error(`FFmpeg spawn error: ${err.message}`);
-            logError(`[audioProcessing] ${error.message}`);
-            reject(error);
+        // Ensure process cleanup on exit
+        ffmpeg.on('exit', (code, signal) => {
+            clearTimeout(timeout);
+            activeFFmpegProcesses.delete(ffmpeg);
+            if (signal === 'SIGKILL') {
+                logWarning(`[audioProcessing] FFmpeg process was killed`);
+            }
         });
     });
 }
