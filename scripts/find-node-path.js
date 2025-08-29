@@ -9,8 +9,33 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+function expandGlobPaths(globPattern) {
+    try {
+        // 간단한 glob 패턴 처리 (*/bin/node 형태)
+        const parts = globPattern.split('*');
+        if (parts.length === 2) {
+            const basePath = parts[0];
+            const suffix = parts[1];
+            
+            if (fs.existsSync(basePath)) {
+                const dirs = fs.readdirSync(basePath, { withFileTypes: true })
+                    .filter(dirent => dirent.isDirectory())
+                    .map(dirent => path.join(basePath, dirent.name, suffix))
+                    .filter(fullPath => fs.existsSync(fullPath));
+                return dirs;
+            }
+        }
+    } catch (e) {
+        // 에러 무시
+    }
+    return [];
+}
+
 function findNodePath() {
-    const possiblePaths = [
+    let possiblePaths = [
+        // 현재 실행 중인 Node.js 경로 (가장 우선)
+        process.execPath,
+        
         // 일반적인 Node.js 설치 경로들
         '/usr/local/bin/node',
         '/opt/homebrew/bin/node',
@@ -20,9 +45,20 @@ function findNodePath() {
         // nvm 경로들
         process.env.NVM_BIN ? path.join(process.env.NVM_BIN, 'node') : null,
         
-        // 현재 실행 중인 Node.js 경로
-        process.execPath,
+        // 시스템 PATH에서 찾기
+        ...(process.env.PATH ? process.env.PATH.split(':').map(p => path.join(p, 'node')) : []),
     ].filter(Boolean);
+
+    // Glob 패턴 경로들 확장
+    const globPatterns = [
+        process.env.HOME ? path.join(process.env.HOME, '.nvm/versions/node/*/bin/node') : null,
+        '/opt/homebrew/Cellar/node/*/bin/node',
+        '/usr/local/Cellar/node/*/bin/node',
+    ].filter(Boolean);
+
+    for (const pattern of globPatterns) {
+        possiblePaths.push(...expandGlobPaths(pattern));
+    }
 
     // which/where 명령어로 찾기
     try {
@@ -118,28 +154,50 @@ function updateLaunchJson(nodePath) {
 
 function main() {
     console.log('🔍 Searching for Node.js installation...');
+    console.log(`   Current Node.js: ${process.version} at ${process.execPath}`);
     
     try {
         const nodePath = findNodePath();
         console.log(`\n📍 Node.js found at: ${nodePath}`);
+        
+        // Node.js 버전 확인
+        try {
+            const version = execSync(`"${nodePath}" --version`, { encoding: 'utf8' }).trim();
+            const versionNumber = parseFloat(version.replace('v', ''));
+            
+            if (versionNumber < 16.0) {
+                console.log(`\n⚠️  Warning: Node.js ${version} is older than recommended (16.0+)`);
+                console.log('   Consider upgrading for better compatibility.');
+            } else {
+                console.log(`✅ Node.js version ${version} is compatible`);
+            }
+        } catch (e) {
+            console.log('⚠️  Could not verify Node.js version');
+        }
         
         // launch.json 업데이트
         const updated = updateLaunchJson(nodePath);
         
         if (updated) {
             console.log('\n🎉 Setup complete! You can now run the extension with F5.');
-            console.log('\n💡 If you still get errors, try:');
-            console.log('   1. Restart VS Code');
-            console.log('   2. Run "npm run build" first');
-            console.log('   3. Check that dist/server/server.js exists');
+            console.log('\n💡 Next steps:');
+            console.log('   1. Run "npm run build" to compile the extension');
+            console.log('   2. Press F5 in VS Code to start debugging');
+            console.log('   3. If errors occur, restart VS Code and try again');
         }
         
     } catch (e) {
         console.error(`\n${e.message}`);
-        console.log('\n🛠️  Manual setup required:');
-        console.log('   1. Install Node.js from https://nodejs.org/');
-        console.log('   2. Restart your terminal/VS Code');
-        console.log('   3. Run this script again');
+        console.log('\n🛠️  Troubleshooting steps:');
+        console.log('   1. Check if Node.js is installed: node --version');
+        console.log('   2. Install Node.js from https://nodejs.org/ (version 16+ recommended)');
+        console.log('   3. On macOS with Homebrew: brew install node');
+        console.log('   4. Restart your terminal/VS Code after installation');
+        console.log('   5. Run this script again: npm run setup-node');
+        console.log('\n📋 Your system info:');
+        console.log(`   Platform: ${process.platform}`);
+        console.log(`   Architecture: ${process.arch}`);
+        console.log(`   PATH: ${process.env.PATH?.split(':').slice(0, 3).join(', ')}...`);
         process.exit(1);
     }
 }

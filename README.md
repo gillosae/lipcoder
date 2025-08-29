@@ -31,13 +31,38 @@ LipCoder transforms your coding experience with intelligent audio feedback, maki
 
 ## 🚀 Installation
 
-1. **Install the Extension**
+### Prerequisites
+- **Node.js**: Version 16.0 or higher ([Download here](https://nodejs.org/))
+- **npm**: Version 8.0 or higher (comes with Node.js)
+- **VS Code**: Version 1.74.0 or higher
+
+### Quick Setup
+
+#### Option 1: Automated Installation (Recommended)
+```bash
+git clone https://github.com/gillosae/lipcoder.git
+cd lipcoder
+./install.sh
+```
+
+#### Option 2: Manual Installation
+1. **Clone the Repository**
    ```bash
-   # From VS Code marketplace (when published)
-   # Or install from VSIX file
+   git clone https://github.com/gillosae/lipcoder.git
+   cd lipcoder
    ```
 
-2. **Install Dependencies**
+2. **Install Node.js Dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Build the Extension**
+   ```bash
+   npm run build
+   ```
+
+4. **Install Python Dependencies (Optional for TTS/ASR)**
    ```bash
    # Install Python dependencies for TTS/ASR
    pip install torch torchaudio
@@ -48,11 +73,27 @@ LipCoder transforms your coding experience with intelligent audio feedback, maki
    brew install ffmpeg sox
    ```
 
-3. **Download Audio Models**
+5. **Run First-Time Setup**
    ```bash
-   # Run the setup script
+   # Download audio models and setup paths
    npm run setup
    ```
+
+### Troubleshooting Installation
+
+**Node.js not found error:**
+- Make sure Node.js is installed: `node --version`
+- If not installed, download from [nodejs.org](https://nodejs.org/)
+- On macOS with Homebrew: `brew install node`
+- Restart your terminal after installation
+
+**Permission errors:**
+- Try using `sudo` for global npm packages
+- Or use a Node version manager like [nvm](https://github.com/nvm-sh/nvm)
+
+**Build errors:**
+- Clear npm cache: `npm cache clean --force`
+- Delete `node_modules` and reinstall: `rm -rf node_modules && npm install`
 
 ## ⚙️ Configuration
 

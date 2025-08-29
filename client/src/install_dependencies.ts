@@ -45,7 +45,7 @@ async function checkNodeJS(): Promise<boolean> {
             
             const choice = await vscode.window.showErrorMessage(
                 '🚨 Node.js가 설치되어 있지 않습니다!\n\n' +
-                'LipCoder는 Node.js가 필요합니다. 지금 설치하시겠습니까?',
+                'LipCoder는 Node.js (버전 16.0 이상)가 필요합니다. 지금 설치하시겠습니까?',
                 { modal: true },
                 '🔧 자동 설치 (Homebrew)',
                 '📖 수동 설치 가이드',
@@ -62,7 +62,27 @@ async function checkNodeJS(): Promise<boolean> {
         });
         check.on('exit', (code) => {
             if (code === 0) {
-                logSuccess('✅ Node.js가 설치되어 있습니다');
+                // 버전 확인
+                try {
+                    const version = cp.execSync('node --version', { encoding: 'utf8' }).trim();
+                    const versionNumber = parseFloat(version.replace('v', ''));
+                    
+                    if (versionNumber < 16.0) {
+                        logWarning(`⚠️ Node.js ${version}이 설치되어 있지만 버전이 낮습니다 (권장: 16.0+)`);
+                        vscode.window.showWarningMessage(
+                            `Node.js ${version}이 설치되어 있지만 버전이 낮습니다.\n권장 버전: 16.0 이상\n\n업그레이드를 고려해보세요.`,
+                            '업그레이드 가이드 보기'
+                        ).then(choice => {
+                            if (choice === '업그레이드 가이드 보기') {
+                                showNodeJSInstallGuide();
+                            }
+                        });
+                    } else {
+                        logSuccess(`✅ Node.js ${version}이 설치되어 있습니다`);
+                    }
+                } catch (e) {
+                    logWarning('⚠️ Node.js 버전을 확인할 수 없습니다');
+                }
                 resolve(true);
             } else {
                 resolve(false);
@@ -169,25 +189,34 @@ async function installHomebrew(): Promise<void> {
  * Node.js 수동 설치 가이드 표시
  */
 async function showNodeJSInstallGuide(): Promise<void> {
-    const message = `📖 Node.js 수동 설치 가이드\n\n` +
-                   `방법 1: 공식 웹사이트에서 다운로드\n` +
-                   `• https://nodejs.org/ko/download/ 에서 macOS 인스톨러 다운로드\n` +
-                   `• .pkg 파일을 실행하여 설치\n\n` +
-                   `방법 2: Homebrew 사용 (터미널)\n` +
-                   `• brew install node\n\n` +
-                   `방법 3: nvm 사용 (Node Version Manager)\n` +
+    const message = `📖 Node.js 설치/업그레이드 가이드\n\n` +
+                   `권장 버전: Node.js 16.0 이상\n\n` +
+                   `방법 1: 공식 웹사이트 (가장 쉬움)\n` +
+                   `• https://nodejs.org/ 에서 LTS 버전 다운로드\n` +
+                   `• .pkg 파일을 실행하여 설치\n` +
+                   `• 설치 후 터미널에서 'node --version' 확인\n\n` +
+                   `방법 2: Homebrew (macOS 권장)\n` +
+                   `• 터미널에서: brew install node\n` +
+                   `• 업그레이드: brew upgrade node\n\n` +
+                   `방법 3: nvm (개발자 권장)\n` +
                    `• curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash\n` +
-                   `• nvm install node`;
+                   `• 터미널 재시작 후: nvm install --lts\n` +
+                   `• 버전 전환: nvm use 18 (또는 원하는 버전)\n\n` +
+                   `설치 후 VS Code와 터미널을 재시작해주세요.`;
     
     const choice = await vscode.window.showInformationMessage(
         message,
         { modal: true },
         '🌐 공식 사이트 열기',
+        '📋 터미널 명령어 복사',
         '✅ 확인'
     );
     
     if (choice === '🌐 공식 사이트 열기') {
-        vscode.env.openExternal(vscode.Uri.parse('https://nodejs.org/ko/download/'));
+        vscode.env.openExternal(vscode.Uri.parse('https://nodejs.org/'));
+    } else if (choice === '📋 터미널 명령어 복사') {
+        await vscode.env.clipboard.writeText('brew install node');
+        vscode.window.showInformationMessage('Homebrew 설치 명령어가 클립보드에 복사되었습니다!');
     }
 }
 

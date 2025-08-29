@@ -6,8 +6,8 @@
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.74.0",
-    "node": "23.11.0",
-    "npm": "10.9.2"
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   },
   "private": true,
   "categories": [
