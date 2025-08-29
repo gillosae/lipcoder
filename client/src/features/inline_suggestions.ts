@@ -57,7 +57,11 @@ export function registerInlineSuggestions(context: vscode.ExtensionContext) {
     }, 50); // Check every 50ms for more aggressive blocking
     
     context.subscriptions.push({
-        dispose: () => clearInterval(periodicCheck)
+        dispose: () => {
+            if (periodicCheckInterval) {
+                clearInterval(periodicCheckInterval);
+            }
+        }
     });
 
     // Clear suggestions when cursor moves (no automatic triggering)
