@@ -33,14 +33,19 @@ export class GPT4oASRClient {
      * Start recording and transcription
      */
     async startRecording(): Promise<void> {
+        logSuccess('🔴 [GPT4o-ASR-DEBUG] startRecording() called!');
+        console.log('🔴 [GPT4o-ASR-DEBUG] startRecording() called!');
+        
         if (this.isRecording) {
             logWarning('[Whisper-ASR] Already recording');
             return;
         }
 
+        logSuccess(`🔴 [GPT4o-ASR-DEBUG] API key exists: ${!!gpt4oASRConfig.apiKey}`);
         if (!gpt4oASRConfig.apiKey) {
             const error = new Error('OpenAI API key is required for Whisper transcription. Please set it in VS Code settings.');
             logError(`[Whisper-ASR] ${error.message}`);
+            logError('🔴 [GPT4o-ASR-DEBUG] No API key - returning early');
             if (this.options && this.options.onError) {
                 this.options.onError(error);
             }
@@ -48,10 +53,14 @@ export class GPT4oASRClient {
         }
 
         try {
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] About to initialize microphone...');
             log('[Whisper-ASR] Starting Whisper ASR recording...');
             
             // Initialize microphone
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] Requiring node-microphone...');
             const Microphone = require('node-microphone');
+            
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] Creating microphone instance...');
             this.microphone = new Microphone({
                 rate: gpt4oASRConfig.sampleRate,
                 channels: 1,
@@ -64,12 +73,15 @@ export class GPT4oASRClient {
             this.recordingStartTime = Date.now();
 
             // Start recording
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting microphone recording...');
             this.audioStream = this.microphone.startRecording();
             this.isRecording = true;
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] Microphone recording started, setting up event handlers...');
 
             // Handle audio data
             this.audioStream.on('data', (chunk: Buffer) => {
                 if (this.isRecording) {
+                    logSuccess(`🔴 [GPT4o-ASR-DEBUG] Received audio chunk: ${chunk.length} bytes`);
                     this.audioBuffer.push(chunk);
                 }
             });
@@ -77,12 +89,14 @@ export class GPT4oASRClient {
             // Handle errors
             this.audioStream.on('error', (error: Error) => {
                 logError(`[Whisper-ASR] Microphone error: ${error}`);
+                logError(`🔴 [GPT4o-ASR-DEBUG] Microphone error: ${error}`);
                 if (this.options && this.options.onError) {
                     this.options.onError(error);
                 }
                 this.stopRecording();
             });
 
+            logSuccess('🔴 [GPT4o-ASR-DEBUG] Calling onRecordingStart callback...');
             if (this.options && this.options.onRecordingStart) {
                 this.options.onRecordingStart();
             }
@@ -91,6 +105,8 @@ export class GPT4oASRClient {
 
         } catch (error) {
             logError(`[Whisper-ASR] Failed to start recording: ${error}`);
+            logError(`🔴 [GPT4o-ASR-DEBUG] Error in startRecording(): ${error}`);
+            console.error('🔴 [GPT4o-ASR-DEBUG] Error in startRecording():', error);
             if (this.options && this.options.onError) {
                 this.options.onError(error as Error);
             } else {
