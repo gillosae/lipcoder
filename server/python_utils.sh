@@ -13,27 +13,29 @@ NC='\033[0m' # No Color
 # Function to find Python
 find_python() {
     # Try different Python executables in order of preference
+    # Prioritize Python 3.10 and 3.11 as they are most commonly used for ML packages
     local python_candidates=(
-        "python3.13"
-        "python3.12"
-        "python3.11" 
         "python3.10"
+        "python3.11" 
+        "python3.12"
         "python3.9"
+        "python3.13"
         "python3"
         "python"
     )
     
     # Also try common installation paths
+    # Prioritize Python 3.10 and 3.11 paths
     local python_paths=(
-        "/opt/homebrew/bin/python3"
-        "/opt/homebrew/bin/python3.13"
-        "/opt/homebrew/bin/python3.12"
-        "/opt/homebrew/bin/python3.11"
         "/opt/homebrew/bin/python3.10"
-        "/opt/homebrew/opt/python@3.13/bin/python3"
-        "/opt/homebrew/opt/python@3.12/bin/python3"
-        "/opt/homebrew/opt/python@3.11/bin/python3"
+        "/opt/homebrew/bin/python3.11"
         "/opt/homebrew/opt/python@3.10/bin/python3"
+        "/opt/homebrew/opt/python@3.11/bin/python3"
+        "/opt/homebrew/bin/python3"
+        "/opt/homebrew/bin/python3.12"
+        "/opt/homebrew/bin/python3.13"
+        "/opt/homebrew/opt/python@3.12/bin/python3"
+        "/opt/homebrew/opt/python@3.13/bin/python3"
         "/usr/local/bin/python3"
         "/usr/bin/python3"
         "/bin/python3"
@@ -77,7 +79,7 @@ install_package() {
     local package=$2
     local pip_name=${3:-$package}
     
-    echo -e "${YELLOW}📦 Installing $package...${NC}"
+    echo -e "${YELLOW}📦 Installing $package...${NC}" >&2
     
     # Try different installation methods in order of preference
     local install_methods=(
@@ -91,12 +93,12 @@ install_package() {
     
     for method in "${install_methods[@]}"; do
         if eval "$method" &> /dev/null; then
-            echo -e "${GREEN}✅ $package installed successfully${NC}"
+            echo -e "${GREEN}✅ $package installed successfully${NC}" >&2
             return 0
         fi
     done
     
-    echo -e "${RED}❌ Failed to install $package${NC}"
+    echo -e "${RED}❌ Failed to install $package${NC}" >&2
     return 1
 }
 
@@ -106,11 +108,11 @@ install_from_requirements() {
     local requirements_file=$2
     
     if [ ! -f "$requirements_file" ]; then
-        echo -e "${YELLOW}⚠️  Requirements file not found: $requirements_file${NC}"
+        echo -e "${YELLOW}⚠️  Requirements file not found: $requirements_file${NC}" >&2
         return 1
     fi
     
-    echo -e "${BLUE}📋 Installing packages from $requirements_file...${NC}"
+    echo -e "${BLUE}📋 Installing packages from $requirements_file...${NC}" >&2
     
     # Try different installation methods
     local install_methods=(
@@ -121,12 +123,12 @@ install_from_requirements() {
     
     for method in "${install_methods[@]}"; do
         if eval "$method" &> /dev/null; then
-            echo -e "${GREEN}✅ All packages from requirements.txt installed successfully${NC}"
+            echo -e "${GREEN}✅ All packages from requirements.txt installed successfully${NC}" >&2
             return 0
         fi
     done
     
-    echo -e "${RED}❌ Failed to install packages from requirements.txt${NC}"
+    echo -e "${RED}❌ Failed to install packages from requirements.txt${NC}" >&2
     return 1
 }
 
@@ -144,7 +146,7 @@ check_and_install_packages() {
         shift 2
     done
     
-    echo -e "${BLUE}🔍 Checking required packages...${NC}"
+    echo -e "${BLUE}🔍 Checking required packages...${NC}" >&2
     
     local missing_packages=()
     for package in "${!required_packages[@]}"; do
@@ -154,23 +156,23 @@ check_and_install_packages() {
     done
     
     if [ ${#missing_packages[@]} -gt 0 ]; then
-        echo -e "${YELLOW}⚠️  Missing packages detected: ${missing_packages[*]}${NC}"
-        echo -e "${BLUE}🔄 Installing missing packages...${NC}"
+        echo -e "${YELLOW}⚠️  Missing packages detected: ${missing_packages[*]}${NC}" >&2
+        echo -e "${BLUE}🔄 Installing missing packages...${NC}" >&2
         
         for package in "${missing_packages[@]}"; do
             local pip_name="${required_packages[$package]}"
             if ! install_package "$python_cmd" "$package" "$pip_name"; then
-                echo -e "${RED}❌ Error: Failed to install required package '$package'${NC}"
-                echo -e "${YELLOW}💡 Manual installation commands:${NC}"
-                echo -e "${YELLOW}   $python_cmd -m pip install $pip_name${NC}"
-                echo -e "${YELLOW}   or: $python_cmd -m pip install $pip_name --user${NC}"
+                echo -e "${RED}❌ Error: Failed to install required package '$package'${NC}" >&2
+                echo -e "${YELLOW}💡 Manual installation commands:${NC}" >&2
+                echo -e "${YELLOW}   $python_cmd -m pip install $pip_name${NC}" >&2
+                echo -e "${YELLOW}   or: $python_cmd -m pip install $pip_name --user${NC}" >&2
                 return 1
             fi
         done
         
-        echo -e "${GREEN}✅ All missing packages installed successfully${NC}"
+        echo -e "${GREEN}✅ All missing packages installed successfully${NC}" >&2
     else
-        echo -e "${GREEN}✅ All required packages found${NC}"
+        echo -e "${GREEN}✅ All required packages found${NC}" >&2
     fi
     
     return 0
@@ -180,26 +182,26 @@ check_and_install_packages() {
 setup_python_environment() {
     local server_name=$1
     
-    echo -e "${BLUE}🐍 Setting up Python environment for $server_name...${NC}"
+    echo -e "${BLUE}🐍 Setting up Python environment for $server_name...${NC}" >&2
     
     # Find Python executable
     local python_cmd=$(find_python)
     
     if [ $? -ne 0 ] || [ -z "$python_cmd" ]; then
-        echo -e "${RED}❌ Error: Could not find Python 3.8+ installation${NC}"
-        echo -e "${YELLOW}💡 Please install Python 3.8 or higher:${NC}"
-        echo -e "${YELLOW}   • macOS: brew install python${NC}"
-        echo -e "${YELLOW}   • Or download from: https://python.org${NC}"
+        echo -e "${RED}❌ Error: Could not find Python 3.8+ installation${NC}" >&2
+        echo -e "${YELLOW}💡 Please install Python 3.8 or higher:${NC}" >&2
+        echo -e "${YELLOW}   • macOS: brew install python${NC}" >&2
+        echo -e "${YELLOW}   • Or download from: https://python.org${NC}" >&2
         return 1
     fi
     
-    echo -e "${GREEN}✅ Found Python: $python_cmd${NC}"
+    echo -e "${GREEN}✅ Found Python: $python_cmd${NC}" >&2
     
     # Check Python version
     local python_version=$($python_cmd --version 2>&1)
-    echo -e "${BLUE}🐍 Python version: $python_version${NC}"
+    echo -e "${BLUE}🐍 Python version: $python_version${NC}" >&2
     
-    # Return the python command for use by calling script
+    # Return the python command for use by calling script (stdout only)
     echo "$python_cmd"
     return 0
 }
