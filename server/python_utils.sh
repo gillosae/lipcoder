@@ -10,10 +10,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to find Python
-find_python() {
-    # Try different Python executables in order of preference
-    # Prioritize Python 3.10 and 3.11 as they are most commonly used for ML packages
+# Function to find Python with ML packages already installed
+find_python_with_ml_packages() {
+    # Try different Python executables and check if they have ML packages
     local python_candidates=(
         "python3.10"
         "python3.11" 
@@ -25,7 +24,6 @@ find_python() {
     )
     
     # Also try common installation paths
-    # Prioritize Python 3.10 and 3.11 paths
     local python_paths=(
         "/opt/homebrew/bin/python3.10"
         "/opt/homebrew/bin/python3.11"
@@ -41,7 +39,86 @@ find_python() {
         "/bin/python3"
     )
     
-    # First try candidates in PATH
+    # First try to find Python with torch already installed
+    echo -e "${BLUE}🔍 Looking for Python with ML packages already installed...${NC}" >&2
+    
+    # Check candidates in PATH first
+    for python_cmd in "${python_candidates[@]}"; do
+        if command -v "$python_cmd" &> /dev/null; then
+            # Check if it's Python 3.8+
+            local version=$($python_cmd --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            local major=$(echo $version | cut -d. -f1)
+            local minor=$(echo $version | cut -d. -f2)
+            
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 8 ]; then
+                # Check if torch is already installed
+                if $python_cmd -c "import torch" &> /dev/null; then
+                    echo -e "${GREEN}✅ Found Python with torch: $python_cmd${NC}" >&2
+                    echo "$python_cmd"
+                    return 0
+                fi
+            fi
+        fi
+    done
+    
+    # Check specific paths
+    for python_path in "${python_paths[@]}"; do
+        if [ -x "$python_path" ]; then
+            local version=$($python_path --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            local major=$(echo $version | cut -d. -f1)
+            local minor=$(echo $version | cut -d. -f2)
+            
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 8 ]; then
+                # Check if torch is already installed
+                if $python_path -c "import torch" &> /dev/null; then
+                    echo -e "${GREEN}✅ Found Python with torch: $python_path${NC}" >&2
+                    echo "$python_path"
+                    return 0
+                fi
+            fi
+        fi
+    done
+    
+    echo -e "${YELLOW}⚠️  No Python with torch found, will use any available Python${NC}" >&2
+    return 1
+}
+
+# Function to find any suitable Python
+find_python() {
+    # First try to find Python with ML packages
+    local python_with_ml=$(find_python_with_ml_packages)
+    if [ $? -eq 0 ] && [ ! -z "$python_with_ml" ]; then
+        echo "$python_with_ml"
+        return 0
+    fi
+    
+    # If no Python with ML packages found, find any suitable Python
+    local python_candidates=(
+        "python3.10"
+        "python3.11" 
+        "python3.12"
+        "python3.9"
+        "python3.13"
+        "python3"
+        "python"
+    )
+    
+    local python_paths=(
+        "/opt/homebrew/bin/python3.10"
+        "/opt/homebrew/bin/python3.11"
+        "/opt/homebrew/opt/python@3.10/bin/python3"
+        "/opt/homebrew/opt/python@3.11/bin/python3"
+        "/opt/homebrew/bin/python3"
+        "/opt/homebrew/bin/python3.12"
+        "/opt/homebrew/bin/python3.13"
+        "/opt/homebrew/opt/python@3.12/bin/python3"
+        "/opt/homebrew/opt/python@3.13/bin/python3"
+        "/usr/local/bin/python3"
+        "/usr/bin/python3"
+        "/bin/python3"
+    )
+    
+    # Try candidates in PATH
     for python_cmd in "${python_candidates[@]}"; do
         if command -v "$python_cmd" &> /dev/null; then
             # Check if it's Python 3.8+
@@ -56,7 +133,7 @@ find_python() {
         fi
     done
     
-    # Then try specific paths
+    # Try specific paths
     for python_path in "${python_paths[@]}"; do
         if [ -x "$python_path" ]; then
             local version=$($python_path --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)

@@ -69,5 +69,7 @@ echo -e "${BLUE}📝 Logs will appear below...${NC}"
 echo -e "${YELLOW}   Press Ctrl+C to stop the server${NC}"
 echo ""
 
-# Execute with error handling
+# Execute with error handling - use the detected Python's gunicorn module
+echo -e "${GREEN}🚀 Starting ASR server with $PYTHON_CMD${NC}"
+echo -e "${BLUE}📝 Using gunicorn from: $($PYTHON_CMD -c "import gunicorn; print(gunicorn.__file__)" 2>/dev/null || echo "will be installed")${NC}"
 exec $PYTHON_CMD -m gunicorn --workers 2 --bind 0.0.0.0:$PORT silero_asr_server:app 
