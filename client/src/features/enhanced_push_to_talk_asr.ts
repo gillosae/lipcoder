@@ -687,6 +687,9 @@ async function stopASRWriteMode(): Promise<void> {
  * Start recording
  */
 async function startRecording(): Promise<void> {
+    logSuccess('🔴 [ASR-DEBUG] startRecording() function called!');
+    console.log('🔴 [ASR-DEBUG] startRecording() function called!');
+    
     if (isRecording) {
         logWarning('[Enhanced-ASR] Already recording');
         return;
@@ -694,6 +697,7 @@ async function startRecording(): Promise<void> {
     
     try {
         log('[Enhanced-ASR] Starting ASR recording...');
+        logSuccess('🔴 [ASR-DEBUG] About to initialize ASR client...');
         
         // Stop all ongoing audio/token reading before starting recording
         stopAllAudio();
@@ -727,7 +731,12 @@ async function startRecording(): Promise<void> {
         }
         
         // Start recording based on backend
+        logSuccess(`🔴 [ASR-DEBUG] Current backend: ${currentASRBackend}`);
+        logSuccess(`🔴 [ASR-DEBUG] GPT4o client exists: ${!!gpt4oAsrClient}`);
+        logSuccess(`🔴 [ASR-DEBUG] Silero client exists: ${!!asrClient}`);
+        
         if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient && typeof gpt4oAsrClient === 'object') {
+            logSuccess('🔴 [ASR-DEBUG] Using GPT4o backend...');
             try {
                 if (typeof gpt4oAsrClient.startRecording === 'function') {
                     await gpt4oAsrClient.startRecording();
@@ -738,8 +747,10 @@ async function startRecording(): Promise<void> {
                 throw new Error(`Failed to start GPT4o ASR recording: ${error}`);
             }
         } else if (currentASRBackend === ASRBackend.Silero && asrClient && typeof asrClient === 'object') {
+            logSuccess('🔴 [ASR-DEBUG] Using Silero backend...');
             try {
                 if (typeof asrClient.startStreaming === 'function') {
+                    logSuccess('🔴 [ASR-DEBUG] Calling asrClient.startStreaming()...');
                     await asrClient.startStreaming();
                     handleRecordingStart(); // Manual call for Silero
                 } else {
@@ -760,6 +771,8 @@ async function startRecording(): Promise<void> {
         logSuccess('[Enhanced-ASR] Recording started successfully');
         
     } catch (error) {
+        logError(`🔴 [ASR-DEBUG] Error in startRecording(): ${error}`);
+        console.error('🔴 [ASR-DEBUG] Error in startRecording():', error);
         handleError(error as Error);
     }
 }
