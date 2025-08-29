@@ -23,13 +23,66 @@ export const EXACT_COMMANDS: ExactCommand[] = [
     { 
         patterns: [
             'syntax error list', 'list syntax errors', 'show syntax errors', 'error list', 'list errors', 'show errors',
-            '신택스 에러 리스트', '신택스 에러 목록', '문법 오류 목록', '문법 오류 리스트', '문법 에러 목록', '문법 에러 리스트',
+            '신택스 에러 리스트', '신텍스 에러리스트', '신택스 에러 목록', '문법 오류 목록', '문법 오류 리스트', '문법 에러 목록', '문법 에러 리스트',
             '신텍스 에러들', '신텍스 에러 목록', '문법 오류들', '문법 오류 목록', '문법 에러들', '문법 에러 목록', '신텍스 에러 리스트', '문법 오류 리스트',
             '오류 목록', '오류 리스트', '에러 목록', '에러 리스트', 'syntax error', 'syntax errors', '신택스 에러', '신텍스 에러'
         ], 
         command: 'lipcoder.syntaxErrorList', 
         feedback: 'Syntax error list', 
         type: 'navigation' 
+    },
+    { 
+        patterns: [
+            'fix errors', 'fix error', 'fix terminal errors', 'fix terminal error', 'auto fix errors', 'auto fix error',
+            '에러 고쳐줘', '에러 고치기', '에러 수정', '에러 수정해줘', '오류 고쳐줘', '오류 고치기', '오류 수정', '오류 수정해줘',
+            '터미널 에러 고쳐줘', '터미널 오류 고쳐줘', '에러를 고쳐줘', '오류를 고쳐줘', '자동으로 에러 고쳐줘', '자동으로 오류 고쳐줘'
+        ], 
+        command: 'lipcoder.fixTerminalErrors', 
+        feedback: 'Fixing terminal errors', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'explain error', 'explain errors', 'what is this error', 'what error', 'analyze error', 'analyze errors',
+            '이게 무슨 에러야', '또 이게 무슨 에러야', '에러 설명', '에러 설명해줘', '오류 설명', '오류 설명해줘', '이거 무슨 에러야', '이거 무슨 오류야',
+            '무슨 에러인지 설명해줘', '무슨 오류인지 설명해줘', '에러가 뭐야', '오류가 뭐야', '에러 분석', '오류 분석',
+            '이 에러 뭐야', '이 오류 뭐야', '터미널 에러 설명', '터미널 오류 설명', '에러 자세히 설명해줘', '오류 자세히 설명해줘', '에러를 설명해', '에로를 설명해', '에로 설명', '애로 설명', '애로를 설명해', '이애로 설명해', '이 애로 설명해',
+            '에러 설명', '오류 설명', '에러를 설명', '오류를 설명', '에러 뭐야', '오류 뭐야', '무슨 에러', '무슨 오류',
+            'error explain', 'explain this error', 'what error is this', 'describe error', 'describe this error'
+        ], 
+        command: 'lipcoder.explainTerminalErrors', 
+        feedback: 'Explaining terminal errors', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'explain terminal output', 'explain output', 'what is this output', 'analyze output', 'describe output',
+            '터미널 출력 설명해줘', '터미널 출력 설명', '출력 설명해줘', '출력 설명', '이 출력 뭐야', '이 출력이 뭐야',
+            '터미널 출력이 뭐야', '터미널 출력 뭐야', '출력이 뭐야', '출력 뭐야', '출력 분석해줘', '출력 분석',
+            '터미널 출력 분석해줘', '터미널 출력 분석', '이 출력 설명해줘', '이 출력 설명', '출력을 설명해줘', '출력을 설명',
+            '터미널 출력을 설명해줘', '터미널 출력을 설명', '무슨 출력이야', '무슨 출력', '이게 무슨 출력이야', '이게 무슨 출력',
+            '터미널에서 뭐가 나왔어', '터미널에서 뭐가 나왔나', '터미널 결과 설명해줘', '터미널 결과 설명',
+            'terminal output explain', 'explain this output', 'what output is this', 'describe terminal output'
+        ], 
+        command: 'lipcoder.explainTerminalOutput', 
+        feedback: 'Explaining terminal output', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'run code', 'execute code', 'run current file', 'execute current file', 'run this file', 'execute this file',
+            '코드 실행해줘', '코드 실행', '실행해줘', '실행', '현재 파일 실행', '현재 파일 실행해줘', 
+            '이 파일 실행해줘', '이 파일 실행', '이 코드 실행해줘', '이 코드 실행', '파일 실행해줘', '파일 실행',
+            '코드를 실행해줘', '코드를 실행', '현재 코드 실행', '현재 코드 실행해줘',
+            '파일을 실행해줘', '파일을 실행', '이 파일을 실행해줘', '이 파일을 실행', '현재 파일을 실행해줘', '현재 파일을 실행',
+            '지금 파일 실행해줘', '지금 파일 실행', '지금 코드 실행해줘', '지금 코드 실행', '지금 실행해줘', '지금 실행',
+            '파일 실행', '코드 실행', '실행', '이 파일 실행', '현재 파일 실행', '지금 실행',
+            'run file', 'execute file', 'run this', 'execute this', 'run current', 'execute current',
+            '파일실행해줘', '코드실행해줘', '이파일실행해줘', '현재파일실행해줘', '파일실행', '코드실행'
+        ], 
+        command: 'lipcoder.executeCurrentFile', 
+        feedback: 'Executing current file', 
+        type: 'action' 
     },
     { 
         patterns: ['go to editor', 'editor', 'go editor', '코드 창', '코드 창', '코드 창으로 가', '코드 창 열기', '코드 창 열기', '코드 창 열어', '코드 창으로 가', '코드 창', '에디터', '에디터로 가', '에디터 창 열어'], 
@@ -146,6 +199,85 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         type: 'action' 
     },
     
+    // File type opening commands
+    { 
+        patterns: [
+            'open python file', 'python file', 'python 파일 열어', 'python 파일 열기', '파이썬 파일 열어', '파이썬 파일 열기', '파이썬 파일', 'python 파일',
+            '파이썬 파일 열어줘', 'python 파일 열어줘', '파이썬 파일을 열어', 'python 파일을 열어', '파이썬 파일을 열어줘', 'python 파일을 열어줘'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening Python file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open markdown file', 'markdown file', 'md file', 'markdown 파일 열어', 'markdown 파일 열기', '마크다운 파일 열어', '마크다운 파일 열기', '마크다운 파일', 'markdown 파일',
+            '마크다운 파일 열어줘', 'markdown 파일 열어줘', '마크다운 파일을 열어', 'markdown 파일을 열어', '마크다운 파일을 열어줘', 'markdown 파일을 열어줘',
+            'md 파일 열어', 'md 파일 열기', 'md 파일', 'md 파일 열어줘', 'md 파일을 열어', 'md 파일을 열어줘'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening Markdown file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open image file', 'image file', 'picture file', '이미지 파일 열어', '이미지 파일 열기', '그림 파일 열어', '그림 파일 열기', '이미지 파일', '그림 파일',
+            '이미지 파일 열어줘', '그림 파일 열어줘', '이미지 파일을 열어', '그림 파일을 열어', '이미지 파일을 열어줘', '그림 파일을 열어줘',
+            'jpg 파일 열어', 'jpeg 파일 열어', 'png 파일 열어', 'gif 파일 열어', 'webp 파일 열어',
+            'jpg 파일', 'jpeg 파일', 'gif 파일', 'webp 파일'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening image file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open javascript file', 'javascript file', 'js file', 'javascript 파일 열어', 'javascript 파일 열기', '자바스크립트 파일 열어', '자바스크립트 파일 열기', 
+            '자바스크립트 파일', 'javascript 파일', 'js 파일', 'js 파일 열어', 'js 파일 열기',
+            '자바스크립트 파일 열어줘', 'javascript 파일 열어줘', 'js 파일 열어줘', '자바스크립트 파일을 열어', 'javascript 파일을 열어', 'js 파일을 열어'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening JavaScript file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open typescript file', 'typescript file', 'ts file', 'typescript 파일 열어', 'typescript 파일 열기', '타입스크립트 파일 열어', '타입스크립트 파일 열기',
+            '타입스크립트 파일', 'typescript 파일', 'ts 파일', 'ts 파일 열어', 'ts 파일 열기',
+            '타입스크립트 파일 열어줘', 'typescript 파일 열어줘', 'ts 파일 열어줘', '타입스크립트 파일을 열어', 'typescript 파일을 열어', 'ts 파일을 열어'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening TypeScript file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open json file', 'json file', 'json 파일 열어', 'json 파일 열기', 'json 파일', 
+            'json 파일 열어줘', 'json 파일을 열어', 'json 파일을 열어줘'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening JSON file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open html file', 'html file', 'html 파일 열어', 'html 파일 열기', 'html 파일',
+            'html 파일 열어줘', 'html 파일을 열어', 'html 파일을 열어줘'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening HTML file', 
+        type: 'action' 
+    },
+    { 
+        patterns: [
+            'open css file', 'css file', 'css 파일 열어', 'css 파일 열기', 'css 파일',
+            'css 파일 열어줘', 'css 파일을 열어', 'css 파일을 열어줘'
+        ], 
+        command: 'lipcoder.openFileByType', 
+        feedback: 'Opening CSS file', 
+        type: 'action' 
+    },
+    
     // TTS Backend switching commands
     { 
         patterns: [
@@ -198,6 +330,14 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         type: 'action' 
     },
     
+    // Stop all audio and functions command - 점 명령어
+    { 
+        patterns: ['.', '점'], 
+        command: 'lipcoder.stopAllAudio', 
+        feedback: 'Stopped', 
+        type: 'action' 
+    },
+    
     // Image description commands
     { 
         patterns: [
@@ -242,11 +382,30 @@ export const EXACT_COMMANDS: ExactCommand[] = [
 export async function tryExactCommand(text: string): Promise<ConversationalResponse | null> {
     const normalizedText = text.toLowerCase().trim();
     
+    log(`[ExactCommands] Checking exact command for: "${normalizedText}"`);
+    
     // Check for exact matches
     for (const cmd of EXACT_COMMANDS) {
-        if (cmd.patterns.some(pattern => normalizedText === pattern)) {
+        // Log which patterns we're checking for debugging
+        if (cmd.command === 'lipcoder.explainTerminalErrors' || cmd.command === 'lipcoder.executeCurrentFile') {
+            log(`[ExactCommands] Checking ${cmd.command} patterns against "${normalizedText}"`);
+            log(`[ExactCommands] Available patterns for ${cmd.command}: ${JSON.stringify(cmd.patterns.slice(0, 10))}...`);
+            
+            // Check each pattern individually for debugging
+            for (const pattern of cmd.patterns) {
+                if (pattern === normalizedText) {
+                    log(`[ExactCommands] MATCH FOUND: "${pattern}" === "${normalizedText}"`);
+                    break;
+                } else if (pattern.includes('파일') || pattern.includes('실행')) {
+                    log(`[ExactCommands] No match: "${pattern}" !== "${normalizedText}"`);
+                }
+            }
+        }
+        
+        const matchingPattern = cmd.patterns.find(pattern => normalizedText === pattern);
+        if (matchingPattern) {
             try {
-                log(`[ExactCommands] Executing exact command: ${cmd.command}`);
+                log(`[ExactCommands] Executing exact command: ${cmd.command} (matched pattern: "${matchingPattern}")`);
                 
                 // Special handling for file opening commands
                 if (cmd.command === 'lipcoder.openFile') {
@@ -266,6 +425,32 @@ export async function tryExactCommand(text: string): Promise<ConversationalRespo
                 } else if (cmd.command === 'lipcoder.openPngFile') {
                     // Handle PNG file opening
                     await vscode.commands.executeCommand(cmd.command);
+                } else if (cmd.command === 'lipcoder.openFileByType') {
+                    // Extract file type from the pattern
+                    let fileType = '';
+                    if (cmd.patterns.some(p => p.includes('python') || p.includes('파이썬'))) {
+                        fileType = 'python';
+                    } else if (cmd.patterns.some(p => p.includes('markdown') || p.includes('마크다운') || p.includes('md'))) {
+                        fileType = 'markdown';
+                    } else if (cmd.patterns.some(p => p.includes('image') || p.includes('이미지') || p.includes('그림') || p.includes('picture') || p.includes('jpg') || p.includes('jpeg') || p.includes('png') || p.includes('gif') || p.includes('webp'))) {
+                        fileType = 'image';
+                    } else if (cmd.patterns.some(p => p.includes('javascript') || p.includes('자바스크립트') || p.includes('js'))) {
+                        fileType = 'javascript';
+                    } else if (cmd.patterns.some(p => p.includes('typescript') || p.includes('타입스크립트') || p.includes('ts'))) {
+                        fileType = 'typescript';
+                    } else if (cmd.patterns.some(p => p.includes('json'))) {
+                        fileType = 'json';
+                    } else if (cmd.patterns.some(p => p.includes('html'))) {
+                        fileType = 'html';
+                    } else if (cmd.patterns.some(p => p.includes('css'))) {
+                        fileType = 'css';
+                    }
+                    
+                    if (fileType) {
+                        await vscode.commands.executeCommand(cmd.command, fileType);
+                    } else {
+                        await vscode.commands.executeCommand(cmd.command);
+                    }
                 } else {
                     await vscode.commands.executeCommand(cmd.command);
                 }
@@ -305,6 +490,7 @@ export async function tryExactCommand(text: string): Promise<ConversationalRespo
         }
     }
     
+    log(`[ExactCommands] No exact command match found for: "${normalizedText}"`);
     return null; // No exact command found, proceed with LLM
 }
 

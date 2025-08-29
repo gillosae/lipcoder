@@ -1,10 +1,11 @@
-import { stopReading } from './stop_reading';
+import { stopReading, stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
-import { speakTokenList, speakGPT, TokenChunk } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk, clearAudioStoppingState } from '../audio';
 
 export function registerBreadcrumb(
     context: ExtensionContext,
@@ -64,14 +65,24 @@ export function registerBreadcrumb(
             }));
             quickPick.placeholder = 'Navigate breadcrumb…';
             quickPick.onDidChangeActive(active => {
-                stopReading();
+                // Comprehensive audio stopping to handle all types including underbar sounds
+                stopAllAudio();
+                // Clear audio stopping state immediately to allow new audio to start right away
+                clearAudioStoppingState();
+                // Explicitly stop earcons to ensure they don't overlap
+                stopEarconPlayback();
+                
                 const sel = active[0];
                 if (sel) {
                     const { line, label } = sel;
                     const p = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(p, p);
                     editor.revealRange(new vscode.Range(p, p));
-                    speakTokenList([{ tokens: [label], category: undefined }]);
+                    
+                    // Add small delay to ensure audio stopping is complete before starting new audio
+                    setTimeout(() => {
+                        speakTokenList([{ tokens: [label], category: undefined }]);
+                    }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
             quickPick.onDidAccept(() => {

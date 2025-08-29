@@ -13,6 +13,7 @@ import { vibeCodingConfig } from '../config';
 import * as Diff from 'diff';
 // Intelligent suggestions import removed - continuous actions eliminated
 import { showSuggestionHistory, showCurrentSuggestions } from './suggestion_storage';
+import { fixTerminalErrorsVibeCoding, isTerminalErrorFixRequest } from './terminal_error_fixer';
 
 interface CodeChange {
     line: number;
@@ -99,25 +100,44 @@ export function getVibeCodingTTSActive(): boolean {
  */
 export function stopVibeCodingTTS(): void {
     if (vibeCodingTTSActive) {
-        log('[vibe_coding] Stopping vibe coding TTS due to cursor movement');
+        log('[vibe_coding] Stopping vibe coding TTS - Command+. pressed');
         vibeCodingTTSActive = false;
-        // Use comprehensive audio stopping
+        
+        // Abort the line reading controller to stop ongoing TTS
         try {
-            stopAllAudio(); // Stop all audio including TTS
-            stopPlayback(); // Additional direct stop call
+            if (lineAbortController && !lineAbortController.signal.aborted) {
+                log('[vibe_coding] Aborting lineAbortController to stop TTS');
+                lineAbortController.abort();
+            }
+        } catch (error) {
+            log(`[vibe_coding] Error aborting lineAbortController: ${error}`);
+        }
+        
+        // Direct audio stopping without calling stopAllAudio to avoid circular calls
+        try {
+            stopPlayback(); // Direct stop call
             log('[vibe_coding] Successfully stopped vibe coding TTS');
         } catch (error) {
             log(`[vibe_coding] Error stopping TTS: ${error}`);
         }
+    } else {
+        log('[vibe_coding] stopVibeCodingTTS called but TTS not active');
     }
 }
 
 /**
  * Wrapper for speakTokenList that tracks vibe coding TTS state
  */
-async function speakTokenListWithTracking(chunks: TokenChunk[]): Promise<void> {
+async function speakTokenListWithTracking(chunks: TokenChunk[], abortSignal?: AbortSignal): Promise<void> {
     try {
         setVibeCodingTTSActive(true);
+        
+        // Check if aborted before starting
+        if (abortSignal?.aborted) {
+            log(`[vibe_coding] TTS aborted before starting`);
+            return;
+        }
+        
         // Force all chunks to use 'vibe_text' category to ensure GPT TTS
         // This applies to all vibe coding related messages including success/error messages
         const routed = chunks.map(ch => ({
@@ -142,18 +162,29 @@ async function speakTokenListWithTracking(chunks: TokenChunk[]): Promise<void> {
         })).filter(chunk => chunk.tokens.length > 0); // Remove empty chunks
         
         if (cleanedRouted.length > 0) {
+            // Check if aborted before speaking
+            if (abortSignal?.aborted) {
+                log(`[vibe_coding] TTS aborted before speaking`);
+                return;
+            }
+            
             log(`[vibe_coding] About to call speakTokenList with ${cleanedRouted.length} chunks, first chunk: ${JSON.stringify(cleanedRouted[0])}`);
-            await speakTokenList(cleanedRouted);
+            await speakTokenList(cleanedRouted, abortSignal);
             log(`[vibe_coding] speakTokenList completed successfully`);
         } else {
             log(`[vibe_coding] All tokens were filtered out (dots/ellipsis), skipping speech`);
         }
     } catch (error) {
         log(`[vibe_coding] Error in speakTokenListWithTracking: ${error}`);
+        // Check if error is due to abort signal
+        if (abortSignal?.aborted || (error instanceof Error && error.message.includes('aborted'))) {
+            log(`[vibe_coding] TTS was aborted (Command+. pressed)`);
+            return;
+        }
         // Try to speak a fallback message using regular TTS
         try {
             const { speakTokenList } = await import('../audio.js');
-            await speakGPT('Vibe coding completed');
+            await speakGPT('Vibe coding completed', abortSignal);
         } catch (fallbackError) {
             log(`[vibe_coding] Fallback TTS also failed: ${fallbackError}`);
         }
@@ -416,8 +447,9 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
         const changeId = generateChangeId();
         currentChangeId = changeId;
         
-        // Check if this is an analysis request
-        const isAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
+        // Check if this is an analysis request (but exclude terminal-related requests)
+        const isTerminalRequest = /터미널|terminal|출력|output|결과|result|에러|error|오류/i.test(instruction);
+        const isAnalysisRequest = !isTerminalRequest && /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
         
         if (isAnalysisRequest) {
             // For analysis requests, just show the explanation without applying changes
@@ -774,6 +806,20 @@ async function getIntelligentContext(editor: vscode.TextEditor): Promise<Context
 async function processVibeCodingRequest(editor: vscode.TextEditor, instruction: string, context: ContextInfo): Promise<VibeCodingResult> {
     const document = editor.document;
     const originalText = document.getText();
+    
+    // Check if this is a terminal error fix request
+    if (isTerminalErrorFixRequest(instruction)) {
+        log('[vibe_coding] Detected terminal error fix request, delegating to terminal error fixer');
+        const terminalFixResult = await fixTerminalErrorsVibeCoding(instruction);
+        
+        if (terminalFixResult) {
+            log('[vibe_coding] Terminal error fix successful, returning result');
+            return terminalFixResult;
+        } else {
+            log('[vibe_coding] Terminal error fix failed, falling back to normal vibe coding');
+            // Fall through to normal vibe coding processing
+        }
+    }
     
     // Check if this is an analysis request
     const isAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
@@ -1356,7 +1402,7 @@ async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResu
         await speakTokenListWithTracking([{ 
             tokens: [summary], 
             category: undefined 
-        }]);
+        }], lineAbortController.signal);
         
         // Brief delay to show the notification
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1373,7 +1419,7 @@ async function showChangesAndAutoAccept(changeId: string, result: VibeCodingResu
         await speakTokenListWithTracking([{ 
             tokens: [`Changes applied successfully. ${summary}`], 
             category: undefined 
-        }]);
+        }], lineAbortController.signal);
         
         log(`[vibe_coding] Auto-accepted change ${changeId}: ${summary}`);
         
@@ -1540,7 +1586,7 @@ async function showInlineDiffWithDecorations(changeId: string, result: VibeCodin
         await speakTokenListWithTracking([{
             tokens: [summary],
             category: undefined
-        }]);
+        }], lineAbortController.signal);
 
         // Show action buttons with enhanced options
         const action = await vscode.window.showInformationMessage(
@@ -1588,7 +1634,7 @@ async function showInlineDiffActionDialog(changeId: string, result: VibeCodingRe
     await speakTokenListWithTracking([{ 
         tokens: [summary], 
         category: undefined 
-    }]);
+    }], lineAbortController.signal);
     
     const action = await vscode.window.showInformationMessage(
         `${summary}\n\n💡 Choose an action:`,
@@ -2293,7 +2339,7 @@ async function announceCodeChanges(result: VibeCodingResult) {
             category: undefined  // No category = pure TTS without earcons
         }];
         
-        await speakTokenListWithTracking(chunks);
+        await speakTokenListWithTracking(chunks, lineAbortController.signal);
         
     } catch (error) {
         log(`[vibe_coding] Error announcing changes: ${error}`);
@@ -2301,7 +2347,7 @@ async function announceCodeChanges(result: VibeCodingResult) {
         await speakTokenListWithTracking([{ 
             tokens: [`Code modified successfully`], 
             category: undefined 
-        }]);
+        }], lineAbortController.signal);
     }
 }
 
@@ -2315,7 +2361,7 @@ async function showSimpleDiffPreview(changeId: string, result: VibeCodingResult)
     await speakTokenListWithTracking([{ 
         tokens: [summary], 
         category: undefined 
-    }]);
+    }], lineAbortController.signal);
     
     const action = await vscode.window.showInformationMessage(
         `${summary}`,
@@ -2522,14 +2568,14 @@ async function speakVibeCodingSuccess(result: VibeCodingResult) {
             category: undefined  // No category = pure TTS without earcons
         }];
         
-        await speakTokenListWithTracking(chunks);
+        await speakTokenListWithTracking(chunks, lineAbortController.signal);
         
     } catch (error) {
         log(`[vibe_coding] Error speaking success message: ${error}`);
         await speakTokenListWithTracking([{ 
             tokens: [`Changes applied with ${totalAdded} additions and ${totalRemoved} removals`], 
             category: undefined 
-        }]);
+        }], lineAbortController.signal);
     }
 }
 

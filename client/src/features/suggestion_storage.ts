@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { ConversationalAction } from '../conversational_asr';
-import { speakTokenList, TokenChunk } from '../audio';
+import { speakTokenList, TokenChunk, clearAudioStoppingState } from '../audio';
 import { stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 import * as path from 'path';
 
 // TTS navigation control (debounce + cancel)
@@ -61,6 +62,8 @@ function resetTTSState(): void {
     lastSpokenKey = null;
     ttsSpeakSeq++; // invalidate any pending speakNow
     void Promise.resolve(stopAllAudio());
+    clearAudioStoppingState();
+    stopEarconPlayback();
 }
 
 /**

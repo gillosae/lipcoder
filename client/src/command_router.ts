@@ -709,14 +709,15 @@ Available command categories:
 4. PARENT_NAVIGATION - Navigate to parent scope (e.g., "go to parent", "move up", "parent")
 5. LIPCODER_COMMAND - LipCoder specific commands (e.g., "symbol tree", "function list", "breadcrumb")
 6. SYNTAX_ERROR_COMMAND - Syntax error and diagnostic commands (e.g., "syntax error list", "error list", "errors", "next error", "previous error")
-7. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file", "파이썬 파일 열어줘", "open python file", "자바스크립트 파일 열어", "open javascript file")
-8. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
-9. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
-10. FILE_EXECUTION - Execute files based on their extension (e.g., "run main.py", "execute test.js", "run university.py", "실행해 script.sh", "이 파일 실행해줘", "실행해줘")
-11. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
-12. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
-13. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
-14. NOT_A_COMMAND - Just regular text to type
+7. TERMINAL_ERROR_FIX - Fix code based on terminal errors (e.g., "터미널 에러를 바탕으로 코드를 고쳐줘", "터미널 코드 바탕으로 코드고쳐줘", "fix terminal errors", "fix code based on terminal output", "터미널 에러 수정해줘", "터미널 오류 고쳐줘")
+8. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file", "파이썬 파일 열어줘", "open python file", "자바스크립트 파일 열어", "open javascript file")
+9. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
+10. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
+11. FILE_EXECUTION - Execute files based on their extension (e.g., "run main.py", "execute test.js", "run university.py", "실행해 script.sh", "이 파일 실행해줘", "실행해줘")
+12. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
+13. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
+14. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
+15. NOT_A_COMMAND - Just regular text to type
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -823,6 +824,9 @@ Only include parameters relevant to the category. Use null for missing parameter
                 
                 case 'SYNTAX_ERROR_COMMAND':
                     return await this.executeLLMSyntaxErrorCommand(parameters, originalText);
+                
+                case 'TERMINAL_ERROR_FIX':
+                    return await this.executeLLMTerminalErrorFix(parameters, originalText);
                 
                 case 'FILE_OPERATION':
                     return await this.executeLLMFileOperation(parameters, originalText);
@@ -1072,6 +1076,7 @@ Only include parameters relevant to the category. Use null for missing parameter
             'csvFiles': 'lipcoder.findCsvFiles',
             'checkCSVFiles': 'lipcoder.checkCSVFiles',
             'analyzeCSVFile': 'lipcoder.analyzeCSVFile',
+            'analyzeSpecificCSVFile': 'lipcoder.analyzeSpecificCSVFile',
             'findAnyFiles': 'lipcoder.findAnyFiles',
             'openFileByName': 'lipcoder.openFileByName',
             'analyzeFile': 'lipcoder.analyzeFile',
@@ -1155,6 +1160,32 @@ Only include parameters relevant to the category. Use null for missing parameter
         }
         
         return false;
+    }
+
+    /**
+     * Execute terminal error fix command
+     */
+    private async executeLLMTerminalErrorFix(parameters: any, originalText: string): Promise<boolean> {
+        try {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🔧 Executing terminal error fix command`);
+            }
+            
+            // Execute the terminal error fix command
+            await vscode.commands.executeCommand('lipcoder.fixTerminalErrors');
+            
+            if (this.options.showNotifications) {
+                vscode.window.showInformationMessage('🔧 터미널 에러 수정을 시작합니다', { modal: false });
+            }
+            
+            return true;
+        } catch (error) {
+            if (this.options.enableLogging) {
+                logError(`[CommandRouter] Failed to execute terminal error fix: ${error}`);
+            }
+            vscode.window.showErrorMessage(`터미널 에러 수정 실패: ${error}`, { modal: false });
+            return false;
+        }
     }
 
     /**
@@ -3028,6 +3059,11 @@ export async function routeRealtimeCommand(result: RealtimeCommandResult): Promi
                 
             case 'analyzeCSVFile':
                 await vscode.commands.executeCommand('lipcoder.analyzeCSVFile');
+                return true;
+                
+            case 'analyzeSpecificCSVFile':
+                // This case should be handled with parameters in the conversational ASR
+                await vscode.commands.executeCommand('lipcoder.analyzeSpecificCSVFile');
                 return true;
                 
             case 'findAnyFiles':

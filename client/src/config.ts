@@ -191,8 +191,9 @@ export const categoryVoiceMap: Record<string, string> = {
     // ===== CURRENT WORKING CATEGORIES =====
     variable: 'en_3',
     operator: 'en_15',
-    keyword: 'en_35', // def, if, for, etc.
+    keyword: 'en_35', // def, if, for, etc.
     literal: 'en_5',
+    regex: 'en_5', // Use same voice as literal for regex patterns
     comment: 'en_41',
     type: 'en_80',
 
@@ -267,6 +268,8 @@ export const espeakCategoryVoiceMap: Record<string, Partial<EspeakConfig>> = {
     
     variable: { defaultVoice: 'en-us', pitch: 50, speed: 220, amplitude: 100 },     // Variables, function names - default US voice
     operator: { defaultVoice: 'en-gb', pitch: 60, speed: 230, amplitude: 110 },    // Math operators - higher pitch British voice
+    literal: { defaultVoice: 'en-us', pitch: 48, speed: 200, amplitude: 95 },      // String literals - softer US voice
+    regex: { defaultVoice: 'en-us', pitch: 48, speed: 200, amplitude: 95 },        // Regex patterns - same as literals
     type: { defaultVoice: 'en-gb-x-rp', pitch: 40, speed: 210, amplitude: 90 },   // Punctuation & symbols - lower pitch RP voice
     comment: { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },      // Comments - softer US voice
     
@@ -282,7 +285,6 @@ export const espeakCategoryVoiceMap: Record<string, Partial<EspeakConfig>> = {
     
     'string': { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
     'string.quoted': { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
-    literal: { defaultVoice: 'en-us', pitch: 45, speed: 200, amplitude: 85 },
     
     'number': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 230, amplitude: 100 },
     'number.integer': { defaultVoice: 'en-gb-x-rp', pitch: 55, speed: 230, amplitude: 100 },
@@ -373,6 +375,8 @@ export const macosCategoryVoiceMap: Record<string, Partial<MacOSConfig>> = {
     
     variable: { defaultVoice: 'Yuna', rate: 200, volume: 0.7 },        // Variables, function names - Yuna for consistency
     operator: { defaultVoice: 'Yuna', rate: 220, volume: 0.8 },        // Math operators - slightly faster
+    literal: { defaultVoice: 'Yuna', rate: 190, volume: 0.65 },        // String literals - slightly slower
+    regex: { defaultVoice: 'Yuna', rate: 190, volume: 0.65 },          // Regex patterns - same as literals
     type: { defaultVoice: 'Yuna', rate: 180, volume: 0.6 },            // Punctuation & symbols - slower
     comment: { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },         // Comments - slower, gentle
     
@@ -388,7 +392,6 @@ export const macosCategoryVoiceMap: Record<string, Partial<MacOSConfig>> = {
     
     'string': { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
     'string.quoted': { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
-    literal: { defaultVoice: 'Yuna', rate: 170, volume: 0.6 },
     
     'number': { defaultVoice: 'Yuna', rate: 230, volume: 0.7 },
     'number.integer': { defaultVoice: 'Yuna', rate: 230, volume: 0.7 },

@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ExtensionContext } from 'vscode';
 import type { DocumentSymbol } from 'vscode';
-import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak } from '../audio';
+import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak, clearAudioStoppingState } from '../audio';
 import { config } from '../config';
 import { stopReading, lineAbortController, stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 import { log } from '../utils';
 
 let autoTimer: NodeJS.Timeout | null = null;
@@ -86,15 +87,28 @@ export function registerSymbolTree(context: ExtensionContext) {
                     
                     // Comprehensive audio stopping to handle all types including underbar sounds
                     log(`[SymbolTree] Manual navigation - stopping audio for symbol: ${label}`);
-                    stopReading();
+                    stopAllAudio();
+                    // Clear audio stopping state immediately to allow new audio to start right away
+                    clearAudioStoppingState();
+                    // Explicitly stop earcons to ensure they don't overlap
+                    stopEarconPlayback();
                     
-                    const MAX_INDENT_UNITS = 5;
-                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
-                    playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    
-                    // Use readInEspeak for fast combined reading of symbol names
-                    readInEspeak([{ tokens: [label], category: undefined }]).catch(console.error);
+                    // Add small delay to ensure audio stopping is complete before starting new audio
+                    setTimeout(async () => {
+                        // Double-check that audio is still stopped before starting new audio
+                        if (lineAbortController.signal.aborted) {
+                            log(`[SymbolTree] Abort signal detected, skipping audio for: ${label}`);
+                            return;
+                        }
+                        
+                        const MAX_INDENT_UNITS = 5;
+                        const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
+                        const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
+                        playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Use readInEspeak for fast combined reading of symbol names with abort signal
+                        readInEspeak([{ tokens: [label], category: undefined }], lineAbortController.signal).catch(console.error);
+                    }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
 

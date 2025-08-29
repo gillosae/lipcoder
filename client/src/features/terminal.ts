@@ -14,7 +14,7 @@ import * as path from 'path';
 // Terminal screen buffer management
 let terminalScreenLines: string[] = [];
 let terminalInputLines: string[] = []; // Store all input commands
-let terminalBuffer: Array<{type: 'input' | 'output', content: string, timestamp: Date}> = []; // Complete terminal history
+export let terminalBuffer: Array<{type: 'input' | 'output', content: string, timestamp: Date}> = []; // Complete terminal history
 let currentLineIndex = -1;
 let isReadingMode = false; // Toggle for reading mode vs normal terminal mode
 let activePtyProcesses = new Set<any>();

@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, speakGPT } from '../audio';
+import { speakTokenList, speakGPT, clearAudioStoppingState } from '../audio';
+import { stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 
 export function registerOpenPng(context: ExtensionContext) {
     context.subscriptions.push(
@@ -109,8 +111,19 @@ export function registerOpenPng(context: ExtensionContext) {
                             if (newIndex !== currentIndex) {
                                 currentIndex = newIndex;
                                 const item = activeItems[0];
-                                // Read the filename when navigating
-                                await speakTokenList([{ tokens: [item.label], category: undefined }]);
+                                
+                                // Comprehensive audio stopping to handle all types including underbar sounds
+                                stopAllAudio();
+                                // Clear audio stopping state immediately to allow new audio to start right away
+                                clearAudioStoppingState();
+                                // Explicitly stop earcons to ensure they don't overlap
+                                stopEarconPlayback();
+                                
+                                // Add small delay to ensure audio stopping is complete before starting new audio
+                                setTimeout(async () => {
+                                    // Read the filename when navigating
+                                    await speakTokenList([{ tokens: [item.label], category: undefined }]);
+                                }, 200); // 200ms delay to ensure stopping is complete
                             }
                         }
                     });

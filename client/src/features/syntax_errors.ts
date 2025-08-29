@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import { playWave, speakTokenList, speakGPT, TokenChunk, readInEspeak, clearAudioStoppingState } from '../audio';
-import { stopAllAudio } from './stop_reading';
+import { stopAllAudio, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 import { config } from '../config';
 import { log } from '../utils';
@@ -218,10 +218,19 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
             // Navigate to the error location
             await navigateToErrorLocation(item.error);
             
-            // Use readInEspeak for fast combined reading of error information
-            const cleanText = `line ${item.error.line + 1}, ${item.error.message}`;
-            log(`[SyntaxErrors] Speaking: "${cleanText}"`);
-            readInEspeak([{ tokens: [cleanText], category: undefined }]).catch(console.error);
+            // Add small delay to ensure audio stopping is complete before starting new audio
+            setTimeout(() => {
+                // Double-check that audio is still stopped before starting new audio
+                if (lineAbortController.signal.aborted) {
+                    log(`[SyntaxErrors] Abort signal detected, skipping audio for error`);
+                    return;
+                }
+                
+                // Use readInEspeak for fast combined reading of error information with abort signal
+                const cleanText = `line ${item.error.line + 1}, ${item.error.message}`;
+                log(`[SyntaxErrors] Speaking: "${cleanText}"`);
+                readInEspeak([{ tokens: [cleanText], category: undefined }], lineAbortController.signal).catch(console.error);
+            }, 200); // 200ms delay to ensure stopping is complete
         }
     });
     

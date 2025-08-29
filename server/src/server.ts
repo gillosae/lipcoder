@@ -115,7 +115,55 @@ function isKoreanChar(char: string): boolean {
            (code >= 0xD7B0 && code <= 0xD7FF);    // Hangul Jamo Extended-B
 }
 
-// Simplified tokenization - now supports Korean text
+
+
+// Helper function to check if we're at the start of a regex pattern
+function isRegexStart(text: string, index: number): { isRegex: boolean; endIndex: number; pattern: string } {
+    // Check for r'...' or r"..." pattern
+    if (index < text.length - 1 && text[index] === 'r' && (text[index + 1] === "'" || text[index + 1] === '"')) {
+        const quote = text[index + 1];
+        let endIndex = index + 2;
+        
+        // Find the closing quote
+        while (endIndex < text.length && text[endIndex] !== quote) {
+            endIndex++;
+        }
+        
+        if (endIndex < text.length) {
+            return {
+                isRegex: true,
+                endIndex: endIndex,
+                pattern: text.substring(index, endIndex + 1)
+            };
+        }
+    }
+    
+    // Check for /.../ pattern
+    if (text[index] === '/') {
+        let endIndex = index + 1;
+        
+        // Find the closing slash, handling escaped characters
+        while (endIndex < text.length && text[endIndex] !== '/') {
+            if (text[endIndex] === '\\' && endIndex + 1 < text.length) {
+                endIndex += 2; // Skip escaped character
+            } else {
+                endIndex++;
+            }
+        }
+        
+        if (endIndex < text.length) {
+            return {
+                isRegex: true,
+                endIndex: endIndex,
+                pattern: text.substring(index, endIndex + 1)
+            };
+        }
+    }
+    
+    return { isRegex: false, endIndex: index, pattern: '' };
+}
+
+// Simplified tokenization - now supports Korean text and regex patterns
 // Let the client handle categorization based on its own logic
 function tokenizeComplexText(text: string): Array<{ text: string; category: string }> {
     const tokens: Array<{ text: string; category: string }> = [];
@@ -127,30 +175,38 @@ function tokenizeComplexText(text: string): Array<{ text: string; category: stri
         if (/\s/.test(char)) {
             // Whitespace - skip it (don't tokenize spaces in complex text)
             i++;
-        } else if (/[a-zA-Z0-9]/.test(char)) {
-            // English alphanumeric - collect as word
-            let word = '';
-            while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
-                word += text[i];
-                i++;
-            }
-            if (word) {
-                tokens.push({ text: word, category: 'variable' });
-            }
-        } else if (isKoreanChar(char)) {
-            // Korean characters - collect as word
-            let koreanWord = '';
-            while (i < text.length && isKoreanChar(text[i])) {
-                koreanWord += text[i];
-                i++;
-            }
-            if (koreanWord) {
-                tokens.push({ text: koreanWord, category: 'variable' });
-            }
         } else {
-            // All other characters (punctuation, symbols) - individual tokens
-            tokens.push({ text: char, category: 'unknown' });
-            i++;
+            // Check if current position starts a regex pattern
+            const regexCheck = isRegexStart(text, i);
+            if (regexCheck.isRegex) {
+                // Add the entire regex pattern as one token
+                tokens.push({ text: regexCheck.pattern, category: 'regex_pattern' });
+                i = regexCheck.endIndex + 1;
+            } else if (/[a-zA-Z0-9]/.test(char)) {
+                // English alphanumeric - collect as word
+                let word = '';
+                while (i < text.length && /[a-zA-Z0-9]/.test(text[i])) {
+                    word += text[i];
+                    i++;
+                }
+                if (word) {
+                    tokens.push({ text: word, category: 'variable' });
+                }
+            } else if (isKoreanChar(char)) {
+                // Korean characters - collect as word
+                let koreanWord = '';
+                while (i < text.length && isKoreanChar(text[i])) {
+                    koreanWord += text[i];
+                    i++;
+                }
+                if (koreanWord) {
+                    tokens.push({ text: koreanWord, category: 'variable' });
+                }
+            } else {
+                // All other characters (punctuation, symbols) - individual tokens
+                tokens.push({ text: char, category: 'unknown' });
+                i++;
+            }
         }
     }
     
@@ -414,6 +470,11 @@ function isPythonKeyword(token: string): boolean {
 
 // Helper function to scan code tokens using TypeScript scanner
 function scanCodeTokens(codeText: string): Array<{ text: string; category: string }> {
+    // Check for regex patterns first - if found, use complex tokenization
+    if (codeText.includes("r'") || codeText.includes('r"') || /\/.*\/[gimuy]*/.test(codeText)) {
+        return tokenizeComplexText(codeText);
+    }
+    
     // Check if this looks like complex LaTeX-like syntax that needs special handling
     if (codeText.includes('\\') && (codeText.includes('{') || codeText.includes('_')) && 
         (codeText.includes('{{{') || codeText.match(/\\\w+_\w+/))) {

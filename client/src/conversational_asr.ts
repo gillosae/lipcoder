@@ -66,11 +66,14 @@ export class ConversationalASRProcessor {
             }
             
             // Check for exact commands (bypass LLM for speed)
+            log(`[ConversationalASR] Checking for exact commands: "${transcriptionText}"`);
             const exactCommandResult = await tryExactCommand(transcriptionText);
             if (exactCommandResult) {
-                log(`[ConversationalASR] Exact command executed: "${transcriptionText}"`);
+                log(`[ConversationalASR] Exact command executed: "${transcriptionText}" -> ${exactCommandResult.response}`);
                 await stopThinkingAudio(); // Stop thinking audio immediately
                 return exactCommandResult;
+            } else {
+                log(`[ConversationalASR] No exact command found, proceeding to LLM: "${transcriptionText}"`);
             }
             
             // Understand intent using LLM
@@ -284,6 +287,7 @@ IMPORTANT CLASSIFICATION RULES:
 - If the user wants to navigate, search, open, or perform editor actions → command
 - If the user asks "what", "how", "why" about code → question
 - If the user asks about images, pictures, graphics, charts, or visual content → command (image description)
+- If the user asks about terminal output, terminal results, terminal errors, or terminal analysis → command (terminal analysis)
 
 Examples:
 - "What does this function do?" → question
@@ -303,6 +307,10 @@ Examples:
 - "Read line tokens" → command
 - "Find function main" → command
 - "Terminal up" → command
+- "터미널 결과 설명해줘" → command (terminal analysis)
+- "터미널 출력 설명" → command (terminal analysis)
+- "터미널 에러 설명" → command (terminal analysis)
+- "explain terminal output" → command (terminal analysis)
 - "파이썬 파일 열어줘" → command (parameters: {"fileType": "python"})
 - "Python 파일 열어줘" → command (parameters: {"fileType": "python"})
 - "open python file" → command (parameters: {"fileType": "python"})
@@ -319,10 +327,31 @@ IMAGE DESCRIPTION EXAMPLES (all → command):
 - "이미지의 색깔이 어떻게 다른지 설명해줘" → command
 - "그림에서 사람이 몇 명인지 알려줘" → command
 - "차트의 최대값이 뭔지 말해줘" → command
+- "그림이 바 플롯이야?" → command
+- "이 차트가 선 그래프인가?" → command
+- "막대들이 같은 색깔이야?" → command
+- "png 파일에서 뭐가 보여?" → command
+- "그림에 강아지가 있어?" → command
+- "이미지에 사람이 보여?" → command
+- "차트에 빨간색 막대가 있나?" → command
+
+CSV FILE ANALYSIS EXAMPLES (all → command):
+- "movies.csv 파일에 대해 설명해줘" → command (parameters: {"filename": "movies.csv", "operation": "analyze"})
+- "sample_data.csv 구조 알려줘" → command (parameters: {"filename": "sample_data.csv", "operation": "analyze"})
+- "users.csv 파일 분석해줘" → command (parameters: {"filename": "users.csv", "operation": "analyze"})
+- "data.csv에 어떤 컬럼이 있는지 말해줘" → command (parameters: {"filename": "data.csv", "operation": "analyze"})
+- "CSV 파일 movies.csv 설명해줘" → command (parameters: {"filename": "movies.csv", "operation": "analyze"})
+- "analyze movies.csv file" → command (parameters: {"filename": "movies.csv", "operation": "analyze"})
+- "tell me about sample_data.csv" → command (parameters: {"filename": "sample_data.csv", "operation": "analyze"})
+- "describe users.csv structure" → command (parameters: {"filename": "users.csv", "operation": "analyze"})
 
 VIBE CODING KEYWORDS: implement, create, add, modify, complete, generate, write, build, make, develop, code, function, class, method, fix, improve, refactor, change
 
-IMAGE DESCRIPTION KEYWORDS: 그림, 이미지, 사진, 차트, 그래프, 도표, 막대, 색깔, 색상, 개수, 몇 개, 몇 명, 텍스트, 글자, 문자, 숫자, 데이터, 트렌드, 경향, 최대값, 최소값, picture, image, chart, graph, color, count, text, number, data, trend
+IMAGE DESCRIPTION KEYWORDS: 그림, 이미지, 사진, 차트, 그래프, 도표, 막대, 색깔, 색상, 개수, 몇 개, 몇 명, 텍스트, 글자, 문자, 숫자, 데이터, 트렌드, 경향, 최대값, 최소값, 플롯, 바, 선, 점, 원, picture, image, chart, graph, color, count, text, number, data, trend, plot, bar, line, point, circle, png, jpg, jpeg
+
+CSV FILE ANALYSIS KEYWORDS: csv, CSV, 파일, 설명, 분석, 구조, 컬럼, 데이터, 테이블, file, analyze, describe, structure, column, table, explain, about
+
+TERMINAL ANALYSIS KEYWORDS: 터미널, terminal, 출력, output, 결과, result, 에러, error, 오류, 분석, analyze, explain, describe, 설명
 
 Respond in JSON format:
 {
@@ -1184,12 +1213,51 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
      */
     private async tryExecuteCommand(intent: ConversationalIntent): Promise<boolean | string> {
         try {
-            // First, try exact commands for fast execution
-            const { tryExactCommand } = await import('./features/exact_commands.js');
-            const exactResult = await tryExactCommand(intent.originalText);
-            if (exactResult) {
-                log(`[ConversationalASR] Exact command executed successfully: "${intent.originalText}"`);
-                return true;
+            // Skip exact command check here since it was already done in processTranscription
+            log(`[ConversationalASR] Trying to execute command via CommandRouter: "${intent.originalText}"`);
+            
+            // Try CommandRouter first for comprehensive command handling
+            try {
+                log(`[ConversationalASR] Creating CommandRouter for command execution...`);
+                const commandRouter = new CommandRouter();
+                
+                // Set editor context for proper command execution
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    const context = {
+                        editor: editor,
+                        position: editor.selection.active,
+                        selection: editor.selection,
+                        documentUri: editor.document.uri
+                    };
+                    commandRouter.setEditorContext(context);
+                    log(`[ConversationalASR] Editor context set for CommandRouter`);
+                }
+                
+                log(`[ConversationalASR] CommandRouter processing: "${intent.originalText}"`);
+                const result = await commandRouter.processTranscription(intent.originalText);
+                log(`[ConversationalASR] CommandRouter result: ${result}`);
+                
+                if (result) {
+                    // Check if this might be a navigation command
+                    const text = intent.originalText.toLowerCase();
+                    const isNavigationCommand = text.includes('go to') || text.includes('goto') || 
+                                              text.includes('parent') || text.includes('function') || 
+                                              text.includes('class') || text.includes('navigate') ||
+                                              text.includes('move to') || text.includes('jump to') ||
+                                              text.includes('explorer') || text.includes('editor') ||
+                                              text.includes('terminal') || text.includes('panel');
+                    
+                    if (isNavigationCommand) {
+                        log(`[ConversationalASR] CommandRouter handled navigation command`);
+                        return 'navigation';
+                    } else {
+                        log(`[ConversationalASR] CommandRouter handled command successfully`);
+                        return true;
+                    }
+                }
+            } catch (routerError) {
+                logError(`[ConversationalASR] CommandRouter failed: ${routerError}`);
             }
             
             // Map common intents to commands
@@ -1199,26 +1267,50 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
             const imageKeywords = [
                 '그림', '이미지', '사진', '차트', '그래프', '도표', '막대', '막대들', '색깔', '색상', 
                 '개수', '몇 개', '몇 명', '텍스트', '글자', '문자', '숫자', '데이터', 
-                '트렌드', '경향', '최대값', '최소값', 'picture', 'image', 'chart', 
-                'graph', 'color', 'count', 'text', 'number', 'data', 'trend', 'bars'
+                '트렌드', '경향', '최대값', '최소값', '플롯', '바', '선', '점', '원',
+                'picture', 'image', 'chart', 'graph', 'color', 'count', 'text', 'number', 
+                'data', 'trend', 'bars', 'plot', 'bar', 'line', 'point', 'circle', 'png', 'jpg', 'jpeg'
             ];
             
             const hasImageKeyword = imageKeywords.some(keyword => text.includes(keyword));
             const isImageQuestion = text.includes('뭐가') || text.includes('어떻게') || 
                                   text.includes('몇') || text.includes('어떤') || 
                                   text.includes('다른지') || text.includes('같은지') || text.includes('다르니') ||
+                                  text.includes('있어') || text.includes('있나') || text.includes('보여') || text.includes('보이') ||
                                   text.includes('what') || text.includes('how') || 
-                                  text.includes('many') || text.includes('different');
+                                  text.includes('many') || text.includes('different') || text.includes('is there') || text.includes('are there');
             
-            if (hasImageKeyword && (isImageQuestion || text.includes('설명') || text.includes('분석') || text.includes('describe') || text.includes('analyze'))) {
-                log(`[ConversationalASR] 🖼️ Image description command detected: "${intent.originalText}"`);
+            if (hasImageKeyword) {
+                log(`[ConversationalASR] 🖼️ Image-related command detected: "${intent.originalText}"`);
                 try {
-                    // Import and execute image description function
-                    const { selectAndAnalyzeImage } = await import('./features/image_description.js');
-                    await selectAndAnalyzeImage();
+                    // Just send the user's question directly to image analysis with LLM
+                    const { findAndAnalyzeImageWithQuestion } = await import('./features/image_description.js');
+                    await findAndAnalyzeImageWithQuestion(intent.originalText);
                     return true; // Command executed successfully
                 } catch (error) {
-                    log(`[ConversationalASR] Error executing image description: ${error}`);
+                    log(`[ConversationalASR] Error executing image analysis: ${error}`);
+                    return false;
+                }
+            }
+            
+            // Check for CSV file analysis commands
+            const csvKeywords = [
+                'csv', 'CSV', '파일', '설명', '분석', '구조', '컬럼', '데이터', '테이블',
+                'file', 'analyze', 'describe', 'structure', 'column', 'table', 'explain', 'about'
+            ];
+            
+            const hasCsvKeyword = csvKeywords.some(keyword => text.includes(keyword));
+            const csvFileMatch = text.match(/([a-zA-Z0-9_-]+\.csv)/i);
+            
+            if (hasCsvKeyword && csvFileMatch) {
+                const fileName = csvFileMatch[1];
+                log(`[ConversationalASR] 📊 CSV file analysis command detected: "${intent.originalText}" for file: ${fileName}`);
+                try {
+                    // Execute CSV file analysis command
+                    await vscode.commands.executeCommand('lipcoder.analyzeSpecificCSVFile', fileName);
+                    return true; // Command executed successfully
+                } catch (error) {
+                    log(`[ConversationalASR] Error executing CSV analysis: ${error}`);
                     return false;
                 }
             }
@@ -1366,64 +1458,9 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                 }
             }
             
-            // Try routing through the existing command router
-            try {
-                log(`[ConversationalASR] About to create CommandRouter...`);
-                
-                // Ensure CommandRouter class is available
-                if (typeof CommandRouter !== 'function') {
-                    throw new Error('CommandRouter class is not available');
-                }
-                
-                log(`[ConversationalASR] CommandRouter class confirmed, creating instance...`);
-                const commandRouter = new CommandRouter();
-                
-                if (!commandRouter) {
-                    throw new Error('CommandRouter instance is null/undefined');
-                }
-                
-                // Set editor context for proper command execution
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    const context = {
-                        editor: editor,
-                        position: editor.selection.active,
-                        selection: editor.selection,
-                        documentUri: editor.document.uri
-                    };
-                    commandRouter.setEditorContext(context);
-                    log(`[ConversationalASR] Editor context set for CommandRouter`);
-                } else {
-                    log(`[ConversationalASR] No active editor found for CommandRouter context`);
-                }
-                
-                log(`[ConversationalASR] CommandRouter created successfully, processing transcription...`);
-                const result = await commandRouter.processTranscription(intent.originalText);
-                log(`[ConversationalASR] CommandRouter processing result: ${result}`);
-                
-                // Check if this might be a navigation command
-                const isNavigationCommand = text.includes('go to') || text.includes('goto') || 
-                                          text.includes('parent') || text.includes('function') || 
-                                          text.includes('class') || text.includes('navigate') ||
-                                          text.includes('move to') || text.includes('jump to') ||
-                                          text.includes('explorer') || text.includes('editor') ||
-                                          text.includes('terminal') || text.includes('panel');
-                
-                // If CommandRouter handled a navigation command, return 'navigation'
-                if (result && isNavigationCommand) {
-                    log(`[ConversationalASR] CommandRouter successfully handled navigation command`);
-                    return 'navigation';
-                }
-                
-                return result;
-            } catch (routerError) {
-                logError(`[ConversationalASR] CommandRouter failed: ${routerError}`);
-                if (routerError instanceof Error) {
-                    logError(`[ConversationalASR] CommandRouter error message: ${routerError.message}`);
-                    logError(`[ConversationalASR] CommandRouter error stack: ${routerError.stack}`);
-                }
-                return false;
-            }
+            // CommandRouter is now handled at the beginning of this function
+            log(`[ConversationalASR] CommandRouter was already tried, falling back to specific command handling`);
+            return false;
             
         } catch (error) {
             log(`[ConversationalASR] Command execution failed: ${error}`);

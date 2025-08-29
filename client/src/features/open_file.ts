@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, speakGPT } from '../audio';
+import { speakTokenList, speakGPT, clearAudioStoppingState } from '../audio';
+import { stopAllAudio } from './stop_reading';
+import { stopEarconPlayback } from '../earcon';
 import { openFileTabAware } from './last_editor_tracker';
 
 export function registerOpenFile(context: ExtensionContext) {
@@ -186,8 +188,19 @@ export function registerOpenFile(context: ExtensionContext) {
                             if (newIndex !== currentIndex) {
                                 currentIndex = newIndex;
                                 const item = activeItems[0];
-                                // Read the filename when navigating
-                                await speakTokenList([{ tokens: [item.label], category: undefined }]);
+                                
+                                // Comprehensive audio stopping to handle all types including underbar sounds
+                                stopAllAudio();
+                                // Clear audio stopping state immediately to allow new audio to start right away
+                                clearAudioStoppingState();
+                                // Explicitly stop earcons to ensure they don't overlap
+                                stopEarconPlayback();
+                                
+                                // Add small delay to ensure audio stopping is complete before starting new audio
+                                setTimeout(async () => {
+                                    // Read the filename when navigating
+                                    await speakTokenList([{ tokens: [item.label], category: undefined }]);
+                                }, 200); // 200ms delay to ensure stopping is complete
                             }
                         }
                     });
@@ -249,6 +262,232 @@ export function registerOpenFile(context: ExtensionContext) {
             } catch (error) {
                 console.error('Error opening file:', error);
                 await speakGPT(`Error opening file ${actualFilename}`);
+            }
+        })
+    );
+
+    // Register the new file type opening command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.openFileByType', async (...args: any[]) => {
+            // Extract file type from arguments
+            let fileType = '';
+            
+            // 1) Prefer any direct string argument
+            for (const arg of args) {
+                if (typeof arg === 'string' && arg.trim()) {
+                    fileType = arg.trim().toLowerCase();
+                    break;
+                }
+            }
+
+            // 2) Try object with fileType property
+            if (!fileType) {
+                for (const arg of args) {
+                    if (arg && typeof arg === 'object' && typeof arg.fileType === 'string' && arg.fileType.trim()) {
+                        fileType = arg.fileType.trim().toLowerCase();
+                        break;
+                    }
+                }
+            }
+
+            if (!fileType || fileType.trim() === '') {
+                await speakGPT('No file type provided');
+                return;
+            }
+
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders || workspaceFolders.length === 0) {
+                await speakGPT('No workspace folder open');
+                return;
+            }
+
+            try {
+                // Define file extensions for each type
+                const fileExtensions: { [key: string]: string[] } = {
+                    'python': ['py', 'pyw', 'pyi'],
+                    'markdown': ['md', 'markdown', 'mdown', 'mkd'],
+                    'image': ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'ico'],
+                    'javascript': ['js', 'jsx', 'mjs', 'cjs'],
+                    'typescript': ['ts', 'tsx', 'mts', 'cts'],
+                    'json': ['json', 'jsonc'],
+                    'html': ['html', 'htm', 'xhtml'],
+                    'css': ['css', 'scss', 'sass', 'less']
+                };
+
+                const extensions = fileExtensions[fileType];
+                if (!extensions) {
+                    await speakGPT(`Unknown file type: ${fileType}`);
+                    return;
+                }
+
+                // Search for files with matching extensions
+                const searchPatterns = extensions.map(ext => `**/*.${ext}`);
+                let allFiles: vscode.Uri[] = [];
+                
+                for (const pattern of searchPatterns) {
+                    const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 100);
+                    allFiles.push(...files);
+                }
+
+                if (allFiles.length === 0) {
+                    const typeNames: { [key: string]: string } = {
+                        'python': 'Python',
+                        'markdown': 'Markdown',
+                        'image': 'image',
+                        'javascript': 'JavaScript',
+                        'typescript': 'TypeScript',
+                        'json': 'JSON',
+                        'html': 'HTML',
+                        'css': 'CSS'
+                    };
+                    await speakGPT(`No ${typeNames[fileType] || fileType} files found`);
+                    return;
+                }
+
+                // Remove duplicates (in case a file matches multiple patterns)
+                const uniqueFiles = Array.from(new Set(allFiles.map(f => f.fsPath))).map(fsPath => vscode.Uri.file(fsPath));
+
+                let targetFile: vscode.Uri;
+
+                if (uniqueFiles.length === 1) {
+                    // Only one file found - open it directly
+                    targetFile = uniqueFiles[0];
+                } else {
+                    // Multiple files found - show picker
+                    const fileItems = uniqueFiles.map(file => {
+                        const relativePath = vscode.workspace.asRelativePath(file);
+                        return {
+                            label: path.basename(file.fsPath),
+                            description: relativePath,
+                            uri: file
+                        };
+                    });
+
+                    // Sort by path depth (prefer root level files) and then alphabetically
+                    fileItems.sort((a, b) => {
+                        const depthA = a.description.split('/').length;
+                        const depthB = b.description.split('/').length;
+                        if (depthA !== depthB) {
+                            return depthA - depthB; // Prefer shallower paths
+                        }
+                        return a.description.localeCompare(b.description);
+                    });
+
+                    const typeNames: { [key: string]: string } = {
+                        'python': 'Python',
+                        'markdown': 'Markdown',
+                        'image': 'image',
+                        'javascript': 'JavaScript',
+                        'typescript': 'TypeScript',
+                        'json': 'JSON',
+                        'html': 'HTML',
+                        'css': 'CSS'
+                    };
+
+                    // Announce that user should choose from list
+                    await speakGPT(`Multiple ${typeNames[fileType] || fileType} files found. Choose from list`);
+
+                    // Create quick pick with audio feedback
+                    const quickPick = vscode.window.createQuickPick();
+                    quickPick.items = fileItems;
+                    quickPick.placeholder = `Multiple ${typeNames[fileType] || fileType} files found. Select one:`;
+                    quickPick.matchOnDescription = true;
+
+                    // Track current selection for audio feedback
+                    let currentIndex = -1;
+
+                    // Handle selection changes with audio feedback
+                    quickPick.onDidChangeActive(async (activeItems) => {
+                        if (activeItems.length > 0) {
+                            const newIndex = quickPick.items.indexOf(activeItems[0]);
+                            if (newIndex !== currentIndex) {
+                                currentIndex = newIndex;
+                                const item = activeItems[0];
+                                
+                                // Comprehensive audio stopping to handle all types including underbar sounds
+                                stopAllAudio();
+                                // Clear audio stopping state immediately to allow new audio to start right away
+                                clearAudioStoppingState();
+                                // Explicitly stop earcons to ensure they don't overlap
+                                stopEarconPlayback();
+                                
+                                // Add small delay to ensure audio stopping is complete before starting new audio
+                                setTimeout(async () => {
+                                    // Read the filename when navigating
+                                    await speakTokenList([{ tokens: [item.label], category: undefined }]);
+                                }, 200); // 200ms delay to ensure stopping is complete
+                            }
+                        }
+                    });
+
+                    // Show the quick pick
+                    quickPick.show();
+
+                    // Announce the first item after a short delay
+                    setTimeout(async () => {
+                        if (quickPick.items.length > 0) {
+                            const firstItem = quickPick.items[0];
+                            currentIndex = 0;
+                            await speakTokenList([{ tokens: [firstItem.label], category: undefined }]);
+                        }
+                    }, 300);
+
+                    // Wait for selection
+                    const selected = await new Promise<typeof fileItems[0] | undefined>((resolve) => {
+                        quickPick.onDidAccept(() => {
+                            const activeItem = quickPick.activeItems[0];
+                            if (activeItem) {
+                                // Find the original item with uri
+                                const originalItem = fileItems.find(item => 
+                                    item.label === activeItem.label && 
+                                    item.description === activeItem.description
+                                );
+                                quickPick.hide();
+                                resolve(originalItem);
+                            } else {
+                                quickPick.hide();
+                                resolve(undefined);
+                            }
+                        });
+
+                        quickPick.onDidHide(() => {
+                            resolve(undefined);
+                        });
+                    });
+
+                    if (!selected) {
+                        await speakGPT('File selection cancelled');
+                        return;
+                    }
+
+                    targetFile = selected.uri;
+                }
+
+                // Open the file using tab-aware logic
+                const editor = await openFileTabAware(targetFile.fsPath);
+
+                // Provide audio feedback
+                const fileName = path.basename(targetFile.fsPath);
+                const typeNames: { [key: string]: string } = {
+                    'python': 'Python',
+                    'markdown': 'Markdown',
+                    'image': 'image',
+                    'javascript': 'JavaScript',
+                    'typescript': 'TypeScript',
+                    'json': 'JSON',
+                    'html': 'HTML',
+                    'css': 'CSS'
+                };
+
+                if (editor) {
+                    await speakGPT(`Opened ${typeNames[fileType] || fileType} file ${fileName}`);
+                } else {
+                    await speakGPT(`Failed to open ${fileName}`);
+                }
+
+            } catch (error) {
+                console.error('Error opening file by type:', error);
+                await speakGPT(`Error opening ${fileType} file`);
             }
         })
     );

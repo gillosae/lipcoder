@@ -139,6 +139,113 @@ export async function generateCSVReport(): Promise<string> {
 }
 
 /**
+ * Find and analyze a specific CSV file by name
+ */
+export async function analyzeSpecificCSVFile(fileName: string): Promise<string> {
+    try {
+        log(`[CSV Analyzer] Looking for CSV file: ${fileName}`);
+        
+        const csvFiles = await checkCSVFilesWithBash();
+        
+        // Find the CSV file by name (case-insensitive)
+        const targetFile = csvFiles.find(csv => 
+            csv.name.toLowerCase() === fileName.toLowerCase() ||
+            csv.name.toLowerCase().includes(fileName.toLowerCase().replace('.csv', ''))
+        );
+        
+        if (!targetFile) {
+            const availableFiles = csvFiles.map(csv => csv.name).join(', ');
+            return `CSV file "${fileName}" not found. Available CSV files: ${availableFiles || 'none'}`;
+        }
+        
+        log(`[CSV Analyzer] Found target file: ${targetFile.path}`);
+        
+        // Generate detailed analysis
+        const analysis = await analyzeCSVWithBash(targetFile.path);
+        
+        return analysis;
+        
+    } catch (error) {
+        logError(`[CSV Analyzer] Error analyzing specific CSV file: ${error}`);
+        return `Error analyzing CSV file "${fileName}": ${error}`;
+    }
+}
+
+/**
+ * Speak analysis of a specific CSV file
+ */
+export async function speakCSVFileAnalysis(fileName: string): Promise<void> {
+    try {
+        const csvFiles = await checkCSVFilesWithBash();
+        
+        // Find the CSV file by name (case-insensitive)
+        const targetFile = csvFiles.find(csv => 
+            csv.name.toLowerCase() === fileName.toLowerCase() ||
+            csv.name.toLowerCase().includes(fileName.toLowerCase().replace('.csv', ''))
+        );
+        
+        if (!targetFile) {
+            await speakTokenList([
+                { tokens: ['CSV'], category: undefined },
+                { tokens: ['file'], category: undefined },
+                { tokens: [fileName], category: undefined },
+                { tokens: ['not'], category: undefined },
+                { tokens: ['found'], category: undefined }
+            ]);
+            return;
+        }
+        
+        const chunks: TokenChunk[] = [];
+        
+        // Speak file name and basic info
+        chunks.push(
+            { tokens: ['Found'], category: undefined },
+            { tokens: ['CSV'], category: undefined },
+            { tokens: ['file'], category: undefined },
+            { tokens: [targetFile.name], category: undefined }
+        );
+        
+        if (targetFile.lines) {
+            chunks.push(
+                { tokens: ['with'], category: undefined },
+                { tokens: [targetFile.lines.toString()], category: undefined },
+                { tokens: ['lines'], category: undefined }
+            );
+        }
+        
+        if (targetFile.headers && targetFile.headers.length > 0) {
+            chunks.push(
+                { tokens: ['and'], category: undefined },
+                { tokens: [targetFile.headers.length.toString()], category: undefined },
+                { tokens: ['columns:'], category: undefined }
+            );
+            
+            // Speak first few column names
+            const columnsToSpeak = targetFile.headers.slice(0, 3);
+            for (let i = 0; i < columnsToSpeak.length; i++) {
+                if (i > 0) {
+                    chunks.push({ tokens: [','], category: undefined });
+                }
+                chunks.push({ tokens: [columnsToSpeak[i]], category: undefined });
+            }
+            
+            if (targetFile.headers.length > 3) {
+                chunks.push(
+                    { tokens: ['and'], category: undefined },
+                    { tokens: [(targetFile.headers.length - 3).toString()], category: undefined },
+                    { tokens: ['more'], category: undefined }
+                );
+            }
+        }
+        
+        await speakTokenList(chunks);
+        
+    } catch (error) {
+        logError(`[CSV Analyzer] Error speaking CSV analysis: ${error}`);
+    }
+}
+
+/**
  * Speak CSV file information
  */
 export async function speakCSVFileInfo(csvFiles: CSVFileInfo[]): Promise<void> {
@@ -321,6 +428,38 @@ export function registerCSVFileChecker(context: ExtensionContext) {
             } catch (error) {
                 logError(`[CSV Analyzer] Command failed: ${error}`);
                 vscode.window.showErrorMessage(`Error analyzing CSV: ${error}`);
+            }
+        })
+    );
+    
+    // Command to analyze specific CSV file by name (for ASR)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.analyzeSpecificCSVFile', async (fileName?: string) => {
+            try {
+                if (!fileName) {
+                    vscode.window.showErrorMessage('No CSV file name provided');
+                    return;
+                }
+                
+                log(`[CSV Analyzer] Analyzing specific CSV file: ${fileName}`);
+                
+                // Analyze the specific CSV file
+                const analysis = await analyzeSpecificCSVFile(fileName);
+                
+                // Show analysis in output panel
+                const outputChannel = vscode.window.createOutputChannel('CSV File Analysis');
+                outputChannel.clear();
+                outputChannel.appendLine(analysis);
+                outputChannel.show();
+                
+                // Speak the analysis
+                await speakCSVFileAnalysis(fileName);
+                
+                logSuccess(`[CSV Analyzer] Analysis complete for ${fileName}`);
+                
+            } catch (error) {
+                logError(`[CSV Analyzer] Command failed: ${error}`);
+                vscode.window.showErrorMessage(`Error analyzing CSV file: ${error}`);
             }
         })
     );

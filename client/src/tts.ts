@@ -27,6 +27,36 @@ function isValidOpenAIVoice(voice: string): boolean {
 /**
  * Generate (but don't play) audio for a token
  */
+// Helper function to convert regex patterns to readable text
+function convertRegexToReadableText(regexToken: string): string {
+    // Convert common regex patterns to more readable forms
+    let readable = regexToken;
+    
+    // Handle raw string prefixes
+    readable = readable.replace(/^r['"]/, 'raw string ');
+    readable = readable.replace(/['"]$/, '');
+    
+    // Convert character classes
+    readable = readable.replace(/\[([^\]]+)\]/g, (match, content) => {
+        if (content === 'a-zA-Z') return 'any letter';
+        if (content === '0-9') return 'any digit';
+        if (content === 'a-z') return 'any lowercase letter';
+        if (content === 'A-Z') return 'any uppercase letter';
+        if (content === 'a-zA-Z0-9') return 'any alphanumeric character';
+        return `character class ${content}`;
+    });
+    
+    // Convert common regex symbols
+    readable = readable.replace(/\+/g, ' one or more');
+    readable = readable.replace(/\*/g, ' zero or more');
+    readable = readable.replace(/\?/g, ' optional');
+    readable = readable.replace(/\^/g, 'start of line ');
+    readable = readable.replace(/\$/g, ' end of line');
+    readable = readable.replace(/\./g, ' any character');
+    
+    return readable.trim();
+}
+
 export async function genTokenAudio(
     token: string,
     category?: string,
@@ -35,6 +65,13 @@ export async function genTokenAudio(
     const startTime = Date.now();
     log(`[genTokenAudio] START token="${token}" category="${category}" backend="${currentBackend}"`);
     log(`[genTokenAudio] Call stack: ${new Error().stack?.split('\n')[2]?.trim()}`);
+
+    // Handle regex patterns - convert to readable text
+    let processedToken = token;
+    if (category === 'regex_pattern') {
+        processedToken = convertRegexToReadableText(token);
+        log(`[genTokenAudio] Converted regex "${token}" → "${processedToken}"`);
+    }
 
     // 0) Pre-generated keyword audio (backend-specific folders)
     if (category && (category === 'keyword' || category.includes('keyword'))) {
@@ -194,10 +231,10 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(token, category, koreanOpts);
+            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
         } else {
             log(`[genTokenAudio] English text detected, using Silero TTS (Silero+GPT backend): "${token}"`);
-            wavBuffer = await generateSileroTTS(token, category, opts);
+            wavBuffer = await generateSileroTTS(processedToken, category, opts);
         }
     } else if (currentBackend === TTSBackend.EspeakGPT) {
         // Espeak for English + GPT for Korean
@@ -206,22 +243,22 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(token, category, koreanOpts);
+            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
         } else {
             log(`[genTokenAudio] English text detected, using Espeak TTS (Espeak+GPT backend): "${token}"`);
-            wavBuffer = await generateEspeakTTS(token, category, opts);
+            wavBuffer = await generateEspeakTTS(processedToken, category, opts);
         }
     } else if (currentBackend === TTSBackend.Espeak) {
         // Espeak for all languages (including Korean)
         log(`[genTokenAudio] Using Espeak TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
-        wavBuffer = await generateEspeakTTS(token, category, opts);
+        wavBuffer = await generateEspeakTTS(processedToken, category, opts);
     } else if (currentBackend === TTSBackend.XTTSV2) {
         // XTTS-v2 for both Korean and English
         const xttsV2Port = serverManager.getServerPort('xtts_v2');
         if (xttsV2Port !== null) {
             log(`[genTokenAudio] Using XTTS-v2 for "${token}" (language: ${useKoreanTTS ? 'Korean' : 'English'})`);
             try {
-                wavBuffer = await generateXTTSV2(token, category, opts);
+                wavBuffer = await generateXTTSV2(processedToken, category, opts);
                 log(`[genTokenAudio] XTTS-v2 successful for "${token}"`);
             } catch (error) {
                 // Check if the error is due to abort signal - if so, don't fallback, just re-throw
@@ -251,15 +288,15 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(token, category, koreanOpts);
+            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
         } else {
             log(`[genTokenAudio] English text detected, using macOS TTS (macOS+GPT backend): "${token}"`);
-            wavBuffer = await generateMacOSTTS(token, category, opts);
+            wavBuffer = await generateMacOSTTS(processedToken, category, opts);
         }
     } else if (currentBackend === TTSBackend.MacOS) {
         // macOS for all languages (including Korean)
         log(`[genTokenAudio] Using macOS TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
-        wavBuffer = await generateMacOSTTS(token, category, opts);
+        wavBuffer = await generateMacOSTTS(processedToken, category, opts);
     } else {
         throw new Error(`Unsupported TTS backend: ${currentBackend}`);
     }

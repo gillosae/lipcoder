@@ -50,8 +50,17 @@ export { genTokenAudio, playSpecial } from './tts';
 export { playEarcon, earconRaw } from './earcon';
 
 // Track active GPT TTS requests to prevent delayed responses
-let activeGPTTTSController: AbortController | null = null;
+export let activeGPTTTSController: AbortController | null = null;
 let lastGPTTTSTime = 0;
+
+// Function to stop GPT TTS controller from external modules
+export function stopGPTTTS(): void {
+    if (activeGPTTTSController) {
+        console.log('[stopGPTTTS] Aborting active GPT TTS controller');
+        activeGPTTTSController.abort();
+        activeGPTTTSController = null;
+    }
+}
 
 // ===============================
 // PITCH-PRESERVING TIME STRETCHING
@@ -2096,6 +2105,10 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                         expandedTokens.push(part);
                     }
                     log(`[speakTokenList] ${category} "${token}" → split into parts: [${literalParts.join(', ')}] for earcon support`);
+                } else if (category === 'regex_pattern') {
+                    // Regex patterns should be kept as whole units and spoken with literal voice
+                    expandedTokens.push(token);
+                    log(`[speakTokenList] Regex pattern "${token}" → keeping as single unit for TTS`);
                 } else if (category === 'comment_text') {
                     // For comment text, keep as single token for direct TTS processing
                     // This allows the entire comment to be processed as one unit with language detection

@@ -176,6 +176,10 @@
         "title": "LipCoder: Set Claude API Key"
       },
       {
+        "command": "lipcoder.toggleAutoOverwrite",
+        "title": "LipCoder: Toggle Auto-Overwrite Files"
+      },
+      {
         "command": "lipcoder.selectLLMBackend",
         "title": "LipCoder: Select LLM Backend (ChatGPT/Claude)",
         "category": "LLM"
@@ -1049,6 +1053,11 @@
             48000
           ],
           "description": "Sample rate for macOS TTS audio output (Hz)."
+        },
+        "lipcoder.autoOverwriteFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically overwrite files when save conflicts occur (prevents 'content is newer' dialogs)."
         }
       }
     }

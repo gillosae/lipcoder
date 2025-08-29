@@ -9,6 +9,7 @@ import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
 let autoTimer: NodeJS.Timeout | null = null;
+let currentNavigationController: AbortController | null = null;
 
 /**
  * Clean up function list resources
@@ -88,24 +89,42 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     editor.revealRange(new vscode.Range(pos, pos));
                     // Comprehensive audio stopping to handle all types including underbar sounds
                     log(`[FunctionList] Manual navigation - stopping audio for function: ${label}`);
+                    
+                    // Abort any previous navigation audio
+                    if (currentNavigationController) {
+                        currentNavigationController.abort();
+                    }
+                    currentNavigationController = new AbortController();
+                    const navigationSignal = currentNavigationController.signal;
+                    
                     stopAllAudio();
                     // Clear audio stopping state immediately to allow new audio to start right away
                     clearAudioStoppingState();
                     // Explicitly stop earcons to ensure they don't overlap
                     stopEarconPlayback();
-                    // Play indent earcon for nesting depth
-                    const MAX_INDENT_UNITS = 5;
-                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
-                    playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                     
-                    // Use readInEspeak for fast combined reading of function names
-                    const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
-                    const chunks: TokenChunk[] = [{ 
-                        tokens: [functionName], 
-                        category: 'variable' // This triggers fast PCM processing with automatic word chunking
-                    }];
-                    readInEspeak(chunks).catch(console.error);
+                    // Add small delay to ensure audio stopping is complete before starting new audio
+                    setTimeout(async () => {
+                        // Double-check that this navigation hasn't been aborted
+                        if (navigationSignal.aborted) {
+                            log(`[FunctionList] Navigation aborted, skipping audio for: ${label}`);
+                            return;
+                        }
+                        
+                        // Play indent earcon for nesting depth
+                        const MAX_INDENT_UNITS = 5;
+                        const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
+                        const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
+                        playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
+                        
+                        // Use readInEspeak for fast combined reading of function names with navigation signal
+                        const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
+                        const chunks: TokenChunk[] = [{ 
+                            tokens: [functionName], 
+                            category: 'variable' // This triggers fast PCM processing with automatic word chunking
+                        }];
+                        readInEspeak(chunks, navigationSignal).catch(console.error);
+                    }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
 

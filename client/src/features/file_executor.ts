@@ -116,6 +116,58 @@ const FILE_EXECUTION_MAP: Record<string, ExecutionConfig> = {
     }
 };
 
+/**
+ * Execute the currently active file in the editor
+ */
+export async function executeCurrentFile(): Promise<void> {
+    try {
+        stopReading();
+        
+        // Get the currently active editor
+        const activeEditor = vscode.window.activeTextEditor;
+        
+        if (!activeEditor) {
+            await speakGPT('현재 열린 파일이 없습니다');
+            vscode.window.showWarningMessage('현재 열린 파일이 없습니다', { modal: false });
+            return;
+        }
+
+        const document = activeEditor.document;
+        const filePath = document.uri.fsPath;
+        const fileName = path.basename(filePath);
+        
+        // Check if the file is saved
+        if (document.isDirty) {
+            await speakGPT('파일을 저장하고 실행합니다');
+            await document.save();
+        }
+
+        // Check if the file is executable
+        if (!isExecutableFile(fileName)) {
+            const extension = path.extname(fileName);
+            await speakGPT(`${extension} 파일은 실행할 수 없습니다`);
+            vscode.window.showWarningMessage(`${extension} 파일은 실행할 수 없습니다`, { modal: false });
+            return;
+        }
+
+        await speakGPT(`${fileName} 파일을 실행합니다`);
+        
+        // Execute the file
+        const result = await executeFile(fileName);
+        
+        if (result.success) {
+            await speakGPT('파일 실행이 완료되었습니다');
+        } else {
+            await speakGPT(`실행 실패: ${result.message}`);
+        }
+
+    } catch (error) {
+        logError(`[FileExecutor] Error executing current file: ${error}`);
+        await speakGPT('파일 실행 중 문제가 발생했습니다');
+        vscode.window.showErrorMessage(`파일 실행 실패: ${error}`, { modal: false });
+    }
+}
+
 export function registerFileExecutor(context: ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.executeFile', async (...args: any[]) => {
@@ -154,7 +206,9 @@ export function registerFileExecutor(context: ExtensionContext) {
                 logError(`File execution error: ${error}`);
                 await speakGPT(`파일 실행 중 오류가 발생했습니다: ${error}`);
             }
-        })
+        }),
+        
+        vscode.commands.registerCommand('lipcoder.executeCurrentFile', executeCurrentFile)
     );
 }
 

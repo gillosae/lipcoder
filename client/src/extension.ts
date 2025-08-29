@@ -69,6 +69,63 @@ import { initializeASROptimizations } from './features/asr_speed_optimizer';
 import { initializeLLMOptimizations } from './features/llm_speed_optimizer';
 import { registerSpeedTestCommand } from './features/speed_test_command';
 import { registerTestSuggestionStorage } from './features/test_suggestion_storage';
+import { registerTerminalErrorFixer } from './features/terminal_error_fixer';
+
+// Configure VS Code to automatically overwrite files on save conflicts
+async function configureAutoOverwrite() {
+    try {
+        const lipcoderConfig = vscode.workspace.getConfiguration('lipcoder');
+        const autoOverwriteEnabled = lipcoderConfig.get('autoOverwriteFiles', true);
+        
+        if (!autoOverwriteEnabled) {
+            log('[Config] Auto-overwrite is disabled in settings');
+            return;
+        }
+        
+        const config = vscode.workspace.getConfiguration();
+        
+        // Set file save conflict resolution to overwrite
+        await config.update('files.saveConflictResolution', 'overwriteFileOnDisk', vscode.ConfigurationTarget.Global);
+        
+        // Also set auto save to prevent conflicts
+        await config.update('files.autoSave', 'afterDelay', vscode.ConfigurationTarget.Global);
+        await config.update('files.autoSaveDelay', 1000, vscode.ConfigurationTarget.Global);
+        
+        log('[Config] ✅ Configured VS Code to automatically overwrite files on save conflicts');
+    } catch (error) {
+        logError(`[Config] ❌ Failed to configure auto-overwrite: ${error}`);
+    }
+}
+
+// Register command to toggle auto-overwrite setting
+function registerAutoOverwriteToggle(context: vscode.ExtensionContext) {
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.toggleAutoOverwrite', async () => {
+            try {
+                const config = vscode.workspace.getConfiguration('lipcoder');
+                const currentValue = config.get('autoOverwriteFiles', true);
+                const newValue = !currentValue;
+                
+                await config.update('autoOverwriteFiles', newValue, vscode.ConfigurationTarget.Global);
+                
+                if (newValue) {
+                    await configureAutoOverwrite();
+                    vscode.window.showInformationMessage('✅ Auto-overwrite enabled - files will be automatically overwritten on save conflicts');
+                } else {
+                    // Reset to VS Code default behavior
+                    const vsConfig = vscode.workspace.getConfiguration();
+                    await vsConfig.update('files.saveConflictResolution', undefined, vscode.ConfigurationTarget.Global);
+                    vscode.window.showInformationMessage('❌ Auto-overwrite disabled - VS Code will show conflict dialogs');
+                }
+                
+                log(`[Config] Auto-overwrite toggled to: ${newValue}`);
+            } catch (error) {
+                logError(`[Config] Failed to toggle auto-overwrite: ${error}`);
+                vscode.window.showErrorMessage(`Failed to toggle auto-overwrite: ${error}`);
+            }
+        })
+    );
+}
 
 // Memory monitoring
 let memoryMonitorInterval: NodeJS.Timeout | null = null;
@@ -239,6 +296,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Start memory monitoring
 	startMemoryMonitoring();
+
+	// Configure auto-overwrite for file save conflicts
+	await configureAutoOverwrite();
 
 	// 1) Provide the extension root to config ───────────────────────────────────────────
 	initConfig(context);
@@ -476,6 +536,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		registerSetAPIKey(context);
 		log('✅ registerSetAPIKey completed');
 		
+		registerAutoOverwriteToggle(context);
+		log('✅ registerAutoOverwriteToggle completed');
+		
 		registerChatCompletions(context);
 		log('✅ registerChatCompletions completed');
 		
@@ -548,6 +611,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	registerTestSuggestionStorage(context);
 	log('✅ registerTestSuggestionStorage completed');
+
+	registerTerminalErrorFixer(context);
+	log('✅ registerTerminalErrorFixer completed');
 
 	// Register exact commands for Command Palette access
 	await registerExactCommandPalette(context);

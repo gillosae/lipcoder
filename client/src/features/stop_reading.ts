@@ -1,7 +1,7 @@
 // Global controller for line-read cancellation
 export let lineAbortController = new AbortController();
 
-import { stopPlayback, clearAudioStoppingState } from '../audio';
+import { stopPlayback, clearAudioStoppingState, stopGPTTTS, stopThinkingAudio } from '../audio';
 import { stopEarconPlayback } from '../earcon';
 import { cleanupAudioMinimap } from './audio_minimap';
 import * as vscode from 'vscode';
@@ -70,9 +70,10 @@ export function stopAllAudio(): void {
 	// COMPREHENSIVE AUDIO STOPPING - Stop all types of audio immediately
 	console.log('[stopAllAudio] 🛑 STOP ALL AUDIO CALLED - starting comprehensive cleanup');
 	
-	// 1. Stop main audio player (TTS, PCM, WAV files)
+	// 1. Stop main audio player (TTS, PCM, WAV files) - MULTIPLE CALLS FOR SAFETY
 	console.log('[stopAllAudio] 1. Stopping main audio playback');
-	stopPlayback(); // Single call is sufficient - reduces audio crackling
+	stopPlayback(); // First call
+	stopPlayback(); // Second call for safety
 	
 	// 2. Stop earcon playback (punctuation sounds, etc.)
 	console.log('[stopAllAudio] 2. Stopping earcon playback');
@@ -105,9 +106,75 @@ export function stopAllAudio(): void {
 		console.log('[stopAllAudio] 7b. Image description module not available (normal)');
 	}
 	
-	// 8. Force additional stop calls to ensure everything is terminated
-	console.log('[stopAllAudio] 8. Final safety stop call');
-	stopPlayback();
+	// 8. Stop vibe coding TTS if active (fix for Command+. not stopping vibe coding TTS)
+	console.log('[stopAllAudio] 8. Stopping vibe coding TTS if active');
+	try {
+		// Use synchronous require to avoid timing issues
+		const vibeCoding = require('./vibe_coding');
+		if (vibeCoding && vibeCoding.stopVibeCodingTTS) {
+			vibeCoding.stopVibeCodingTTS();
+			console.log('[stopAllAudio] 8a. Vibe coding TTS stopped');
+		} else {
+			console.log('[stopAllAudio] 8b. stopVibeCodingTTS function not available');
+		}
+		
+		// Also directly set vibe coding TTS active state to false
+		if (vibeCoding && vibeCoding.setVibeCodingTTSActive) {
+			vibeCoding.setVibeCodingTTSActive(false);
+			console.log('[stopAllAudio] 8c. Vibe coding TTS active state set to false');
+		}
+	} catch (error) {
+		console.log('[stopAllAudio] 8d. Error stopping vibe coding TTS (normal):', error);
+	}
+	
+	// 9. Stop GPT TTS and notification TTS (NEW - for notification말하기 중단)
+	console.log('[stopAllAudio] 9. Stopping GPT TTS and notification TTS');
+	try {
+		// Stop GPT TTS controller if active
+		stopGPTTTS();
+		console.log('[stopAllAudio] 9a. GPT TTS stopped');
+		
+		// Stop thinking audio if active
+		stopThinkingAudio();
+		console.log('[stopAllAudio] 9b. Thinking audio stopped');
+		
+	} catch (error) {
+		console.log('[stopAllAudio] 9c. Error stopping GPT TTS (normal):', error);
+	}
+	
+	// 10. Force additional stop calls to ensure everything is terminated
+	console.log('[stopAllAudio] 10. Final safety stop calls');
+	stopPlayback(); // Third call
+	
+	// 11. Try to stop any remaining audio processes
+	console.log('[stopAllAudio] 11. Emergency audio cleanup');
+	try {
+		const { cleanupAudioResources } = require('../audio');
+		cleanupAudioResources();
+		console.log('[stopAllAudio] 11a. Audio resources cleaned up');
+		
+		// Also try direct audio player stop
+		const audioModule = require('../audio');
+		if (audioModule.audioPlayer && audioModule.audioPlayer.stopAll) {
+			audioModule.audioPlayer.stopAll();
+			console.log('[stopAllAudio] 11b. Direct audio player stopped');
+		}
+	} catch (error) {
+		console.log('[stopAllAudio] 11c. Audio cleanup error (normal):', error);
+	}
+	
+	// 12. Stop conversational ASR processing if active
+	console.log('[stopAllAudio] 12. Stopping conversational ASR processing');
+	try {
+		const conversationalModule = require('../conversational_asr');
+		// This will stop any ongoing LLM processing and TTS
+		if (conversationalModule.stopAllProcessing) {
+			conversationalModule.stopAllProcessing();
+			console.log('[stopAllAudio] 12a. Conversational ASR processing stopped');
+		}
+	} catch (error) {
+		console.log('[stopAllAudio] 12b. Error stopping conversational ASR (normal):', error);
+	}
 	
 	// Note: stopping state will be cleared explicitly by callers when they want to start new audio
 	console.log('[stopAllAudio] 🛑 ALL AUDIO STOPPED - comprehensive cleanup completed');
@@ -124,11 +191,14 @@ export function stopForCursorMovement(): void {
 	stopAllAudio();
 	
 	// Stop vibe coding TTS if active
-	import('./vibe_coding.js').then(({ stopVibeCodingTTS }) => {
-		stopVibeCodingTTS();
-	}).catch(() => {
+	try {
+		const vibeCoding = require('./vibe_coding');
+		if (vibeCoding && vibeCoding.stopVibeCodingTTS) {
+			vibeCoding.stopVibeCodingTTS();
+		}
+	} catch (error) {
 		// Ignore import errors - vibe coding might not be available
-	});
+	}
 	
 	// Clear stopping state immediately since cursor movement should start new audio right away
 	clearAudioStoppingState();
