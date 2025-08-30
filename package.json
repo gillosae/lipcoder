@@ -1104,6 +1104,7 @@
     "@types/diff": "7.0.2",
     "@types/wav": "1.0.4",
     "diff": "8.0.2",
+    "mic": "^2.1.2",
     "node-fetch": "^2.7.0",
     "node-microphone": "0.1.6",
     "openai": "5.16.0",

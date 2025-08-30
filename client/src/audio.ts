@@ -2124,7 +2124,7 @@ export async function readInEspeak(chunks: TokenChunk[], signal?: AbortSignal): 
             return;
         }
         
-        const combinedText = textTokens.join(' ');
+        const combinedText = textTokens.join('');
         log(`[readInEspeak] Reading combined text with Espeak: "${combinedText}"`);
         
         // Force Espeak TTS by creating a single chunk with no specific category

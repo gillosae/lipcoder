@@ -144,8 +144,8 @@ function startMemoryMonitoring(): void {
         const heapUsedDelta = currentMemory.heapUsed - lastMemoryUsage.heapUsed;
         const rssUsedDelta = currentMemory.rss - lastMemoryUsage.rss;
         
-        // Log more frequently and at lower thresholds to catch memory issues
-        if (logCounter % 3 === 0 || heapUsedDelta > 3 * 1024 * 1024) { // Every 1.5 minutes or 3MB growth
+        // Log memory usage periodically or on significant growth
+        if (logCounter % 6 === 0 || heapUsedDelta > 5 * 1024 * 1024) { // Every 2 minutes or 5MB growth
             logMemory(`[Memory] Heap: ${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB (+${(heapUsedDelta / 1024 / 1024).toFixed(2)}MB), RSS: ${(currentMemory.rss / 1024 / 1024).toFixed(2)}MB (+${(rssUsedDelta / 1024 / 1024).toFixed(2)}MB)`);
         }
         
@@ -155,12 +155,16 @@ function startMemoryMonitoring(): void {
             try {
                 const { enhancedCleanupAudioResources } = require('./audio');
                 const { getLineTokenReadingActive } = require('./features/stop_reading');
+                const { periodicEarconCleanup } = require('./earcon');
                 
                 // Don't interrupt line token reading for memory cleanup
                 if (getLineTokenReadingActive()) {
                     logWarning(`[Memory] Skipping cleanup during line token reading to avoid interruption`);
                 } else {
                     enhancedCleanupAudioResources();
+                    
+                    // Cleanup earcon cache
+                    periodicEarconCleanup();
                     
                     // Also cleanup old cache files
                     cleanupOldCacheFiles();
@@ -182,7 +186,7 @@ function startMemoryMonitoring(): void {
         
         lastMemoryUsage = currentMemory;
         logCounter++;
-    }, 20000); // Check every 20 seconds (more frequent monitoring)
+    }, 30000); // Check every 30 seconds (balanced monitoring)
     
     logMemory('[Memory] Memory monitoring started');
 }
@@ -502,7 +506,16 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 3) Pre-generate earcons into cache ────────────────────────────
 	preloadEverything(context);
 
-	// 3.1) Warm up alphabet PCM cache for low-latency letter playback
+	// 3.1) Preload critical earcons for ultra-fast access
+	try {
+		const { preloadCriticalEarcons } = require('./earcon');
+		preloadCriticalEarcons();
+		log('[EXTENSION] Critical earcons preloaded successfully');
+	} catch (err) {
+		logError(`[EXTENSION] Failed to preload critical earcons: ${err}`);
+	}
+
+	// 3.2) Warm up alphabet PCM cache for low-latency letter playback
 	try {
 		const { preloadAlphabetPCM } = require('./audio');
 		preloadAlphabetPCM();
@@ -1114,6 +1127,15 @@ export async function deactivate() {
 			logSuccess('✅ Speed optimizers cleaned up');
 		} catch (err) {
 			logError(`❌ Failed to cleanup speed optimizers: ${err}`);
+		}
+		
+		// Clean up inline suggestions
+		try {
+			const { cleanupInlineSuggestionsResources } = require('./features/inline_suggestions');
+			cleanupInlineSuggestionsResources();
+			logSuccess('✅ Inline suggestions cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup inline suggestions: ${err}`);
 		}
 		
 		// Clean up LLM resources

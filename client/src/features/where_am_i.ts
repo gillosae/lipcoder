@@ -4,6 +4,7 @@ import { log } from '../utils';
 import { LanguageClient } from 'vscode-languageclient/node';
 import type { SymbolInformation } from 'vscode-languageserver-types';
 import { speakTokenList, speakGPT, TokenChunk } from '../audio';
+import { lineAbortController } from './stop_reading';
 
 export function registerWhereAmI(context: ExtensionContext, client: LanguageClient) {
     context.subscriptions.push(
@@ -45,7 +46,7 @@ export function registerWhereAmI(context: ExtensionContext, client: LanguageClie
 
                 if (containing.length === 0) {
                     vscode.window.showInformationMessage('Outside of any symbol.');
-                    await speakGPT('You are outside of any symbol.');
+                    await speakGPT('You are outside of any symbol.', lineAbortController.signal);
                 } else {
                     const symbol = containing[0];
                     const container = symbol.containerName
@@ -53,7 +54,7 @@ export function registerWhereAmI(context: ExtensionContext, client: LanguageClie
                         : '';
                     const msg = `${container}${symbol.name}`;
                     vscode.window.showInformationMessage(`You are in: ${msg}`);
-                    await speakGPT(`You are in ${msg}`);
+                    await speakGPT(`You are in ${msg}`, lineAbortController.signal);
                 }
             } catch (err) {
                 vscode.window.showErrorMessage(`whereAmI failed: ${err}`);

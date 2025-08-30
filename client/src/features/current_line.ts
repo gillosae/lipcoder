@@ -1,5 +1,6 @@
 import { speakTokenList, TokenChunk } from '../audio';
 import type { ExtensionContext } from 'vscode';
+import { lineAbortController } from './stop_reading';
 import * as vscode from 'vscode';
 import { numberMap } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
@@ -60,7 +61,7 @@ export function registerCurrentLine(context: ExtensionContext) {
                 };
             });
             
-            await speakTokenList(chunks);
+            await speakTokenList(chunks, lineAbortController.signal);
         })
     );
 }

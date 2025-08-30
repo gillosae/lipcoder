@@ -9,7 +9,7 @@ import { SPECIAL_CHAR_FILES, MULTI_CHAR_FILES } from './mapping';
 export const earconTokens = [
     ' ', "'", '"',
     '{', '}', '<', '>', '[', ']', '(', ')',
-    ';', '\\',
+    ';', '\\', '_',
     // Characters that have earcon files in special directory
     '+', '&', '*', '@', '`', '^', '$', '!', '%', '?', '#', '~', '₩',
     // Characters moved from TTS to PCM files for better performance
@@ -45,7 +45,9 @@ export function getTokenSound(token: string): string | null {
         '(': 'parenthesis.pcm', ')': 'parenthesis2.pcm',
         // Punctuation
         ';': 'semicolon.pcm',
-        // Removed characters that user prefers as TTS: ',', '_', '.', ':', '-', '/'
+        // Underscore back to earcon for fast playback
+        '_': 'underscore.pcm',
+        // Removed characters that user prefers as TTS: ',', '.', ':', '-', '/'
     };
     
     // Check earcon folder first (support .pcm and .wav)

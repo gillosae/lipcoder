@@ -23,6 +23,9 @@ let earconRaw: Record<string, Buffer> = {};
 let earconAccessTimes: Record<string, number> = {};
 const MAX_EARCON_CACHE_SIZE_MB = 10; // Limit earcon cache to 10MB
 
+// Pre-loaded critical earcons for ultra-fast access
+let preloadedEarcons: Record<string, Buffer> = {};
+
 // Export earconRaw for compatibility with audio.ts
 export { earconRaw };
 
@@ -50,6 +53,49 @@ function cleanupEarconCache(): void {
         
         const newSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
         logMemory(`[Earcon] Cleaned up ${entriesToRemove} entries, size: ${(currentSizeMB).toFixed(2)}MB → ${(newSize / 1024 / 1024).toFixed(2)}MB`);
+    }
+}
+
+/**
+ * Preload critical earcons for ultra-fast access
+ */
+export function preloadCriticalEarcons(): void {
+    const criticalTokens = [' ', '_']; // space and underscore
+    
+    for (const token of criticalTokens) {
+        const file = findTokenSound(token);
+        if (file && fs.existsSync(file)) {
+            try {
+                const data = fs.readFileSync(file);
+                preloadedEarcons[token] = data;
+                log(`[Earcon] Preloaded critical earcon "${token}": ${data.length} bytes`);
+            } catch (err) {
+                log(`[Earcon] Failed to preload earcon "${token}": ${err}`);
+            }
+        }
+    }
+}
+
+/**
+ * Periodic cleanup of earcon cache to prevent memory leaks
+ */
+export function periodicEarconCleanup(): void {
+    // Clean up entries not accessed in the last 5 minutes
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes
+    
+    let cleanedCount = 0;
+    for (const [key, accessTime] of Object.entries(earconAccessTimes)) {
+        if (now - accessTime > maxAge) {
+            delete earconRaw[key];
+            delete earconAccessTimes[key];
+            cleanedCount++;
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        const currentSize = Object.values(earconRaw).reduce((total, buf) => total + buf.length, 0);
+        logMemory(`[Earcon] Periodic cleanup: removed ${cleanedCount} old entries, current size: ${(currentSize / 1024 / 1024).toFixed(2)}MB`);
     }
 }
 
@@ -313,12 +359,14 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
     }
 
     // For pitch-preserving earcons, convert PCM to WAV and use time stretching
-    // Exception: Only optimize space character specifically for minimal delay
+    // Exception: Optimize space and underscore characters specifically for minimal delay
     const isSpaceToken = token === ' ';
+    const isUnderscoreToken = token === '_';
     
     // For earcons, use pitch-preserving time stretching when playspeed is not 1.0
     // This ensures earcons play at correct speed while preserving pitch
-    if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isSpaceToken) {
+    // Skip pitch preservation for space and underscore to minimize delay
+    if (config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01 && !isSpaceToken && !isUnderscoreToken) {
         log(`[playEarcon] Using pitch-preserving time stretching for earcon "${token}"`);
         
         // Lazy-load the raw file once with memory management
@@ -389,24 +437,30 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         }
     }
 
-    // Special handling for space with pitch-preserving enabled - use fast sample rate method
-    if (isSpaceToken && config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
-        log(`[playEarcon] Using FAST sample-rate method for space (preserving some pitch characteristics)`);
+    // Special handling for space and underscore with pitch-preserving enabled - use fast sample rate method
+    if ((isSpaceToken || isUnderscoreToken) && config.preservePitch && Math.abs(config.playSpeed - 1.0) > 0.01) {
+        log(`[playEarcon] Using FAST sample-rate method for ${token} (preserving some pitch characteristics)`);
     }
     
     // Original method with sample rate adjustment (changes pitch)
     
-    // For space character specifically, skip caching and read directly for minimal latency
+    // For space and underscore characters specifically, use preloaded data or direct read for minimal latency
     let rawData: Buffer;
     
-    if (isSpaceToken) {
-        // Direct read for immediate playback - skip cache for minimal delay
-        try {
-            rawData = fs.readFileSync(file!); // file is guaranteed to be non-null here
-            log(`[playEarcon] DIRECT READ for space earcon: ${rawData.length} bytes`);
-        } catch (err) {
-            log(`[playEarcon] Failed to read space earcon file ${file}: ${err}`);
-            return Promise.resolve();
+    if (isSpaceToken || isUnderscoreToken) {
+        // Check if we have preloaded data first
+        if (preloadedEarcons[token]) {
+            rawData = preloadedEarcons[token];
+            log(`[playEarcon] ⚡ PRELOADED ${token.toUpperCase()}: ${rawData.length} bytes (zero file I/O)`);
+        } else {
+            // Fallback to direct read for immediate playback - skip cache for minimal delay
+            try {
+                rawData = fs.readFileSync(file!); // file is guaranteed to be non-null here
+                log(`[playEarcon] DIRECT READ for ${token} earcon: ${rawData.length} bytes`);
+            } catch (err) {
+                log(`[playEarcon] Failed to read ${token} earcon file ${file}: ${err}`);
+                return Promise.resolve();
+            }
         }
     } else {
         // Lazy-load the raw file once with memory management for other earcons
@@ -448,14 +502,14 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
         // When pitch-preserving fails, apply global playspeed via sample-rate change
         const adjustedFormat = { ...format, sampleRate: Math.floor(format.sampleRate * Math.max(0.1, config.playSpeed)) } as any;
         
-        if (isSpaceToken) {
-            log(`[playEarcon] FAST SPACE: sample rate ${adjustedFormat.sampleRate}Hz for ultra-low latency`);
+        if (isSpaceToken || isUnderscoreToken) {
+            log(`[playEarcon] FAST ${token.toUpperCase()}: sample rate ${adjustedFormat.sampleRate}Hz for ultra-low latency`);
         } else {
             log(`[playEarcon] Using normal sample rate ${adjustedFormat.sampleRate}Hz for immediate earcon feedback`);
         }
         
-        // Use smaller buffer for space earcon to reduce latency
-        const bufferSize = isSpaceToken ? 16 : 128; // Ultra-small buffer for space earcon
+        // Use smaller buffer for space and underscore earcons to reduce latency
+        const bufferSize = (isSpaceToken || isUnderscoreToken) ? 16 : 128; // Ultra-small buffer for frequent earcons
         
         // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
         const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: bufferSize } as any);
@@ -481,8 +535,8 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
             cp.on('close', () => resolve());
         });
         
-        if (isSpaceToken) {
-            log(`[playEarcon] ⚡ ULTRA-FAST SPACE: ${finalPcm.length} bytes, ${bufferSize}-sample buffer, no-cache, no-FFmpeg`);
+        if (isSpaceToken || isUnderscoreToken) {
+            log(`[playEarcon] ⚡ ULTRA-FAST ${token.toUpperCase()}: ${finalPcm.length} bytes, ${bufferSize}-sample buffer, no-cache, no-FFmpeg`);
         } else {
             log(`[playEarcon] Writing ${finalPcm.length} bytes for token: "${token}"`);
         }

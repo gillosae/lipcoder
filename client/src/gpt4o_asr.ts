@@ -68,7 +68,7 @@ export class GPT4oASRClient {
                 this.microphone = new Microphone({
                     rate: gpt4oASRConfig.sampleRate,
                     channels: 1,
-                    debug: false,
+                    debug: true, // Enable debug to see more info
                     exitOnSilence: 6
                 });
 
@@ -79,9 +79,16 @@ export class GPT4oASRClient {
                 // Start recording
                 logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting node-microphone recording...');
                 this.audioStream = this.microphone.startRecording();
+                
+                // Verify stream is valid
+                if (!this.audioStream) {
+                    throw new Error('node-microphone failed to create audio stream');
+                }
+                
                 this.isRecording = true;
                 microphoneInitialized = true;
                 logSuccess('🔴 [GPT4o-ASR-DEBUG] node-microphone recording started successfully!');
+                logSuccess(`🔴 [GPT4o-ASR-DEBUG] Stream state - readable: ${this.audioStream.readable}, destroyed: ${this.audioStream.destroyed}`);
 
             } catch (nodeMicError) {
                 logError(`🔴 [GPT4o-ASR-DEBUG] node-microphone failed: ${nodeMicError}`);
@@ -94,7 +101,7 @@ export class GPT4oASRClient {
                     const micInstance = mic({
                         rate: gpt4oASRConfig.sampleRate,
                         channels: '1',
-                        debug: false,
+                        debug: true, // Enable debug
                         exitOnSilence: 6
                     });
 
@@ -103,13 +110,22 @@ export class GPT4oASRClient {
                     this.recordingStartTime = Date.now();
 
                     // Start recording
-                    logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting mic package recording...');
+                    logSuccess('🔴 [GPT4o-ASR-DEBUG] Getting mic package audio stream...');
                     this.audioStream = micInstance.getAudioStream();
+                    
+                    // Verify stream is valid
+                    if (!this.audioStream) {
+                        throw new Error('mic package failed to create audio stream');
+                    }
+                    
+                    logSuccess('🔴 [GPT4o-ASR-DEBUG] Starting mic package...');
                     micInstance.start();
+                    
                     this.isRecording = true;
                     this.microphone = micInstance; // Store for cleanup
                     microphoneInitialized = true;
                     logSuccess('🔴 [GPT4o-ASR-DEBUG] mic package recording started successfully!');
+                    logSuccess(`🔴 [GPT4o-ASR-DEBUG] Stream state - readable: ${this.audioStream.readable}, destroyed: ${this.audioStream.destroyed}`);
 
                 } catch (micError) {
                     logError(`🔴 [GPT4o-ASR-DEBUG] mic package also failed: ${micError}`);
@@ -127,6 +143,75 @@ export class GPT4oASRClient {
                     logSuccess(`🔴 [GPT4o-ASR-DEBUG] Received audio chunk: ${chunk.length} bytes`);
                     this.audioBuffer.push(chunk);
                 }
+            });
+
+            // Add error handling for stream
+            this.audioStream.on('error', (error: Error) => {
+                logError(`🔴 [GPT4o-ASR-DEBUG] Stream error: ${error}`);
+                if (this.options && this.options.onError) {
+                    this.options.onError(error);
+                }
+            });
+
+            this.audioStream.on('close', () => {
+                logWarning('🔴 [GPT4o-ASR-DEBUG] Stream closed unexpectedly');
+            });
+
+            this.audioStream.on('end', () => {
+                logWarning('🔴 [GPT4o-ASR-DEBUG] Stream ended unexpectedly');
+            });
+
+            // Force stream to start reading
+            if (this.audioStream.readable) {
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Stream is readable, forcing read...');
+                this.audioStream.resume(); // Force stream to start emitting data events
+            }
+
+            // Add timeout to check if we're receiving data
+            setTimeout(() => {
+                if (this.isRecording && this.audioBuffer.length === 0) {
+                    logError('🔴 [GPT4o-ASR-DEBUG] ❌ NO AUDIO DATA received after 3 seconds!');
+                    logError('🔴 [GPT4o-ASR-DEBUG] ❌ This indicates a stream flow issue, not microphone permissions');
+                    logError(`🔴 [GPT4o-ASR-DEBUG] ❌ Stream readable state: ${this.audioStream?.readable}`);
+                    logError(`🔴 [GPT4o-ASR-DEBUG] ❌ Stream paused state: ${this.audioStream?.isPaused?.()}`);
+                    
+                    // Try to force the stream to start
+                    if (this.audioStream) {
+                        logError('🔴 [GPT4o-ASR-DEBUG] ❌ Attempting to resume stream...');
+                        this.audioStream.resume();
+                    }
+                } else if (this.isRecording) {
+                    logSuccess(`🔴 [GPT4o-ASR-DEBUG] ✅ Audio data is flowing! Received ${this.audioBuffer.length} chunks`);
+                }
+            }, 3000);
+
+            // Add comprehensive stream event listeners for debugging
+            this.audioStream.on('readable', () => {
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Stream readable event fired');
+                // Try to manually read data when readable event fires
+                let chunk;
+                while (null !== (chunk = this.audioStream.read())) {
+                    if (this.isRecording) {
+                        logSuccess(`🔴 [GPT4o-ASR-DEBUG] Manually read chunk: ${chunk.length} bytes`);
+                        this.audioBuffer.push(chunk);
+                    }
+                }
+            });
+
+            this.audioStream.on('end', () => {
+                logWarning('🔴 [GPT4o-ASR-DEBUG] Stream ended');
+            });
+
+            this.audioStream.on('close', () => {
+                logWarning('🔴 [GPT4o-ASR-DEBUG] Stream closed');
+            });
+
+            this.audioStream.on('pause', () => {
+                logWarning('🔴 [GPT4o-ASR-DEBUG] Stream paused');
+            });
+
+            this.audioStream.on('resume', () => {
+                logSuccess('🔴 [GPT4o-ASR-DEBUG] Stream resumed');
             });
 
             // Handle errors

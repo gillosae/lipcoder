@@ -176,7 +176,24 @@ export function stopAllAudio(): void {
 		console.log('[stopAllAudio] 12b. Error stopping conversational ASR (normal):', error);
 	}
 	
-	// Note: stopping state will be cleared explicitly by callers when they want to start new audio
+	// 13. Stop terminal audio processing if active (avoid infinite loop)
+	console.log('[stopAllAudio] 13. Stopping terminal audio processing');
+	try {
+		// Just abort terminal controller directly to avoid circular calls
+		const terminalModule = require('./terminal');
+		if (terminalModule.terminalAbortController) {
+			terminalModule.terminalAbortController.abort();
+			console.log('[stopAllAudio] 13a. Terminal abort controller stopped');
+		}
+	} catch (error) {
+		console.log('[stopAllAudio] 13b. Error stopping terminal audio (normal):', error);
+	}
+	
+	// 14. Clear audio stopping state to allow new audio
+	console.log('[stopAllAudio] 14. Clearing audio stopping state');
+	clearAudioStoppingState();
+	
+	// Note: stopping state cleared to allow new audio
 	console.log('[stopAllAudio] 🛑 ALL AUDIO STOPPED - comprehensive cleanup completed');
 }
 

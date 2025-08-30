@@ -236,7 +236,9 @@ async function generateCodeFixWithDiff(currentCode: string, terminalOutput: stri
     try {
         const client = getOpenAIClient();
         
-        const prompt = `You are a code fixing expert. Analyze the terminal error and provide a structured fix.
+        const hasTerminalOutput = terminalOutput && terminalOutput.trim().length > 0;
+        
+        const prompt = `You are a code fixing expert. ${hasTerminalOutput ? 'Analyze the terminal error and provide a structured fix.' : 'Analyze the code for potential errors and provide fixes.'}
 
 FILE: ${fileName}
 LANGUAGE: ${getFileLanguage(fileName)}
@@ -246,17 +248,18 @@ CURRENT CODE:
 ${currentCode}
 \`\`\`
 
-RECENT TERMINAL OUTPUT (includes error messages):
+${hasTerminalOutput ? `RECENT TERMINAL OUTPUT (includes error messages):
 \`\`\`
 ${terminalOutput}
-\`\`\`
+\`\`\`` : 'NO TERMINAL OUTPUT - Analyze the code directly for potential issues.'}
 
 INSTRUCTIONS:
-- Analyze the terminal output to identify the specific error
+${hasTerminalOutput ? '- Analyze the terminal output to identify the specific error' : '- Analyze the code directly for syntax errors, import issues, undefined variables, type errors, and other common problems'}
 - Provide the complete fixed code
 - Explain what was wrong and how you fixed it
 - Make minimal changes - only fix what's broken
 - Preserve all existing functionality and structure
+${!hasTerminalOutput ? '- Focus on common issues like: syntax errors, missing imports, undefined variables, incorrect function calls, type mismatches' : ''}
 
 Respond in the following JSON format:
 {
@@ -281,6 +284,7 @@ IMPORTANT:
 - Set canFix to true for most common programming errors
 - Only set canFix to false for very complex architectural issues or missing external dependencies
 - Set confidence to 0.8+ for clear syntax/import/variable errors
+${!hasTerminalOutput ? '- If no obvious errors are found in the code, set canFix to false and explain that the code appears correct' : ''}
 - Explain in Korean what you fixed
 - Include specific line-by-line changes in the changes array
 
@@ -571,8 +575,68 @@ export async function fixTerminalErrors(): Promise<void> {
         const errors = extractTerminalErrors();
         
         if (errors.length === 0) {
-            await speakGPT('터미널에서 에러를 찾을 수 없습니다');
-            vscode.window.showInformationMessage('터미널에서 에러를 찾을 수 없습니다', { modal: false });
+            // If no terminal errors found, analyze current active editor code for potential errors
+            log('[TerminalErrorFixer] No terminal errors found, analyzing current code for potential issues');
+            await speakGPT('터미널에 에러가 없어서 현재 코드를 분석하고 있습니다');
+            
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor) {
+                await speakGPT('현재 열린 파일이 없습니다');
+                vscode.window.showInformationMessage('현재 열린 파일이 없습니다', { modal: false });
+                return;
+            }
+
+            const currentCode = activeEditor.document.getText();
+            const fileName = path.basename(activeEditor.document.fileName);
+            const fileExtension = path.extname(fileName);
+            const filePath = activeEditor.document.uri.fsPath;
+
+            if (!currentCode.trim()) {
+                await speakGPT('현재 파일이 비어있습니다');
+                vscode.window.showInformationMessage('현재 파일이 비어있습니다', { modal: false });
+                return;
+            }
+
+            await speakGPT(`${fileName} 파일을 분석하고 수정하고 있습니다`);
+
+            // Analyze code without terminal output (empty terminal context)
+            const fixResult = await generateCodeFixWithDiff(currentCode, '', fileName, fileExtension);
+            
+            if (!fixResult) {
+                log(`[TerminalErrorFixer] Could not generate fix for ${fileName}`);
+                await speakGPT(`${fileName} 파일에서 수정할 에러를 찾을 수 없었습니다`);
+                vscode.window.showInformationMessage(`${fileName} 파일에서 수정할 에러를 찾을 수 없었습니다`, { modal: false });
+                return;
+            }
+
+            // Show what will be changed
+            const changeMessage = `${fixResult.summary} (신뢰도: ${Math.round((fixResult.confidence || 0.7) * 100)}%)`;
+            vscode.window.showInformationMessage(changeMessage, { modal: false });
+            
+            // Apply the changes using vibe coding style
+            const success = await applyCodeChanges(filePath, fixResult);
+            
+            if (success) {
+                // Speak the detailed explanation
+                await speakGPT(`${fileName} 파일이 수정되었습니다. ${fixResult.changeDescription}`);
+                
+                // Show success notification with details
+                const successMessage = `✅ ${fileName} 수정 완료: ${fixResult.summary}`;
+                vscode.window.showInformationMessage(successMessage, { modal: false });
+                
+                logSuccess(`[TerminalErrorFixer] Successfully fixed ${fileName}: ${fixResult.summary}`);
+                
+                // Log the changes for debugging
+                if (fixResult.changes && fixResult.changes.length > 0) {
+                    log(`[TerminalErrorFixer] Changes applied to ${fileName}:`);
+                    for (const change of fixResult.changes.slice(0, 3)) { // Log first 3 changes
+                        log(`  Line ${change.lineNumber}: ${change.type} - ${change.description}`);
+                    }
+                }
+            } else {
+                await speakGPT(`${fileName} 파일 수정 중 문제가 발생했습니다`);
+            }
+            
             return;
         }
 

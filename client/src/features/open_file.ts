@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { ExtensionContext } from 'vscode';
 import { speakTokenList, speakGPT, clearAudioStoppingState } from '../audio';
-import { stopAllAudio } from './stop_reading';
+import { stopAllAudio, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 import { openFileTabAware } from './last_editor_tracker';
 
@@ -44,7 +44,7 @@ export function registerOpenFile(context: ExtensionContext) {
             }
             
             if (!actualFilename || actualFilename.trim() === '') {
-                await speakGPT('No filename provided');
+                await speakGPT('No filename provided', lineAbortController.signal);
                 return;
             }
             

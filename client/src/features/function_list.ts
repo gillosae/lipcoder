@@ -165,14 +165,14 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                     const pos = originalSelection.active;
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
-                    speakGPT(`back to line ${pos.line + 1}`);
+                    speakGPT(`back to line ${pos.line + 1}`, lineAbortController.signal);
                 }
                 quickPick.dispose();
             });
 
             const MAX_INDENT_UNITS = 5;
             quickPick.show();
-            speakGPT('functions');
+            speakGPT('functions', lineAbortController.signal);
 
             // Automatically walk through items, reading each every second
             // Wait a bit before starting auto-iteration to avoid simultaneous speech

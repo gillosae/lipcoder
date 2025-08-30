@@ -32,7 +32,7 @@ export function registerSymbolTree(context: ExtensionContext) {
             const editor = editorArg || vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a file first!');
-                speakGPT('Open a File First!');
+                speakGPT('Open a File First!', lineAbortController.signal);
                 return;
             }
             const originalSelection = editor.selection;
@@ -145,14 +145,14 @@ export function registerSymbolTree(context: ExtensionContext) {
                     editor.selection = originalSelection;
                     editor.revealRange(new vscode.Range(pos, pos));
                     stopReading();
-                    speakGPT(`back to line ${pos.line + 1}`);
+                    speakGPT(`back to line ${pos.line + 1}`, lineAbortController.signal);
                 }
                 quickPick.dispose();
             });
 
             stopReading();
             quickPick.show();
-            speakGPT('symbols');
+            speakGPT('symbols', lineAbortController.signal);
 
             // Auto-iterate
             let idx = 0;

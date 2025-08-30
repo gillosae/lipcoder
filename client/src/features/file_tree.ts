@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
 import { playWave, speakTokenList, speakGPT, TokenChunk } from '../audio';
 import { config } from '../config';
+import { lineAbortController } from './stop_reading';
 import * as path from 'path';
 
 // Whether to include hidden files and directories (names starting with '.')
@@ -72,7 +73,7 @@ export function registerFileTree(context: ExtensionContext) {
             printTree(tree);
 
             // 2) File tree built but automatic reading disabled
-            await speakGPT('File tree built. Use explorer navigation to browse files.');
+            await speakGPT('File tree built. Use explorer navigation to browse files.', lineAbortController.signal);
             
             // Removed automatic file tree reading - users can navigate manually
             fileTreeAbortController = null; // Done

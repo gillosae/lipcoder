@@ -1,4 +1,4 @@
-import { stopReading, stopAllAudio } from './stop_reading';
+import { stopReading, stopAllAudio, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -50,7 +50,7 @@ export function registerBreadcrumb(
                 ? `You are in ${relativePath} ${pathItems[0].label}`
                 : `You are in ${relativePath}`;
             stopReading();
-            await speakGPT(message);
+            await speakGPT(message, lineAbortController.signal);
             if (pathItems.length === 0) {
                 vscode.window.showInformationMessage(message);
                 return;
@@ -81,7 +81,7 @@ export function registerBreadcrumb(
                     
                     // Add small delay to ensure audio stopping is complete before starting new audio
                     setTimeout(() => {
-                        speakTokenList([{ tokens: [label], category: undefined }]);
+                        speakTokenList([{ tokens: [label], category: undefined }], lineAbortController.signal);
                     }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
@@ -90,7 +90,7 @@ export function registerBreadcrumb(
                 const sel = quickPick.activeItems[0];
                 if (sel) {
                     stopReading();
-                    speakGPT(`moved to ${sel.label} line ${sel.line + 1}`);
+                    speakGPT(`moved to ${sel.label} line ${sel.line + 1}`, lineAbortController.signal);
                 }
                 quickPick.hide();
             });
@@ -102,7 +102,7 @@ export function registerBreadcrumb(
                         editor.selection = originalSelection;
                         editor.revealRange(new vscode.Range(pos0, pos0));
                         stopReading();
-                        speakGPT(`back to line ${pos0.line + 1}`);
+                        speakGPT(`back to line ${pos0.line + 1}`, lineAbortController.signal);
                     }
                     quickPick.dispose();
                 }

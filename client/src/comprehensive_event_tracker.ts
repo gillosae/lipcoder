@@ -28,43 +28,37 @@ export class ComprehensiveEventTracker {
     private commandExecutionTimes: Map<string, number> = new Map();
 
     public initialize(context: vscode.ExtensionContext): void {
-        log('[ComprehensiveEventTracker] Initializing comprehensive event tracking...');
+        log('[ComprehensiveEventTracker] Initializing essential event tracking...');
         
-        // Track cursor movement and selection changes
+        // Only track essential events to reduce memory usage
+        // Track cursor movement and selection changes (essential for navigation)
         this.setupCursorTracking();
         
-        // Track text document changes
+        // Track text document changes (essential for editing)
         this.setupTextChangeTracking();
         
-        // Track window focus changes
-        this.setupWindowFocusTracking();
-        
-        // Track tab changes (file open/close/switch)
-        this.setupTabTracking();
-        
-        // Track command execution
+        // Track command execution (essential for debugging)
         this.setupCommandTracking();
         
-        // Track file operations
-        this.setupFileOperationTracking();
+        // Track terminal and editor focus changes for audio feedback
+        this.setupTerminalEditorFocusTracking();
         
-        // Track workspace changes
-        this.setupWorkspaceTracking();
+        // Track file save events for audio feedback
+        this.setupFileSaveTracking();
         
-        // Track terminal events
-        this.setupTerminalTracking();
-        
-        // Track debug events
-        this.setupDebugTracking();
-        
-        // Track extension events
-        this.setupExtensionTracking();
+        // Skip non-essential tracking to reduce memory usage:
+        // - Window focus changes (not critical)
+        // - Tab changes (already tracked elsewhere)
+        // - File operations (already tracked elsewhere)
+        // - Workspace changes (not critical)
+        // - Debug events (not critical for most users)
+        // - Extension events (not critical)
         
         // Add all disposables to context
         context.subscriptions.push(...this.disposables);
         
-        log('[ComprehensiveEventTracker] Comprehensive event tracking initialized');
-        logSystemEvent('comprehensive_tracker_initialized', {
+        log('[ComprehensiveEventTracker] Essential event tracking initialized');
+        logSystemEvent('essential_tracker_initialized', {
             trackersCount: this.disposables.length
         });
     }
@@ -182,6 +176,9 @@ export class ComprehensiveEventTracker {
                     this.trackLipcoderCommand(command, true, duration, rest);
                 }
                 
+                // Special handling for terminal/editor focus commands
+                this.handleFocusCommands(command);
+                
                 return result;
             } catch (error) {
                 const duration = Date.now() - startTime;
@@ -190,6 +187,9 @@ export class ComprehensiveEventTracker {
                 if (command.startsWith('lipcoder.')) {
                     this.trackLipcoderCommand(command, false, duration, rest, String(error));
                 }
+                
+                // Special handling for terminal/editor focus commands (even on error)
+                this.handleFocusCommands(command);
                 
                 throw error;
             } finally {
@@ -341,6 +341,130 @@ export class ComprehensiveEventTracker {
         });
         
         this.disposables.push(taskStartDisposable, taskEndDisposable);
+    }
+
+    private lastFocusState: 'terminal' | 'editor' | 'unknown' = 'unknown';
+
+    private setupTerminalEditorFocusTracking(): void {
+        // Track when terminal becomes active
+        const terminalChangeDisposable = vscode.window.onDidChangeActiveTerminal((terminal) => {
+            if (terminal && this.lastFocusState !== 'terminal') {
+                this.lastFocusState = 'terminal';
+                this.playFocusAudio('in terminal');
+                logSystemEvent('focus_changed_to_terminal', {
+                    terminalName: terminal.name,
+                    processId: terminal.processId
+                });
+            }
+        });
+
+        // Track when editor becomes active
+        const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor && this.lastFocusState !== 'editor') {
+                this.lastFocusState = 'editor';
+                this.playFocusAudio('in editor');
+                logSystemEvent('focus_changed_to_editor', {
+                    fileName: editor.document.fileName,
+                    languageId: editor.document.languageId
+                });
+            }
+        });
+
+        // Also track when terminal is opened (Ctrl+` pressed)
+        const terminalOpenDisposable = vscode.window.onDidOpenTerminal((terminal) => {
+            // Small delay to ensure focus has changed
+            setTimeout(() => {
+                if (this.lastFocusState !== 'terminal') {
+                    this.lastFocusState = 'terminal';
+                    this.playFocusAudio('in terminal');
+                    logSystemEvent('terminal_opened_and_focused', {
+                        terminalName: terminal.name,
+                        processId: terminal.processId
+                    });
+                }
+            }, 100);
+        });
+
+        this.disposables.push(terminalChangeDisposable, editorChangeDisposable, terminalOpenDisposable);
+    }
+
+    private manualSaveInProgress = false;
+
+    private setupFileSaveTracking(): void {
+        const fileSaveDisposable = vscode.workspace.onDidSaveTextDocument((document) => {
+            // Only play audio for manual saves (Cmd+S), not auto-saves
+            if (this.manualSaveInProgress) {
+                this.playFocusAudio('file saved');
+                logSystemEvent('file_saved_with_audio', {
+                    fileName: document.fileName,
+                    languageId: document.languageId,
+                    lineCount: document.lineCount,
+                    saveType: 'manual'
+                });
+                this.manualSaveInProgress = false;
+            } else {
+                // Log auto-saves without audio
+                logSystemEvent('file_auto_saved', {
+                    fileName: document.fileName,
+                    languageId: document.languageId,
+                    lineCount: document.lineCount,
+                    saveType: 'auto'
+                });
+            }
+        });
+
+        this.disposables.push(fileSaveDisposable);
+    }
+
+    private handleFocusCommands(command: string): void {
+        // Handle manual save commands (Cmd+S)
+        if (command === 'workbench.action.files.save' || 
+            command === 'workbench.action.files.saveAll' ||
+            command === 'workbench.action.files.saveAs') {
+            this.manualSaveInProgress = true;
+            logSystemEvent('manual_save_command_executed', { command });
+        }
+        
+        // Handle terminal focus commands
+        else if (command === 'workbench.action.terminal.toggleTerminal' || 
+            command === 'workbench.action.terminal.focus' ||
+            command === 'workbench.action.terminal.new') {
+            
+            // Use a small delay to ensure the focus has actually changed
+            setTimeout(() => {
+                if (this.lastFocusState !== 'terminal') {
+                    this.lastFocusState = 'terminal';
+                    this.playFocusAudio('in terminal');
+                    logSystemEvent('focus_changed_to_terminal_via_command', { command });
+                }
+            }, 150);
+        }
+        
+        // Handle editor focus commands
+        else if (command === 'workbench.action.focusActiveEditorGroup' ||
+                 command === 'workbench.action.focusFirstEditorGroup' ||
+                 command === 'workbench.action.focusSecondEditorGroup' ||
+                 command === 'workbench.action.focusThirdEditorGroup') {
+            
+            setTimeout(() => {
+                if (this.lastFocusState !== 'editor') {
+                    this.lastFocusState = 'editor';
+                    this.playFocusAudio('in editor');
+                    logSystemEvent('focus_changed_to_editor_via_command', { command });
+                }
+            }, 150);
+        }
+    }
+
+    private async playFocusAudio(message: string): Promise<void> {
+        try {
+            // Import speakGPT dynamically to avoid circular dependencies
+            const { speakGPT } = await import('./audio.js');
+            await speakGPT(message);
+            log(`[ComprehensiveEventTracker] Played focus audio: "${message}"`);
+        } catch (error) {
+            log(`[ComprehensiveEventTracker] Failed to play focus audio "${message}": ${error}`);
+        }
     }
 
     // Public methods for feature tracking

@@ -31,6 +31,13 @@ function cleanupInlineSuggestions(): void {
 }
 
 /**
+ * Export cleanup function for external use
+ */
+export function cleanupInlineSuggestionsResources(): void {
+    cleanupInlineSuggestions();
+}
+
+/**
  * Register inline suggestion provider and related commands.
  */
 export async function registerInlineSuggestions(context: vscode.ExtensionContext) {

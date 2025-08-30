@@ -136,9 +136,9 @@ if [ ! -f "$SERVER_SCRIPT" ]; then
     exit 1
 fi
 
-# Test 'say' command
+# Test 'say' command (silent test)
 echo -e "${BLUE}🔍 Testing macOS 'say' command...${NC}"
-if say "Testing macOS voice synthesis" 2>/dev/null; then
+if echo "test" | say 2>/dev/null; then
     echo -e "${GREEN}✅ macOS 'say' command is working${NC}"
 else
     echo -e "${RED}❌ Error: macOS 'say' command test failed${NC}"

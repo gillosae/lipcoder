@@ -11,7 +11,11 @@ import { splitWordChunks, isDictionaryWord, isCamelCase, splitCamel } from './wo
 import { containsKorean } from '../language_detection';
 import * as path from 'path';
 
-// Terminal screen buffer management
+// Terminal screen buffer management with size limits to prevent memory leaks
+const MAX_TERMINAL_BUFFER_SIZE = 1000; // Limit terminal history to 1000 entries
+const MAX_SCREEN_LINES = 500; // Limit screen lines to 500
+const MAX_INPUT_LINES = 200; // Limit input history to 200
+
 let terminalScreenLines: string[] = [];
 let terminalInputLines: string[] = []; // Store all input commands
 export let terminalBuffer: Array<{type: 'input' | 'output', content: string, timestamp: Date}> = []; // Complete terminal history
@@ -29,8 +33,34 @@ let currentInputBuffer = ''; // Current command being typed
 let awaitingCompletion = false;       // set when user presses TAB
 let echoCaptureActive = false;        // transient while shell redraws/completes current line
 
+/**
+ * Clean up terminal buffers to prevent memory leaks
+ */
+function cleanupTerminalBuffers(): void {
+    // Limit terminal buffer size
+    if (terminalBuffer.length > MAX_TERMINAL_BUFFER_SIZE) {
+        const excessEntries = terminalBuffer.length - MAX_TERMINAL_BUFFER_SIZE;
+        terminalBuffer.splice(0, excessEntries);
+        log(`[Terminal] Cleaned up ${excessEntries} old terminal buffer entries`);
+    }
+    
+    // Limit screen lines
+    if (terminalScreenLines.length > MAX_SCREEN_LINES) {
+        const excessLines = terminalScreenLines.length - MAX_SCREEN_LINES;
+        terminalScreenLines.splice(0, excessLines);
+        log(`[Terminal] Cleaned up ${excessLines} old screen lines`);
+    }
+    
+    // Limit input history
+    if (terminalInputLines.length > MAX_INPUT_LINES) {
+        const excessInputs = terminalInputLines.length - MAX_INPUT_LINES;
+        terminalInputLines.splice(0, excessInputs);
+        log(`[Terminal] Cleaned up ${excessInputs} old input lines`);
+    }
+}
+
 // Terminal-specific audio control
-let terminalAbortController = new AbortController();
+export let terminalAbortController = new AbortController();
 let isTerminalSpeaking = false;
 let terminalAudioLock = false; // Global lock to prevent any terminal audio overlap
 
@@ -155,7 +185,7 @@ function resetKeySeq() {
 /**
  * ULTRA-AGGRESSIVE terminal audio stopping - NUCLEAR OPTION to ensure no overlap
  */
-function stopTerminalAudio(): void {
+export function stopTerminalAudio(): void {
     log('[Terminal] 🚨 ULTRA-AGGRESSIVE STOP - NUCLEAR AUDIO SHUTDOWN 🚨');
     
     // IMMEDIATE flag setting - prevent ANY new audio
@@ -163,11 +193,9 @@ function stopTerminalAudio(): void {
     
     // 1. Abort ALL controllers immediately
     terminalAbortController.abort();
-    lineAbortController.abort();
+    // Don't abort lineAbortController here - let stopAllAudio handle it
     
-    // 2. Stop ALL audio systems - MULTIPLE CALLS for redundancy
-    stopAllAudio();
-    stopAllAudio(); // Call twice for safety
+    // 2. Stop audio systems directly (avoid calling stopAllAudio to prevent infinite loop)
     stopReading();
     stopForNewLineReading();
     stopEarconPlayback();
@@ -191,6 +219,9 @@ function stopTerminalAudio(): void {
     
     // 5. Create fresh controllers
     terminalAbortController = new AbortController();
+    
+    // Re-export the new controller for external access
+    module.exports.terminalAbortController = terminalAbortController;
     
     // 6. Clear ALL audio states
     clearAudioStoppingState();
@@ -232,7 +263,9 @@ async function speakTerminalTokens(chunks: TokenChunk[], description: string): P
             return;
         }
         
-        await speakTokenList(chunks, terminalAbortController.signal);
+        // Use both terminal and global abort controllers for comprehensive stopping
+        const combinedSignal = AbortSignal.any([terminalAbortController.signal, lineAbortController.signal]);
+        await speakTokenList(chunks, combinedSignal);
         log(`[Terminal] ✅ Finished speaking: ${description}`);
     } catch (error) {
         if (terminalAbortController.signal.aborted) {
@@ -257,6 +290,9 @@ function addToTerminalBuffer(type: 'input' | 'output', content: string): void {
     };
     
     terminalBuffer.push(entry);
+    
+    // Clean up buffers periodically to prevent memory leaks
+    cleanupTerminalBuffers();
 
     // Track last executed python file for summaries
     try {
@@ -871,7 +907,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
             pendingSuggestions.push(...highPrioritySuggestions);
         }
         // We still want to give a *short* audible status of run result even if dialog is active
-        await readInEspeak([{ tokens: [summary], category: undefined }]);
+        await readInEspeak([{ tokens: [summary], category: undefined }], lineAbortController.signal);
         return;
     }
 
@@ -881,7 +917,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
         log('[Terminal] Too soon for new suggestions, queuing...');
         pendingSuggestions.push(...suggestions);
         // still speak one-line status
-        await readInEspeak([{ tokens: [summary], category: undefined }]);
+        await readInEspeak([{ tokens: [summary], category: undefined }], lineAbortController.signal);
         return;
     }
 
@@ -911,7 +947,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
         popupMessage = `Error running ${fileLabel}. ${errBrief}.${maybe}`;
         actionButtons.push('Go to error line');
         // Speak the error message right away so it is read out even if user navigates to error line
-        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }]);
+        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
         spoken = true;
     }
 
@@ -937,7 +973,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
 
     // Speak the same concise message (if not already spoken for error case)
     if (!spoken) {
-        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }]);
+        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
     }
 }
 
@@ -2145,7 +2181,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             await vscode.commands.executeCommand('lipcoder.openTerminal');
             
             vscode.window.showInformationMessage('Terminal closed - LipCoder terminal opened', { modal: false });
-            await speakGPT('Terminal closed, LipCoder terminal opened');
+            await speakGPT('Terminal closed, LipCoder terminal opened', lineAbortController.signal);
         }
     });
     
@@ -2178,7 +2214,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                 // Current terminal is already a lipcoder terminal, just focus it
                 log('[Terminal] Current terminal is already a LipCoder terminal, focusing it');
                 await vscode.commands.executeCommand('workbench.action.terminal.focus');
-                await speakGPT('In lipcoder terminal');
+                await speakGPT('In lipcoder terminal', lineAbortController.signal);
             } else {
                 // Current terminal is not a lipcoder terminal, open a new lipcoder terminal
                 log('[Terminal] Current terminal is not a LipCoder terminal, opening new LipCoder terminal');
@@ -2190,7 +2226,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     logError(`[Terminal] Failed to load node-pty: ${err}`);
                     createFallbackTerminal();
                 }
-                await speakGPT('Opened lipcoder terminal');
+                await speakGPT('Opened lipcoder terminal', lineAbortController.signal);
             }
         }),
 
@@ -2199,7 +2235,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             stopAllAudio();
             
             if (terminalBuffer.length === 0) {
-                await speakGPT('No terminal content available for reading mode');
+                await speakGPT('No terminal content available for reading mode', lineAbortController.signal);
                 return;
             }
             
@@ -2245,7 +2281,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                 await speakTokenList([{ 
                     tokens: [`Reading mode activated.`], // ${terminalBuffer.length} lines available. Use up and down arrows to navigate.
                     category: undefined 
-                }]);
+                }], lineAbortController.signal);
                 
                 // Read current line
                 await new Promise(resolve => setTimeout(resolve, 80));
@@ -2254,7 +2290,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     const lineTokens = parseTerminalLineToTokens(currentEntry.content);
                     const prefix = getSpokenPrefix(currentEntry.type);
                     const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${currentLineIndex + 1}`], category: 'keyword' };
-                    await readInEspeak([lineNumberChunk, ...lineTokens]);
+                    await readInEspeak([lineNumberChunk, ...lineTokens], lineAbortController.signal);
                 }
             } else {
                 // Exiting reading mode
@@ -2266,14 +2302,14 @@ export function registerTerminalReader(context: ExtensionContext) {
                 await playWave(exitReadingEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
                 await new Promise(resolve => setTimeout(resolve, 30));
-                await speakGPT('Reading mode deactivated. Terminal is now interactive.');
+                await speakGPT('Reading mode deactivated. Terminal is now interactive.', lineAbortController.signal);
             }
         }),
 
         // Read current terminal screen content
         vscode.commands.registerCommand('lipcoder.terminalReadHistory', async () => {
             if (terminalScreenLines.length === 0) {
-                await speakGPT('No terminal content available');
+                await speakGPT('No terminal content available', lineAbortController.signal);
                 return;
             }
             
@@ -2288,13 +2324,13 @@ export function registerTerminalReader(context: ExtensionContext) {
             await playWave(historyEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
             await new Promise(resolve => setTimeout(resolve, 30));
-            await speakGPT(`Terminal screen: ${screenText}`);
+            await speakGPT(`Terminal screen: ${screenText}`, lineAbortController.signal);
         }),
 
         // Read last terminal line
         vscode.commands.registerCommand('lipcoder.terminalReadLast', async () => {
             if (terminalScreenLines.length === 0) {
-                await speakGPT('No terminal content');
+                await speakGPT('No terminal content', lineAbortController.signal);
                 return;
             }
             
@@ -2306,7 +2342,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             await playWave(lastEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
             await new Promise(resolve => setTimeout(resolve, 20));
-            await speakGPT(lastLine);
+            await speakGPT(lastLine, lineAbortController.signal);
         }),
 
         // Navigate up through terminal buffer
