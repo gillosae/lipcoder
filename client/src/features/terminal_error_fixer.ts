@@ -914,10 +914,13 @@ Provide a natural Korean explanation (not JSON format):`;
  */
 export async function explainTerminalOutput(): Promise<void> {
     try {
-        await speakGPT('터미널 출력을 분석하고 있습니다');
+        // Get abort controller for proper TTS cancellation
+        const { lineAbortController } = require('./stop_reading');
+        
+        await speakGPT('터미널 출력을 분석하고 있습니다', lineAbortController.signal);
         
         if (!terminalBuffer || terminalBuffer.length === 0) {
-            await speakGPT('터미널 기록이 없습니다');
+            await speakGPT('터미널 기록이 없습니다', lineAbortController.signal);
             vscode.window.showInformationMessage('터미널 기록이 없습니다', { modal: false });
             return;
         }
@@ -926,7 +929,7 @@ export async function explainTerminalOutput(): Promise<void> {
         const recentEntries = terminalBuffer.slice(-20);
         
         if (recentEntries.length === 0) {
-            await speakGPT('최근 터미널 출력이 없습니다');
+            await speakGPT('최근 터미널 출력이 없습니다', lineAbortController.signal);
             vscode.window.showInformationMessage('최근 터미널 출력이 없습니다', { modal: false });
             return;
         }
@@ -945,13 +948,13 @@ export async function explainTerminalOutput(): Promise<void> {
         const explanation = await generateTerminalOutputExplanation(terminalOutput);
         
         if (!explanation) {
-            await speakGPT('터미널 출력을 분석할 수 없었습니다');
+            await speakGPT('터미널 출력을 분석할 수 없었습니다', lineAbortController.signal);
             vscode.window.showWarningMessage('터미널 출력을 분석할 수 없었습니다', { modal: false });
             return;
         }
 
-        // Speak the explanation
-        await speakGPT(explanation);
+        // Speak the explanation with abort controller support
+        await speakGPT(explanation, lineAbortController.signal);
 
         // Show detailed information in VS Code output channel
         const outputChannel = vscode.window.createOutputChannel('LipCoder 터미널 출력 분석');

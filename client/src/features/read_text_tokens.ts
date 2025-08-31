@@ -208,7 +208,6 @@ export async function readTextTokens(
                         const tokenPath = audioMap[ch.toLowerCase()];
                         if (tokenPath) {
                             const fullPath = path.join(config.alphabetPath(), tokenPath);
-                            console.log(`[read_text_tokens] Playing alphabet audio (cached) for grouped char "${ch}": ${fullPath}`);
                             audioPlayer.playPcmCached(fullPath, charPanning);
                         }
                     } else if (audioMap[ch] && !/^[a-zA-Z]$/.test(ch)) {
@@ -237,7 +236,7 @@ export async function readTextTokens(
                         // Handle TTS for special characters
                         await speakTokenList([{ tokens: [getSpecialCharSpoken(ch)!], category: 'special', panning: charPanning }]);
                     } else {
-                        console.log('🚫 No audio found for grouped char:', ch);
+                        // No audio found for grouped char
                     }
                 } catch (err) {
                     console.error('Typing audio error:', err);
@@ -266,7 +265,6 @@ export async function readTextTokens(
                 }
             } else if (audioMap[char] && !/^[a-zA-Z]$/.test(char)) {
                 // Handle non-alphabet audioMap entries (numbers, special chars)
-                console.log(`[read_text_tokens] 🎵 AUDIOMAP PATH: Using audioMap for "${char}": ${audioMap[char]}`);
                 // Use proper path resolution that checks both special and earcon directories
                 const resolvedPath = findTokenSound(char);
                 if (resolvedPath) {
@@ -295,16 +293,10 @@ export async function readTextTokens(
                 return; // Prevent further processing to avoid double audio
             } else if (getSpecialCharSpoken(char)) {
                 // Handle TTS for special characters
-                console.log(`[read_text_tokens] Using TTS for special char "${char}"`);
-                log(`[read_text_tokens] Playing TTS for special char "${char}"`);
                 await speakTokenList([{ tokens: [getSpecialCharSpoken(char)!], category: 'special', panning }]);
                 return; // Prevent further processing to avoid double audio
             } else {
-                console.log(`🚫 NO AUDIO FOUND for char: "${char}"`);
-                console.log(`   - audioMap[char]: ${audioMap[char]}`);
-                console.log(`   - isEarcon(char): ${isEarcon(char)}`);
-                console.log(`   - getSpecialCharSpoken(char): ${getSpecialCharSpoken(char)}`);
-                console.log(`   - findTokenSound(char): ${findTokenSound(char)}`);
+                // No audio found for character
             }
         } catch (err) {
             console.error('Typing audio error:', err);

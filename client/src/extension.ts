@@ -71,6 +71,7 @@ import { initializeLLMOptimizations } from './features/llm_speed_optimizer';
 import { registerSpeedTestCommand } from './features/speed_test_command';
 import { registerTestSuggestionStorage } from './features/test_suggestion_storage';
 import { registerTerminalErrorFixer } from './features/terminal_error_fixer';
+import { registerFindDialogSimple } from './features/find_dialog_simple';
 
 // Configure VS Code to automatically overwrite files on save conflicts
 async function configureAutoOverwrite() {
@@ -149,9 +150,16 @@ function startMemoryMonitoring(): void {
             logMemory(`[Memory] Heap: ${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB (+${(heapUsedDelta / 1024 / 1024).toFixed(2)}MB), RSS: ${(currentMemory.rss / 1024 / 1024).toFixed(2)}MB (+${(rssUsedDelta / 1024 / 1024).toFixed(2)}MB)`);
         }
         
-        // Trigger aggressive cleanup if memory usage is too high
-        if (currentMemory.heapUsed > 60 * 1024 * 1024) { // Lowered to 60MB heap threshold
-            logWarning(`[Memory] High memory usage detected (${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB), triggering cleanup`);
+        // Trigger aggressive cleanup if memory usage is too high OR if pending cleanup is requested
+        const shouldCleanup = currentMemory.heapUsed > 60 * 1024 * 1024 || (global as any).pendingMemoryCleanup;
+        
+        if (shouldCleanup) {
+            const reason = (global as any).pendingMemoryCleanup ? 
+                'pending cleanup after Korean TTS' : 
+                `high memory usage (${(currentMemory.heapUsed / 1024 / 1024).toFixed(2)}MB)`;
+            
+            logWarning(`[Memory] Cleanup triggered due to ${reason}`);
+            
             try {
                 const { enhancedCleanupAudioResources } = require('./audio');
                 const { getLineTokenReadingActive } = require('./features/stop_reading');
@@ -160,7 +168,13 @@ function startMemoryMonitoring(): void {
                 // Don't interrupt line token reading for memory cleanup
                 if (getLineTokenReadingActive()) {
                     logWarning(`[Memory] Skipping cleanup during line token reading to avoid interruption`);
+                } else if ((global as any).koreanTTSActive) {
+                    // Don't interrupt Korean TTS for memory cleanup to prevent dual voice issue
+                    logWarning(`[Memory] Skipping cleanup during Korean TTS to avoid audio conflicts`);
                 } else {
+                    // Clear the pending flag before cleanup
+                    (global as any).pendingMemoryCleanup = false;
+                    
                     enhancedCleanupAudioResources();
                     
                     // Cleanup earcon cache
@@ -525,18 +539,13 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 4) Build the unified audioMap ─────────────────────────────────────────────
-	console.log('[EXTENSION] About to create audioMap...');
 	const audioMapObj = createAudioMap(context);
-	console.log('[EXTENSION] AudioMap created, underscore path:', audioMapObj.get('_'));
 	
 	// Convert Map to Record for compatibility with readTextTokens
 	const audioMap: Record<string, string> = {};
 	for (const [key, value] of audioMapObj.entries()) {
 		audioMap[key] = value;
 	}
-	console.log('[EXTENSION] AudioMap converted to Record, alphabet "a":', audioMap['a']);
-	console.log('[EXTENSION] AudioMap converted to Record, alphabet "b":', audioMap['b']);
-	console.log('[EXTENSION] AudioMap keys count:', Object.keys(audioMap).length);
 
 	// 5) Start LanguageClient ──────────────────────────────────────────────────
 	const client = startLanguageClient(context);
@@ -695,6 +704,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerTerminalErrorFixer(context);
 	log('✅ registerTerminalErrorFixer completed');
 
+	registerFindDialogSimple(context);
+	log('✅ registerFindDialogSimple completed');
+
 	await registerInlineSuggestions(context);
 	log('✅ registerInlineSuggestions completed');
 
@@ -770,18 +782,12 @@ export async function activate(context: vscode.ExtensionContext) {
 				const { getSpeakerForCategory } = await import('./tts.js');
 				const { currentBackend } = await import('./config.js');
 				
-				// Log current backend and voice mappings
-				console.log(`[CommentVoiceTest] Current TTS backend: ${currentBackend}`);
-				console.log(`[CommentVoiceTest] Variable voice: ${getSpeakerForCategory('variable')}`);
-				console.log(`[CommentVoiceTest] Comment voice: ${getSpeakerForCategory('comment_text')}`);
-				console.log(`[CommentVoiceTest] Comment symbol voice: ${getSpeakerForCategory('comment_symbol')}`);
-				
 				await speakTokenList([
 					{ tokens: ['Variable token'], category: 'variable' },
 					{ tokens: ['Comment text'], category: 'comment_text' },
 					{ tokens: ['#'], category: 'comment_symbol' }
 				]);
-				vscode.window.showInformationMessage('Comment voice test completed! Check console for voice mappings.');
+				vscode.window.showInformationMessage('Comment voice test completed!');
 			} catch (error) {
 				vscode.window.showErrorMessage(`Comment voice test failed: ${error}`);
 			}
@@ -808,8 +814,6 @@ export async function activate(context: vscode.ExtensionContext) {
 					line: testLine
 				}) as Array<{ text: string; category: string }>;
 				
-				console.log(`[CommentTokenizationTest] Tokens for "# This is a comment":`, tokens);
-				
 				// Test with the actual tokens from server
 				const { speakTokenList } = await import('./audio.js');
 				const chunks = tokens.map(token => ({
@@ -818,7 +822,7 @@ export async function activate(context: vscode.ExtensionContext) {
 				}));
 				
 				await speakTokenList(chunks);
-				vscode.window.showInformationMessage(`Comment tokenization test completed! Found ${tokens.length} tokens. Check console.`);
+				vscode.window.showInformationMessage(`Comment tokenization test completed! Found ${tokens.length} tokens.`);
 			} catch (error) {
 				vscode.window.showErrorMessage(`Comment tokenization test failed: ${error}`);
 			}

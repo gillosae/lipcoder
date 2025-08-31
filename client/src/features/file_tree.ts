@@ -57,13 +57,12 @@ export function registerFileTree(context: ExtensionContext) {
                 return nodes;
             }
             const tree = await readDir(rootUri);
-            console.log('File tree:', tree);
             // ASCII visualization
             function printTree(nodes: FileNode[], indent = '') {
                 nodes.forEach((node, idx) => {
                     const isLast = idx === nodes.length - 1;
                     const pointer = isLast ? '└─ ' : '├─ ';
-                    console.log(`${indent}${pointer}${node.name}${node.isDirectory ? '/' : ''}`);
+                    // Tree visualization removed for cleaner output
                     if (node.children) {
                         const childIndent = indent + (isLast ? '   ' : '│  ');
                         printTree(node.children, childIndent);

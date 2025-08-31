@@ -459,8 +459,8 @@ export class ComprehensiveEventTracker {
     private async playFocusAudio(message: string): Promise<void> {
         try {
             // Import speakGPT dynamically to avoid circular dependencies
-            const { speakGPT } = await import('./audio.js');
-            await speakGPT(message);
+            const audioModule = await import('./audio.js');
+            await audioModule.speakGPT(message);
             log(`[ComprehensiveEventTracker] Played focus audio: "${message}"`);
         } catch (error) {
             log(`[ComprehensiveEventTracker] Failed to play focus audio "${message}": ${error}`);

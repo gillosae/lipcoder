@@ -430,7 +430,10 @@ export class ConversationalPopup {
                     if (action.parameters?.originalText) {
                         try {
                             log(`[ConversationalPopup] Creating CommandRouter for retry...`);
-                            const commandRouter = new CommandRouter();
+                            const commandRouter = new CommandRouter({ 
+                                enableLogging: true,
+                                showNotifications: true 
+                            });
                             
                             // Set editor context for proper command execution
                             const editor = vscode.window.activeTextEditor;

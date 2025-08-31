@@ -40,6 +40,14 @@
         "title": "Stop LipCoder Speech"
       },
       {
+        "command": "lipcoder.stopAllAudio",
+        "title": "LipCoder: Stop All Audio"
+      },
+      {
+        "command": "lipcoder.forceKillAllAudio",
+        "title": "LipCoder: Force Kill All Audio (Nuclear Option)"
+      },
+      {
         "command": "lipcoder.toggleTypingSpeech",
         "title": "LipCoder: Toggle Typing Speech"
       },
@@ -136,6 +144,10 @@
         "title": "LipCoder: Read Last Terminal Output"
       },
       {
+        "command": "lipcoder.terminalReadAll",
+        "title": "LipCoder: Read All Terminal Output"
+      },
+      {
         "command": "lipcoder.terminalHistoryUp",
         "title": "LipCoder: Terminal History Up"
       },
@@ -217,6 +229,26 @@
         "command": "lipcoder.showCurrentChangeDetails",
         "title": "LipCoder: Show Current Change Details",
         "category": "Vibe Coding"
+      },
+      {
+        "command": "lipcoder.openFindWidget",
+        "title": "LipCoder: Open Find Widget with Audio Feedback"
+      },
+      {
+        "command": "lipcoder.toggleFindWidgetState",
+        "title": "LipCoder: Toggle Find Widget State (Debug)"
+      },
+      {
+        "command": "lipcoder.findTypingSound",
+        "title": "LipCoder: Play Find Widget Typing Sound"
+      },
+      {
+        "command": "lipcoder.closeFindWidget",
+        "title": "LipCoder: Close Find Widget with Audio Feedback"
+      },
+      {
+        "command": "lipcoder.undoWithSound",
+        "title": "LipCoder: Undo with Audio Feedback"
       },
       {
         "command": "lipcoder.handleVibeCodingVoiceCommand",
@@ -749,6 +781,17 @@
         "mac": "cmd+."
       },
       {
+        "command": "lipcoder.forceKillAllAudio",
+        "key": "ctrl+shift+.",
+        "mac": "cmd+shift+.",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.forceKillAllAudio",
+        "key": "ctrl+shift+.",
+        "mac": "cmd+shift+."
+      },
+      {
         "command": "lipcoder.readCurrentLine",
         "key": "ctrl+alt+l",
         "when": "editorTextFocus"
@@ -784,6 +827,11 @@
         "when": "terminalFocus"
       },
       {
+        "key": "ctrl+shift+l",
+        "command": "lipcoder.terminalReadAll",
+        "when": "terminalFocus"
+      },
+      {
         "key": "ctrl+shift+c",
         "command": "lipcoder.terminalClearHistory",
         "when": "terminalFocus"
@@ -812,6 +860,28 @@
         "command": "lipcoder.rejectSuggestion",
         "key": "escape",
         "when": "editorTextFocus && inlineSuggestionVisible"
+      },
+      {
+        "command": "lipcoder.openFindWidget",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lipcoder.closeFindWidget",
+        "key": "escape",
+        "when": "findWidgetVisible"
+      },
+      {
+        "command": "lipcoder.findTypingSound",
+        "key": "ctrl+shift+t",
+        "when": "findWidgetVisible"
+      },
+      {
+        "command": "lipcoder.undoWithSound",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "editorTextFocus"
       },
       {
         "command": "lipcoder.applyCurrentChange",

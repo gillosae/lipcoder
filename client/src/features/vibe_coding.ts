@@ -103,10 +103,11 @@ export function stopVibeCodingTTS(): void {
         log('[vibe_coding] Stopping vibe coding TTS - Command+. pressed');
         vibeCodingTTSActive = false;
         
-        // Abort the line reading controller to stop ongoing TTS
+        // Get current lineAbortController dynamically and abort it
         try {
+            const { lineAbortController } = require('./stop_reading');
             if (lineAbortController && !lineAbortController.signal.aborted) {
-                log('[vibe_coding] Aborting lineAbortController to stop TTS');
+                log('[vibe_coding] Aborting current lineAbortController to stop TTS');
                 lineAbortController.abort();
             }
         } catch (error) {
@@ -116,6 +117,8 @@ export function stopVibeCodingTTS(): void {
         // Direct audio stopping without calling stopAllAudio to avoid circular calls
         try {
             stopPlayback(); // Direct stop call
+            const { stopGPTTTS } = require('../audio');
+            stopGPTTTS(); // Also stop GPT TTS directly
             log('[vibe_coding] Successfully stopped vibe coding TTS');
         } catch (error) {
             log(`[vibe_coding] Error stopping TTS: ${error}`);
@@ -447,9 +450,11 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
         const changeId = generateChangeId();
         currentChangeId = changeId;
         
-        // Check if this is an analysis request (but exclude terminal-related requests)
-        const isTerminalRequest = /터미널|terminal|출력|output|결과|result|에러|error|오류/i.test(instruction);
-        const isAnalysisRequest = !isTerminalRequest && /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
+        // Check if this is an analysis request
+        // Terminal explanation requests should be treated as analysis, not code modification
+        const isTerminalExplanationRequest = /터미널.*설명|terminal.*explain|터미널.*결과.*설명|explain.*terminal.*output|터미널.*출력.*설명|설명.*터미널|describe.*terminal/i.test(instruction);
+        const isGeneralAnalysisRequest = /what is|what does|explain|analyze|describe|어떤|무엇|설명|분석|이 코드는|코드가 뭐|어떤 코드|코드 설명|코드 분석/i.test(instruction);
+        const isAnalysisRequest = isTerminalExplanationRequest || isGeneralAnalysisRequest;
         
         if (isAnalysisRequest) {
             // For analysis requests, just show the explanation without applying changes
@@ -459,7 +464,9 @@ export async function activateVibeCoding(prefilledInstruction?: string, options?
             vscode.window.showInformationMessage(result.changeDescription, { modal: false });
             
             // Speak the analysis using GPT TTS as per user preferences [[memory:6411078]]
-            await speakGPT(result.changeDescription, lineAbortController.signal);
+            // Get current lineAbortController dynamically to ensure we have the latest one
+            const { lineAbortController: currentController } = require('./stop_reading');
+            await speakGPT(result.changeDescription, currentController.signal);
             
             log(`[vibe_coding] Analysis completed`);
         } else {
@@ -952,8 +959,9 @@ ANALYSIS RULES:
 4. Explain the overall structure and flow
 5. Point out important patterns or techniques used
 6. Use the same language as the question (Korean for Korean questions)
-7. Be comprehensive but concise
-8. Focus on functionality, not implementation details` :
+7. KEEP EXPLANATION VERY CONCISE: Maximum 10 lines or 300 characters
+8. Focus on core functionality only, avoid unnecessary details
+9. Provide direct, essential information without verbose explanations` :
             `You are an expert coding assistant that generates high-quality code modifications. You understand instructions in both English and Korean.
 
 ${isPartialContext ? 

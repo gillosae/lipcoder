@@ -147,7 +147,6 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
             );
             item.range = new vscode.Range(start, end);
 
-            console.log('audioPath →', config.audioPath());
             // Play visual alert earcon using config.audioPath()
             const alertWav = path.join(config.audioPath(), 'alert', 'suggestion.pcm');
             

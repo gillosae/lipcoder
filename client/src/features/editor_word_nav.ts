@@ -287,7 +287,6 @@ export function registerEditorWordNav(context: ExtensionContext) {
     context.subscriptions.push(
         // Navigate to next word in current editor line (Option+Right Arrow)
         vscode.commands.registerCommand('lipcoder.editorWordRight', async () => {
-            console.log(`[EditorWordNav] *** EDITOR WORD RIGHT COMMAND CALLED ***`);
             stopAllAudio();
             
             logFeatureUsage('editorWordRight', 'navigate');
@@ -303,15 +302,11 @@ export function registerEditorWordNav(context: ExtensionContext) {
             const document = editor.document;
             const lineText = document.lineAt(oldPosition.line).text;
             
-            console.log(`[EditorWordNav] Right nav: old=${oldPosition.character}, line="${lineText}"`);
-            
             // Use VSCode's built-in word navigation
             await vscode.commands.executeCommand('cursorWordRight');
             
             // Get position after movement
             const newPosition = editor.selection.active;
-            
-            console.log(`[EditorWordNav] Right nav: new=${newPosition.character}`);
             
             // Check if we moved to end of line
             if (newPosition.character >= lineText.length) {
@@ -325,24 +320,18 @@ export function registerEditorWordNav(context: ExtensionContext) {
             // Find what we traversed by looking backwards from new position
             let textToRead = '';
             
-            console.log(`[EditorWordNav] Right nav: looking for word between ${oldPosition.character} and ${newPosition.character}`);
-            
             // Check if we're now inside a word - if so, read that word
             const currentWordRange = document.getWordRangeAtPosition(newPosition);
-            console.log(`[EditorWordNav] Right nav: currentWordRange at pos ${newPosition.character}:`, currentWordRange ? `${currentWordRange.start.character}-${currentWordRange.end.character}` : 'null');
             
             if (currentWordRange && currentWordRange.start.character > oldPosition.character) {
                 // We're inside a word that starts after our old position - read it
                 textToRead = document.getText(currentWordRange);
-                console.log(`[EditorWordNav] Right nav: found current word: "${textToRead}"`);
             } else {
                 // Look for any word between old and new positions
-                console.log(`[EditorWordNav] Right nav: searching for word between ${oldPosition.character} and ${newPosition.character}`);
                 for (let i = oldPosition.character; i <= newPosition.character; i++) {
                     const testRange = document.getWordRangeAtPosition(new vscode.Position(newPosition.line, i));
                     if (testRange && testRange.start.character > oldPosition.character) {
                         textToRead = document.getText(testRange);
-                        console.log(`[EditorWordNav] Right nav: found word in search: "${textToRead}"`);
                         break;
                     }
                 }

@@ -53,16 +53,26 @@ export { playEarcon, earconRaw } from './earcon';
 export let activeGPTTTSController: AbortController | null = null;
 let lastGPTTTSTime = 0;
 
+// Global flag to force stop all TTS immediately
+let globalTTSStopFlag = false;
+
 // Track active FFmpeg processes for cleanup
 const activeFFmpegProcesses = new Set<any>();
 
 // Function to stop GPT TTS controller from external modules
 export function stopGPTTTS(): void {
+    globalTTSStopFlag = true;
+    
     if (activeGPTTTSController) {
-        console.log('[stopGPTTTS] Aborting active GPT TTS controller');
         activeGPTTTSController.abort();
         activeGPTTTSController = null;
     }
+    
+    // Reset the flag after a short delay to allow new TTS
+    setTimeout(() => {
+        globalTTSStopFlag = false;
+        console.log('[stopGPTTTS] Global TTS stop flag reset');
+    }, 1000);
 }
 
 // Function to cleanup all active FFmpeg processes
@@ -1477,15 +1487,24 @@ class AudioPlayer {
         
         if (this.currentSpeaker) {
             try {
-                if (immediate || !config.gentleAudioStopping) {
-                    // Immediate/aggressive stopping: destroy the speaker immediately
-                    log(`[AudioPlayer] Using immediate/aggressive stopping for current speaker`);
-                    this.currentSpeaker.destroy();
-                } else {
-                    // Gentler stopping: end the stream instead of destroying it abruptly
-                    log(`[AudioPlayer] Using gentle stopping for current speaker`);
-                    this.currentSpeaker.end();
+                // ALWAYS use immediate/aggressive stopping for better responsiveness
+                log(`[AudioPlayer] Using AGGRESSIVE stopping for current speaker (immediate=${immediate})`);
+                this.currentSpeaker.destroy();
+                
+                // Also try to close it if destroy doesn't work
+                try {
+                    this.currentSpeaker.close();
+                } catch (e) {
+                    // Ignore close errors
                 }
+                
+                // Force end the stream as well
+                try {
+                    this.currentSpeaker.end();
+                } catch (e) {
+                    // Ignore end errors
+                }
+                
             } catch {}
             this.currentSpeaker = null;
         }
@@ -1997,6 +2016,12 @@ export async function speakGPT(text: string, signal?: AbortSignal): Promise<void
     const TIMEOUT_MS = 3000; // 3 second timeout for GPT TTS
     const currentTime = Date.now();
     
+    // Check global TTS stop flag first
+    if (globalTTSStopFlag) {
+        log(`[speakGPT] Global TTS stop flag is set, skipping TTS: "${text}"`);
+        return;
+    }
+    
     // Cancel any previous GPT TTS request to prevent delayed responses
     if (activeGPTTTSController) {
         log(`[speakGPT] Cancelling previous GPT TTS request to prevent delayed response`);
@@ -2029,6 +2054,12 @@ export async function speakGPT(text: string, signal?: AbortSignal): Promise<void
         
         // Create the TTS promise
         const ttsPromise = async () => {
+            // Check global stop flag before starting TTS
+            if (globalTTSStopFlag) {
+                log(`[speakGPT] Global TTS stop flag set during TTS preparation, aborting: "${text}"`);
+                throw new Error('TTS stopped by global flag');
+            }
+            
             // Force GPT TTS by using 'vibe_text' category
             const chunks: TokenChunk[] = [{
                 tokens: [text],
@@ -2140,6 +2171,121 @@ export async function readInEspeak(chunks: TokenChunk[], signal?: AbortSignal): 
     } catch (error) {
         log(`[readInEspeak] Error reading with Espeak: ${error}`);
         throw error;
+    }
+}
+
+/**
+ * Read tokens using macOS TTS - combines all tokens into one macOS say command for fast reading
+ * Uses the default macOS voice "yuna" for consistent terminal reading experience
+ * Supports playspeed adjustment via macOS say command rate parameter
+ */
+export async function readInMacOS(chunks: TokenChunk[], signal?: AbortSignal, voice: string = 'yuna'): Promise<void> {
+    try {
+        // Check if we're on macOS
+        if (process.platform !== 'darwin') {
+            log(`[readInMacOS] Not on macOS, falling back to readInEspeak`);
+            return await readInEspeak(chunks, signal);
+        }
+
+        // Filter out indentation earcons and combine all tokens into a single string
+        const textTokens: string[] = [];
+        
+        for (const chunk of chunks) {
+            for (const token of chunk.tokens) {
+                // Skip indentation earcons and empty tokens
+                if (token && token.trim().length > 0) {
+                    textTokens.push(token);
+                }
+            }
+        }
+        
+        if (textTokens.length === 0) {
+            log(`[readInMacOS] No text tokens to speak`);
+            return;
+        }
+        
+        const combinedText = textTokens.join('');
+        
+        // Calculate macOS say rate from playSpeed (say rate is words per minute, default ~175)
+        // playSpeed 1.0 = 175 wpm, playSpeed 1.5 = 262 wpm, playSpeed 0.8 = 140 wpm
+        const baseRate = 175;
+        const sayRate = Math.round(baseRate * config.playSpeed);
+        
+        log(`[readInMacOS] Reading combined text with macOS TTS (${voice}, rate: ${sayRate} wpm, playSpeed: ${config.playSpeed}x): "${combinedText}"`);
+        
+        // Use macOS say command directly for fastest response
+        const { spawn } = require('child_process');
+        
+        return new Promise<void>((resolve, reject) => {
+            // Check if signal is already aborted
+            if (signal?.aborted) {
+                log(`[readInMacOS] Signal already aborted, skipping TTS`);
+                resolve();
+                return;
+            }
+
+            const sayProcess = spawn('say', ['-v', voice, '-r', sayRate.toString(), combinedText], { 
+                stdio: 'ignore',
+                detached: false 
+            });
+
+            let resolved = false;
+
+            // Handle abort signal
+            const abortHandler = () => {
+                if (!resolved) {
+                    log(`[readInMacOS] Aborting macOS TTS`);
+                    try {
+                        sayProcess.kill('SIGTERM');
+                        setTimeout(() => {
+                            if (!sayProcess.killed) {
+                                sayProcess.kill('SIGKILL');
+                            }
+                        }, 100);
+                    } catch (e) {
+                        // Ignore kill errors
+                    }
+                    resolved = true;
+                    resolve();
+                }
+            };
+
+            if (signal) {
+                signal.addEventListener('abort', abortHandler);
+            }
+
+            sayProcess.on('close', (code: number | null) => {
+                if (!resolved) {
+                    resolved = true;
+                    if (signal) {
+                        signal.removeEventListener('abort', abortHandler);
+                    }
+                    if (code === 0) {
+                        log(`[readInMacOS] Successfully read with macOS TTS: "${combinedText}"`);
+                        resolve();
+                    } else {
+                        log(`[readInMacOS] macOS TTS exited with code ${code}, falling back to readInEspeak`);
+                        // Fallback to espeak if say command fails
+                        readInEspeak(chunks, signal).then(resolve).catch(reject);
+                    }
+                }
+            });
+
+            sayProcess.on('error', (error: Error) => {
+                if (!resolved) {
+                    resolved = true;
+                    if (signal) {
+                        signal.removeEventListener('abort', abortHandler);
+                    }
+                    log(`[readInMacOS] macOS TTS error: ${error}, falling back to readInEspeak`);
+                    // Fallback to espeak if say command fails
+                    readInEspeak(chunks, signal).then(resolve).catch(reject);
+                }
+            });
+        });
+    } catch (error) {
+        log(`[readInMacOS] Error with macOS TTS: ${error}, falling back to readInEspeak`);
+        return await readInEspeak(chunks, signal);
     }
 }
 
@@ -2488,12 +2634,31 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                                     return;
                                 }
                                 
-                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                // Start audio playback with frequent abort checking
+                                const playbackPromise = audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                                 
-                                // Check abort signal immediately after audio playback (critical for Korean TTS)
+                                // Create a race between playback and abort signal
+                                const abortPromise = new Promise<void>((resolve) => {
+                                    if (signal) {
+                                        const checkAbort = () => {
+                                            if (signal.aborted || aborted) {
+                                                log(`[speakTokenList] ABORTING during audio playback: "${token}"`);
+                                                audioPlayer.stopCurrentPlayback(true);
+                                                resolve();
+                                            } else {
+                                                setTimeout(checkAbort, 10); // Check every 10ms
+                                            }
+                                        };
+                                        checkAbort();
+                                    }
+                                });
+                                
+                                await Promise.race([playbackPromise, abortPromise]);
+                                
+                                // Final abort check after playback
                                 if (signal?.aborted || aborted) {
-                                    log(`[speakTokenList] ABORTED immediately after pre-generated audio playback: "${token}"`);
-                                    audioPlayer.stopCurrentPlayback(true); // Force immediate stop of any remaining audio
+                                    log(`[speakTokenList] ABORTED immediately after audio playback: "${token}"`);
+                                    audioPlayer.stopCurrentPlayback(true);
                                     return;
                                 }
                             } catch (error) {
@@ -2524,12 +2689,31 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                                     return;
                                 }
                                 
-                                await audioPlayer.playTtsAsPcm(ttsFilePath, panning);
+                                // Start audio playback with frequent abort checking
+                                const playbackPromise = audioPlayer.playTtsAsPcm(ttsFilePath, panning);
                                 
-                                // Check abort signal immediately after audio playback (critical for Korean TTS)
+                                // Create a race between playback and abort signal
+                                const abortPromise = new Promise<void>((resolve) => {
+                                    if (signal) {
+                                        const checkAbort = () => {
+                                            if (signal.aborted || aborted) {
+                                                log(`[speakTokenList] ABORTING during new TTS playback: "${token}"`);
+                                                audioPlayer.stopCurrentPlayback(true);
+                                                resolve();
+                                            } else {
+                                                setTimeout(checkAbort, 10); // Check every 10ms
+                                            }
+                                        };
+                                        checkAbort();
+                                    }
+                                });
+                                
+                                await Promise.race([playbackPromise, abortPromise]);
+                                
+                                // Final abort check after playback
                                 if (signal?.aborted || aborted) {
-                                    log(`[speakTokenList] ABORTED immediately after new TTS audio playback: "${token}"`);
-                                    audioPlayer.stopCurrentPlayback(true); // Force immediate stop of any remaining audio
+                                    log(`[speakTokenList] ABORTED immediately after new TTS playback: "${token}"`);
+                                    audioPlayer.stopCurrentPlayback(true);
                                     return;
                                 }
                             } catch (error) {
@@ -2662,6 +2846,11 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
         if (isKoreanTTS) {
             (global as any).koreanTTSActive = false;
             log(`[speakTokenList] Korean TTS protection disabled`);
+            
+            // Set a flag to indicate that memory cleanup should be attempted on next monitoring cycle
+            // This is safer than delayed cleanup which can conflict with new audio
+            (global as any).pendingMemoryCleanup = true;
+            log(`[speakTokenList] Marked memory cleanup as pending for next monitoring cycle`);
         }
         
         log(`[speakTokenList] Finished (cleanup completed)`);

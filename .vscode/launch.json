@@ -18,13 +18,13 @@
 			"name": "Launch Server",
 			"type": "node",
 			"request": "launch",
-			"runtimeExecutable": "/opt/homebrew/bin/node",
+			"runtimeExecutable": "/opt/homrbrew/bin/node",
 			"program": "${workspaceFolder}/dist/server/server.js",
 			"args": [
 				"--node-ipc"
 			],
 			"cwd": "${workspaceFolder}",
-			// "runtimeExecutable": "node",
+			"runtimeExecutable": "node",
 			"console": "integratedTerminal",
 			"skipFiles": [
 				"<node_internals>/**"
@@ -36,7 +36,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"/Users/gillosae/Desktop/lipcoder-test/boost2",
+				"/Users/gillosae/Desktop/lipcoder-test/debugging1",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

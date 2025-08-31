@@ -68,133 +68,203 @@ export function getASRRecordingActive(): boolean {
 
 export function stopAllAudio(): void {
 	// COMPREHENSIVE AUDIO STOPPING - Stop all types of audio immediately
-	console.log('[stopAllAudio] 🛑 STOP ALL AUDIO CALLED - starting comprehensive cleanup');
 	
 	// 1. Stop main audio player (TTS, PCM, WAV files) - MULTIPLE CALLS FOR SAFETY
-	console.log('[stopAllAudio] 1. Stopping main audio playback');
 	stopPlayback(); // First call
 	stopPlayback(); // Second call for safety
+	stopPlayback(); // Third call for extra safety
 	
 	// 2. Stop earcon playback (punctuation sounds, etc.)
-	console.log('[stopAllAudio] 2. Stopping earcon playback');
 	stopEarconPlayback();
 	
 	// 3. Stop audio minimap (continuous tones during fast navigation) 
-	console.log('[stopAllAudio] 3. Cleaning up audio minimap');
 	cleanupAudioMinimap();
 	
 	// 4. Abort the line reading controller (this will also stop image descriptions)
-	console.log('[stopAllAudio] 4. Aborting line reading controller');
 	lineAbortController.abort();
 	
 	// 5. Create a new controller for the next reading session
-	console.log('[stopAllAudio] 5. Creating new abort controller');
 	// @ts-ignore
 	lineAbortController = new AbortController();
 	
 	// 6. Clear the active flags
-	console.log('[stopAllAudio] 6. Clearing active flags');
 	setLineTokenReadingActive(false);
 	
 	// 7. Clear image description active flag if it's running
-	console.log('[stopAllAudio] 7. Clearing image description active flag');
 	try {
 		const { setImageDescriptionActive } = require('./image_description');
 		setImageDescriptionActive(false);
-		console.log('[stopAllAudio] 7a. Image description active flag cleared');
 	} catch (error) {
-		console.log('[stopAllAudio] 7b. Image description module not available (normal)');
+		// Image description module not available
 	}
 	
 	// 8. Stop vibe coding TTS if active (fix for Command+. not stopping vibe coding TTS)
-	console.log('[stopAllAudio] 8. Stopping vibe coding TTS if active');
 	try {
 		// Use synchronous require to avoid timing issues
 		const vibeCoding = require('./vibe_coding');
 		if (vibeCoding && vibeCoding.stopVibeCodingTTS) {
 			vibeCoding.stopVibeCodingTTS();
-			console.log('[stopAllAudio] 8a. Vibe coding TTS stopped');
-		} else {
-			console.log('[stopAllAudio] 8b. stopVibeCodingTTS function not available');
 		}
 		
 		// Also directly set vibe coding TTS active state to false
 		if (vibeCoding && vibeCoding.setVibeCodingTTSActive) {
 			vibeCoding.setVibeCodingTTSActive(false);
-			console.log('[stopAllAudio] 8c. Vibe coding TTS active state set to false');
 		}
 	} catch (error) {
-		console.log('[stopAllAudio] 8d. Error stopping vibe coding TTS (normal):', error);
+		// Vibe coding module not available
+	}
+	
+	// 8.5. Stop code analysis TTS if active (fix for Command+. not stopping code analysis TTS)
+	try {
+		const codeAnalysis = require('./code_analysis');
+		if (codeAnalysis && codeAnalysis.stopCodeAnalysisTTS) {
+			codeAnalysis.stopCodeAnalysisTTS();
+		}
+	} catch (error) {
+		// Code analysis module not available
 	}
 	
 	// 9. Stop GPT TTS and notification TTS (NEW - for notification말하기 중단)
-	console.log('[stopAllAudio] 9. Stopping GPT TTS and notification TTS');
 	try {
 		// Stop GPT TTS controller if active
 		stopGPTTTS();
-		console.log('[stopAllAudio] 9a. GPT TTS stopped');
 		
 		// Stop thinking audio if active
 		stopThinkingAudio();
-		console.log('[stopAllAudio] 9b. Thinking audio stopped');
 		
 	} catch (error) {
-		console.log('[stopAllAudio] 9c. Error stopping GPT TTS (normal):', error);
+		// GPT TTS module not available
 	}
 	
 	// 10. Force additional stop calls to ensure everything is terminated
-	console.log('[stopAllAudio] 10. Final safety stop calls');
 	stopPlayback(); // Third call
 	
 	// 11. Try to stop any remaining audio processes
-	console.log('[stopAllAudio] 11. Emergency audio cleanup');
 	try {
 		const { cleanupAudioResources } = require('../audio');
 		cleanupAudioResources();
-		console.log('[stopAllAudio] 11a. Audio resources cleaned up');
 		
 		// Also try direct audio player stop
 		const audioModule = require('../audio');
 		if (audioModule.audioPlayer && audioModule.audioPlayer.stopAll) {
 			audioModule.audioPlayer.stopAll();
-			console.log('[stopAllAudio] 11b. Direct audio player stopped');
 		}
 	} catch (error) {
-		console.log('[stopAllAudio] 11c. Audio cleanup error (normal):', error);
+		// Audio cleanup error - ignore
 	}
 	
 	// 12. Stop conversational ASR processing if active
-	console.log('[stopAllAudio] 12. Stopping conversational ASR processing');
 	try {
 		const conversationalModule = require('../conversational_asr');
 		// This will stop any ongoing LLM processing and TTS
 		if (conversationalModule.stopAllProcessing) {
 			conversationalModule.stopAllProcessing();
-			console.log('[stopAllAudio] 12a. Conversational ASR processing stopped');
 		}
 	} catch (error) {
-		console.log('[stopAllAudio] 12b. Error stopping conversational ASR (normal):', error);
+		// Conversational ASR module not available
 	}
 	
 	// 13. Stop terminal audio processing if active (avoid infinite loop)
-	console.log('[stopAllAudio] 13. Stopping terminal audio processing');
 	try {
 		// Just abort terminal controller directly to avoid circular calls
 		const terminalModule = require('./terminal');
 		if (terminalModule.terminalAbortController) {
 			terminalModule.terminalAbortController.abort();
-			console.log('[stopAllAudio] 13a. Terminal abort controller stopped');
 		}
 	} catch (error) {
-		console.log('[stopAllAudio] 13b. Error stopping terminal audio (normal):', error);
+		// Terminal module not available
 	}
 	
 	// 14. Clear audio stopping state to allow new audio
-	console.log('[stopAllAudio] 14. Clearing audio stopping state');
 	clearAudioStoppingState();
-	
-	// Note: stopping state cleared to allow new audio
-	console.log('[stopAllAudio] 🛑 ALL AUDIO STOPPED - comprehensive cleanup completed');
+}
+
+/**
+ * NUCLEAR OPTION: Force kill ALL audio processes immediately
+ * Use this when regular stopAllAudio() doesn't work
+ */
+export function forceKillAllAudio(): void {
+	try {
+		// 1. Multiple aggressive stop calls with immediate flag
+		for (let i = 0; i < 10; i++) {
+			stopPlayback();
+			stopEarconPlayback();
+			
+			// Also try direct audioPlayer access for immediate stopping
+			try {
+				const { audioPlayer } = require('../audio');
+				if (audioPlayer && audioPlayer.stopCurrentPlayback) {
+					audioPlayer.stopCurrentPlayback(true); // Force immediate
+				}
+			} catch (e) {}
+		}
+		
+		// 2. Force abort ALL controllers multiple times
+		for (let i = 0; i < 3; i++) {
+			lineAbortController.abort();
+			// @ts-ignore
+			lineAbortController = new AbortController();
+		}
+		
+		// 3. Force stop GPT TTS multiple times
+		for (let i = 0; i < 3; i++) {
+			stopGPTTTS();
+			stopThinkingAudio();
+		}
+		
+		// 4. Clear all audio state flags aggressively
+		setLineTokenReadingActive(false);
+		setASRRecordingActive(false);
+		
+		// 5. Try to kill any remaining audio processes via enhanced cleanup
+		try {
+			const { enhancedCleanupAudioResources } = require('../audio');
+			enhancedCleanupAudioResources();
+		} catch (e) {
+			// Enhanced cleanup not available
+		}
+		
+		// 6. Force clear audio minimap multiple times
+		for (let i = 0; i < 3; i++) {
+			cleanupAudioMinimap();
+		}
+		
+		// 7. Force stop all feature-specific TTS
+		try {
+			const vibeCoding = require('./vibe_coding');
+			if (vibeCoding?.stopVibeCodingTTS) {
+				for (let i = 0; i < 3; i++) {
+					vibeCoding.stopVibeCodingTTS();
+				}
+			}
+		} catch (e) {}
+		
+		try {
+			const codeAnalysis = require('./code_analysis');
+			if (codeAnalysis?.stopCodeAnalysisTTS) {
+				for (let i = 0; i < 3; i++) {
+					codeAnalysis.stopCodeAnalysisTTS();
+				}
+			}
+		} catch (e) {}
+		
+		try {
+			const imageDesc = require('./image_description');
+			if (imageDesc?.setImageDescriptionActive) {
+				imageDesc.setImageDescriptionActive(false);
+			}
+		} catch (e) {}
+		
+		// 8. Final safety cleanup
+		try {
+			const { cleanupAudioResources, clearAudioStoppingState } = require('../audio');
+			cleanupAudioResources();
+			clearAudioStoppingState();
+		} catch (e) {}
+		
+	} catch (error) {
+		console.error('[forceKillAllAudio] Error during nuclear stop:', error);
+	}
 }
 
 // Legacy function name for backward compatibility  
@@ -233,13 +303,16 @@ export function stopForNewLineReading(): void {
 export function registerStopReading(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('lipcoder.stopReadLineTokens', () => {
-			console.log('[stopReadLineTokens] Command called - delegating to stopAllAudio');
 			stopAllAudio();
 		}),
 		
 		vscode.commands.registerCommand('lipcoder.stopAllAudio', () => {
-			console.log('[stopAllAudio] Command called directly');
 			stopAllAudio();
+		}),
+		
+		// NUCLEAR OPTION: Force kill all audio when regular stop doesn't work
+		vscode.commands.registerCommand('lipcoder.forceKillAllAudio', () => {
+			forceKillAllAudio();
 		})
 	);
 }

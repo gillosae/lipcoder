@@ -96,7 +96,6 @@ class ActivityLogger {
                 fs.writeFileSync(testFile, 'test');
                 fs.unlinkSync(testFile);
                 
-                console.log(`[ActivityLogger] Using log directory: ${dir}`);
                 return dir;
             } catch (error) {
                 console.warn(`[ActivityLogger] Cannot use directory ${dir}: ${error}`);
@@ -141,7 +140,6 @@ class ActivityLogger {
             this.logStream.write(JSON.stringify(header) + '\n');
             
             this.isInitialized = true;
-            console.log(`[ActivityLogger] Initialized with log file: ${this.currentLogFile}`);
 
             // Start periodic flush
             this.startPeriodicFlush();

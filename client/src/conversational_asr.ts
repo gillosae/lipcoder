@@ -1219,7 +1219,10 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
             // Try CommandRouter first for comprehensive command handling
             try {
                 log(`[ConversationalASR] Creating CommandRouter for command execution...`);
-                const commandRouter = new CommandRouter();
+                const commandRouter = new CommandRouter({ 
+                    enableLogging: true,
+                    showNotifications: true 
+                });
                 
                 // Set editor context for proper command execution
                 const editor = vscode.window.activeTextEditor;
@@ -1289,6 +1292,30 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                     return true; // Command executed successfully
                 } catch (error) {
                     log(`[ConversationalASR] Error executing image analysis: ${error}`);
+                    return false;
+                }
+            }
+            
+            // Check for terminal explanation commands
+            const terminalExplanationPatterns = [
+                /터미널.*설명/i,
+                /terminal.*explain/i,
+                /터미널.*결과.*설명/i,
+                /explain.*terminal.*output/i,
+                /터미널.*출력.*설명/i,
+                /설명.*터미널/i,
+                /describe.*terminal/i
+            ];
+            
+            const isTerminalExplanation = terminalExplanationPatterns.some(pattern => pattern.test(text));
+            
+            if (isTerminalExplanation) {
+                log(`[ConversationalASR] 💻 Terminal explanation command detected: "${intent.originalText}"`);
+                try {
+                    await vscode.commands.executeCommand('lipcoder.explainTerminalOutput');
+                    return true; // Command executed successfully
+                } catch (error) {
+                    log(`[ConversationalASR] Error executing terminal explanation: ${error}`);
                     return false;
                 }
             }
@@ -1441,7 +1468,10 @@ Generate 3-4 helpful, specific suggestions for what the user might want to do ne
                 if (fileType) {
                     try {
                         // Create CommandRouter with file type parameters
-                        const commandRouter = new CommandRouter();
+                        const commandRouter = new CommandRouter({ 
+                            enableLogging: true,
+                            showNotifications: true 
+                        });
                         
                         // Create a modified text that CommandRouter can understand
                         const modifiedText = `open ${fileType} file`;

@@ -139,6 +139,13 @@ export class ASRClient {
             logInfo('[ASR] Starting real microphone stream...');
             log(`[ASR] Stream configuration: chunkDuration=${this.options.chunkDuration}, sampleRate=${this.options.sampleRate}, serverUrl=${this.options.serverUrl}`);
             
+            // Clear any existing audio buffers and state to prevent text mixing
+            this.audioBuffer = [];
+            this.chunkCount = 0;
+            this.totalAudioProcessed = 0;
+            this.startTime = Date.now();
+            log('[ASR] Cleared audio buffers and reset state to prevent text mixing');
+            
             // Import microphone module with fallback
             let microphoneInitialized = false;
             
@@ -313,6 +320,12 @@ export class ASRClient {
      */
     stopStreaming(): void {
         logWarning('[ASR] Stopping real microphone stream...');
+        
+        // Clear audio buffers and state to prevent text mixing in next session
+        this.audioBuffer = [];
+        this.chunkCount = 0;
+        this.totalAudioProcessed = 0;
+        log('[ASR] Cleared audio buffers and reset state on stop to prevent text mixing');
         
         if (this.chunkTimer) {
             clearInterval(this.chunkTimer);

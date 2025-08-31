@@ -64,13 +64,10 @@ export function getTokenSound(token: string): string | null {
         const baseName = path.basename(SPECIAL_CHAR_FILES[token], '.pcm');
         const pcm = path.join(config.specialPath(), `${baseName}.pcm`);
         const wav = path.join(config.specialPath(), `${baseName}.wav`);
-        console.log(`[getTokenSound] Checking for "${token}": specialPath=${config.specialPath()}, pcm=${pcm}, exists=${fs.existsSync(pcm)}`);
         if (fs.existsSync(pcm)) {
-            console.log(`[getTokenSound] Using backend-specific PCM: ${pcm}`);
             return pcm;
         }
         if (fs.existsSync(wav)) {
-            console.log(`[getTokenSound] Using backend-specific WAV: ${wav}`);
             return wav;
         }
         // Legacy fallback to old special folder

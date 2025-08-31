@@ -3,6 +3,8 @@ import { log, logError, logSuccess, logWarning } from './utils';
 import { getOpenAIClient } from './llm';
 import { analyzeCodeWithQuestion } from './features/code_analysis';
 import { askLLMQuestion } from './features/llm_question';
+import { selectAndAnalyzeImage, findAndAnalyzeImageWithQuestion } from './features/image_description';
+import { explainTerminalOutput } from './features/terminal_error_fixer';
 import { startThinkingAudio, stopThinkingAudio, speakTokenList, TokenChunk } from './audio';
 import { logCommandExecution, logFeatureUsage } from './activity_logger';
 import { comprehensiveEventTracker } from './comprehensive_event_tracker';
@@ -709,15 +711,23 @@ Available command categories:
 4. PARENT_NAVIGATION - Navigate to parent scope (e.g., "go to parent", "move up", "parent")
 5. LIPCODER_COMMAND - LipCoder specific commands (e.g., "symbol tree", "function list", "breadcrumb")
 6. SYNTAX_ERROR_COMMAND - Syntax error and diagnostic commands (e.g., "syntax error list", "error list", "errors", "next error", "previous error")
-7. TERMINAL_ERROR_FIX - Fix code based on terminal errors (e.g., "터미널 에러를 바탕으로 코드를 고쳐줘", "터미널 코드 바탕으로 코드고쳐줘", "fix terminal errors", "fix code based on terminal output", "터미널 에러 수정해줘", "터미널 오류 고쳐줘")
+7. TERMINAL_ERROR_FIX - Fix code based on terminal errors (e.g., "터미널 에러를 바탕으로 코드를 고쳐줘", "터미널 코드 바탕으로 코드고쳐줘", "fix terminal errors", "fix code based on terminal output", "터미널 에러 수정해줘", "터미널 오류 고쳐줘", "에러 고쳐줘")
 8. FILE_OPERATION - File operations (e.g., "save file", "open file", "new file", "파이썬 파일 열어줘", "open python file", "자바스크립트 파일 열어", "open javascript file")
 9. EDITOR_OPERATION - Editor operations (e.g., "copy", "paste", "undo", "format")
 10. NAVIGATION_OPERATION - General navigation (e.g., "find", "search", "replace")
 11. FILE_EXECUTION - Execute files based on their extension (e.g., "run main.py", "execute test.js", "run university.py", "실행해 script.sh", "이 파일 실행해줘", "실행해줘")
 12. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
-13. CODE_ANALYSIS - Analyze code and answer questions (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function")
-14. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
-15. NOT_A_COMMAND - Just regular text to type
+13. CODE_ANALYSIS - Analyze code and answer questions about CODE ONLY (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function", "코드 설명해줘", "이 코드 뭐하는 코드야?", "함수 설명해줘")
+14. IMAGE_DESCRIPTION - Describe images, pictures, or visual content ONLY (e.g., "그림 설명해줘", "이미지 설명해줘", "describe image", "explain this picture", "what's in this image?", "사진 설명해줘", "그림 분석해줘")
+15. TERMINAL_OUTPUT_EXPLANATION - Explain terminal output, terminal results, or terminal errors ONLY (e.g., "터미널 결과 설명해줘", "터미널 출력 설명해줘", "터미널 에러 설명해줘", "explain terminal output", "what does this terminal output mean?", "결과 설명해줘", "터미널 설명해줘", "터미널 분석해줘")
+16. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
+17. NOT_A_COMMAND - Just regular text to type
+
+CRITICAL CLASSIFICATION RULES:
+- If the command contains "그림" or "이미지" or "사진" → MUST be IMAGE_DESCRIPTION
+- If the command contains "터미널" → MUST be TERMINAL_OUTPUT_EXPLANATION (unless it says "바탕으로 코드" then TERMINAL_ERROR_FIX)
+- If the command contains "코드 설명" or "함수 설명" → MUST be CODE_ANALYSIS
+- Be very specific about the category - do not confuse similar categories
 
 Respond with ONLY valid JSON (no markdown code blocks):
 {
@@ -735,7 +745,9 @@ Respond with ONLY valid JSON (no markdown code blocks):
     "codeDescription": "function that gets parameter x and y and returns sum",
     "generationType": "complete|create|test",
     "question": "what does this function do?",
-    "generalQuestion": "what is a sine function?"
+    "generalQuestion": "what is a sine function?",
+    "imageQuestion": "describe this image",
+    "terminalExplanation": "explain terminal output"
   },
   "reasoning": "Brief explanation"
 }
@@ -776,8 +788,8 @@ Only include parameters relevant to the category. Use null for missing parameter
                 log(`[CommandRouter] Reasoning: ${commandInfo.reasoning}`);
             }
 
-            // Only execute if confidence is high enough
-            if (commandInfo.confidence < 0.7) {
+            // Only execute if confidence is high enough (lowered threshold for better detection)
+            if (commandInfo.confidence < 0.6) {
                 if (this.options.enableLogging) {
                     log(`[CommandRouter] ⚠️ Low confidence (${commandInfo.confidence}), skipping execution`);
                 }
@@ -850,6 +862,12 @@ Only include parameters relevant to the category. Use null for missing parameter
                 
                 case 'CODE_ANALYSIS':
                     return await this.executeLLMCodeAnalysis(parameters, originalText);
+                
+                case 'IMAGE_DESCRIPTION':
+                    return await this.executeLLMImageDescription(parameters, originalText);
+                
+                case 'TERMINAL_OUTPUT_EXPLANATION':
+                    return await this.executeLLMTerminalOutputExplanation(parameters, originalText);
                 
                 case 'LLM_QUESTION':
                     return await this.executeLLMGeneralQuestion(parameters, originalText);
@@ -1491,6 +1509,13 @@ Only include parameters relevant to the category. Use null for missing parameter
                 log(`[CommandRouter] 🔍 Executing code analysis with question: "${question}"`);
             }
             
+            // CRITICAL: Stop all audio first to prevent TTS conflicts
+            const { stopAllAudio } = require('./features/stop_reading');
+            stopAllAudio();
+            
+            // Small delay to ensure audio cleanup completes
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
             // Call the code analysis function
             await analyzeCodeWithQuestion(question);
             
@@ -1503,6 +1528,80 @@ Only include parameters relevant to the category. Use null for missing parameter
         } catch (error) {
             logError(`[CommandRouter] Code analysis error: ${error}`);
             vscode.window.showErrorMessage(`Code analysis failed: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute image description command
+     */
+    private async executeLLMImageDescription(parameters: any, originalText: string): Promise<boolean> {
+        try {
+            // Extract image question from parameters or use original text
+            const imageQuestion = parameters?.imageQuestion || originalText;
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🖼️ Executing image description with question: "${imageQuestion}"`);
+            }
+            
+            // CRITICAL: Stop all audio first to prevent TTS conflicts
+            const { stopAllAudio } = require('./features/stop_reading');
+            stopAllAudio();
+            
+            // Small delay to ensure audio cleanup completes
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Check if this is a general image description or a specific question
+            if (imageQuestion.includes('그림 설명해줘') || imageQuestion.includes('이미지 설명해줘') || 
+                imageQuestion.includes('describe image') || imageQuestion.includes('explain this picture')) {
+                // General image description
+                await selectAndAnalyzeImage();
+            } else {
+                // Specific question about image
+                await findAndAnalyzeImageWithQuestion(imageQuestion);
+            }
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ✅ Image description completed successfully`);
+            }
+            
+            return true;
+            
+        } catch (error) {
+            logError(`[CommandRouter] Image description error: ${error}`);
+            vscode.window.showErrorMessage(`Image description failed: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Execute terminal output explanation command
+     */
+    private async executeLLMTerminalOutputExplanation(parameters: any, originalText: string): Promise<boolean> {
+        try {
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] 🖥️ Executing terminal output explanation: "${originalText}"`);
+            }
+            
+            // CRITICAL: Stop all audio first to prevent TTS conflicts
+            const { stopAllAudio } = require('./features/stop_reading');
+            stopAllAudio();
+            
+            // Small delay to ensure audio cleanup completes
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Call the terminal explanation function
+            await explainTerminalOutput();
+            
+            if (this.options.enableLogging) {
+                log(`[CommandRouter] ✅ Terminal output explanation completed successfully`);
+            }
+            
+            return true;
+            
+        } catch (error) {
+            logError(`[CommandRouter] Terminal output explanation error: ${error}`);
+            vscode.window.showErrorMessage(`Terminal output explanation failed: ${error}`);
             return false;
         }
     }
@@ -1970,6 +2069,12 @@ Generate appropriate ${languageId} code that:
                 pattern: /^(terminal read char|read char|read current char)$/i,
                 command: 'lipcoder.terminalReadCurrentChar',
                 description: 'Read current terminal character',
+                preventDefault: true
+            },
+            {
+                pattern: /^(terminal read all|read all terminal|read everything)$/i,
+                command: 'lipcoder.terminalReadAll',
+                description: 'Read all terminal output at once',
                 preventDefault: true
             },
             {
@@ -3111,6 +3216,10 @@ export async function routeRealtimeCommand(result: RealtimeCommandResult): Promi
                     return true;
                 }
                 break;
+                
+            case 'explainTerminalOutput':
+                await vscode.commands.executeCommand('lipcoder.explainTerminalOutput');
+                return true;
                 
             case 'selectLine':
                 if (result.parameters?.line) {

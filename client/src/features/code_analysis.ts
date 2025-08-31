@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { speakTokenList, speakGPT, TokenChunk } from '../audio';
+import { speakGPT } from '../audio';
 import { log, logError, logSuccess } from '../utils';
 import { getOpenAIClient } from '../llm';
 
@@ -175,12 +175,12 @@ Special handling for Korean function analysis questions:
 - When asked "지금 내가 있는 함수는 뭐하는 함수야?" or similar, focus on explaining the current function's purpose, parameters, return value, and main logic.
 - Provide detailed explanations in Korean including what the function does, how it works, and its role in the codebase.
 
-IMPORTANT: Keep your answer concise and focused (under 150 characters for the main answer). Provide a clear, direct response in the same language as the question. If the question is in Korean, answer in Korean. If in English, answer in English.
+IMPORTANT: Keep your answer very concise and focused (maximum 10 lines or 300 characters for the main answer). Provide a clear, direct response in the same language as the question. If the question is in Korean, answer in Korean. If in English, answer in English. Focus only on the core essence without unnecessary details.
 
 Response format:
 {
-  "answer": "Direct, concise answer to the question (under 150 characters)",
-  "details": "Additional details if needed (optional)",
+  "answer": "Direct, concise answer to the question (maximum 10 lines or 300 characters)",
+  "details": "Additional details if needed (optional, keep brief)",
   "statistics": {
     "functions": number_of_functions,
     "variables": number_of_global_variables,
@@ -336,12 +336,37 @@ async function showAndSpeakResult(result: CodeAnalysisResult): Promise<void> {
     logSuccess(`[CodeAnalysis] Analysis completed for: "${question}"`);
 }
 
+// Track if code analysis TTS is currently active
+let codeAnalysisTTSActive = false;
+
+/**
+ * Stop code analysis TTS if active
+ */
+export function stopCodeAnalysisTTS(): void {
+    if (codeAnalysisTTSActive) {
+        log('[CodeAnalysis] Stopping code analysis TTS - Command+. pressed');
+        codeAnalysisTTSActive = false;
+        
+        // Stop GPT TTS directly
+        try {
+            const { stopGPTTTS } = require('../audio');
+            stopGPTTTS();
+            log('[CodeAnalysis] GPT TTS stopped successfully');
+        } catch (error) {
+            log(`[CodeAnalysis] Error stopping GPT TTS: ${error}`);
+        }
+    }
+}
+
 /**
  * Convert analysis result to speech using simple TTS approach
  */
 async function speakAnalysisResult(answer: string): Promise<void> {
     try {
         log(`[CodeAnalysis] 🔊 Speaking analysis result: "${answer}"`);
+        
+        // Set active flag
+        codeAnalysisTTSActive = true;
         
         // Truncate very long responses to prevent filename length errors
         let speechText = answer;
@@ -362,16 +387,26 @@ async function speakAnalysisResult(answer: string): Promise<void> {
             log(`[CodeAnalysis] 🔊 Truncated long response from ${answer.length} to ${speechText.length} characters`);
         }
         
-        // Use GPT voice for code analysis responses (force OpenAI TTS)
-        const chunks: TokenChunk[] = [{
-            tokens: [speechText],
-            category: 'vibe_text'  // Force OpenAI TTS for code analysis responses
-        }];
+        // Get current lineAbortController dynamically to ensure we have the latest one
+        const { lineAbortController } = require('./stop_reading');
         
-        await speakTokenList(chunks);
+        // Use speakGPT directly for better command+. support
+        await speakGPT(speechText, lineAbortController.signal);
         log(`[CodeAnalysis] 🔊 Speech completed successfully`);
         
+        // Clear active flag on successful completion
+        codeAnalysisTTSActive = false;
+        
     } catch (error) {
+        // Clear active flag on error
+        codeAnalysisTTSActive = false;
+        
+        // Check if error is due to abort signal (command+. pressed)
+        if (error instanceof Error && error.name === 'AbortError') {
+            log(`[CodeAnalysis] 🔊 Speech aborted by user (command+.)`);
+            return;
+        }
+        
         logError(`[CodeAnalysis] 🚨 Speech failed: ${error}`);
         
         // Fallback: show status bar message indicating speech failure

@@ -136,13 +136,10 @@ export function findTokenSound(token: string): string | null {
         // First check backend-specific special folder
         const specPcm = path.join(config.specialPath(), `${specialName}.pcm`);
         const specWav = path.join(config.specialPath(), `${specialName}.wav`);
-        console.log(`[findTokenSound] Checking for "${token}" -> "${specialName}": specialPath=${config.specialPath()}, specPcm=${specPcm}, exists=${fs.existsSync(specPcm)}`);
         if (fs.existsSync(specPcm)) {
-            console.log(`[findTokenSound] Using backend-specific PCM: ${specPcm}`);
             return specPcm;
         }
         if (fs.existsSync(specWav)) {
-            console.log(`[findTokenSound] Using backend-specific WAV: ${specWav}`);
             return specWav;
         }
         // Legacy fallback: old 'special' folder without suffix

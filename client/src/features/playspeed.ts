@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { config } from '../config';
+import { log } from '../utils';
 
 /**
  * Registers the command to adjust playback speed.
@@ -88,7 +89,7 @@ export function registerPlaySpeed(context: vscode.ExtensionContext) {
                     vscode.window.showInformationMessage(
                         `LipCoder: Cleared ${deletedCount} cached audio files. Audio should sound cleaner now.`
                     );
-                    console.log(`[ClearCache] Deleted ${deletedCount} time-stretched cache files`);
+                    log(`[ClearCache] Deleted ${deletedCount} time-stretched cache files`);
                 } else {
                     vscode.window.showInformationMessage('LipCoder: Audio cache was already empty.');
                 }
@@ -106,7 +107,7 @@ export function registerPlaySpeed(context: vscode.ExtensionContext) {
                             deletedCount++;
                         }
                     }
-                    console.log(`[ClearCache] Deleted ${deletedCount} TTS cache files`);
+                    log(`[ClearCache] Deleted ${deletedCount} TTS cache files`);
                 }
                 
             } catch (error) {

@@ -55,7 +55,6 @@ export function registerDebugOutput(context: ExtensionContext) {
             logWarning(`[TEST] ${timestamp} - Testing warning logging`);
             logInfo(`[TEST] ${timestamp} - Testing info logging`);
             
-            console.log(`[TEST] ${timestamp} - Direct console.log test`);
             lipcoderLog.appendLine(`[TEST] ${timestamp} - Direct output channel test`);
             
             // Show the output channel

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import { speakTokenList, speakGPT, TokenChunk, playWave, clearAudioStoppingState, cleanupAudioResources, readInEspeak } from '../audio';
+import { speakTokenList, speakGPT, TokenChunk, playWave, clearAudioStoppingState, cleanupAudioResources } from '../audio';
 import { stopReading, stopAllAudio, stopForNewLineReading, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 import { logWarning, logError, logSuccess, log } from '../utils';
@@ -236,8 +236,8 @@ async function speakTerminalTokens(chunks: TokenChunk[], description: string): P
     // NUCLEAR STOP - Kill everything first
     stopTerminalAudio();
     
-    // Short wait for audio termination (reduced from 300ms to 50ms for responsiveness)
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // Minimal wait for audio termination - reduced for faster response
+    await new Promise(resolve => setTimeout(resolve, 10));
     
     // TRIPLE CHECK - Make sure we should still speak
     if (terminalAbortController.signal.aborted) {
@@ -265,6 +265,8 @@ async function speakTerminalTokens(chunks: TokenChunk[], description: string): P
         
         // Use both terminal and global abort controllers for comprehensive stopping
         const combinedSignal = AbortSignal.any([terminalAbortController.signal, lineAbortController.signal]);
+        
+        // Use speakTokenList for proper token parsing like line reading (with playspeed support)
         await speakTokenList(chunks, combinedSignal);
         log(`[Terminal] ✅ Finished speaking: ${description}`);
     } catch (error) {
@@ -433,15 +435,77 @@ function updateWordNavigationState(): void {
 }
 
 /**
- * Convert a terminal line into a single token chunk for batch reading
+ * Convert a terminal line into properly parsed token chunks like line reading
+ * This applies the same parsing logic as read_line_tokens.ts for consistent behavior
  */
 function parseTerminalLineToTokens(line: string): TokenChunk[] {
-    // Return the entire line as a single token chunk for batch processing
-    // This avoids individual token-by-token readInEspeak calls
-    return [{
-        tokens: [line],
-        category: undefined
-    }];
+    if (!line || line.trim().length === 0) {
+        return [];
+    }
+
+    // Simple tokenization - split by spaces and common separators while preserving them
+    const tokens: string[] = [];
+    let currentToken = '';
+    
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        // Check if this is a separator character
+        if (/[\s()[\]{}<>"'`,.;:_=+&*@^$!%?#~₩\-/|\\]/.test(char)) {
+            // Add current token if it exists
+            if (currentToken.length > 0) {
+                tokens.push(currentToken);
+                currentToken = '';
+            }
+            // Add separator as its own token (skip spaces for cleaner reading)
+            if (char !== ' ' && char !== '\t') {
+                tokens.push(char);
+            }
+        } else {
+            currentToken += char;
+        }
+    }
+    
+    // Add final token if exists
+    if (currentToken.length > 0) {
+        tokens.push(currentToken);
+    }
+
+    // Convert tokens to TokenChunks with appropriate categories
+    const chunks: TokenChunk[] = [];
+    
+    for (const token of tokens) {
+        let category: string | undefined = undefined;
+        
+        // Categorize tokens similar to line reading
+        if (token.length === 1) {
+            // Single character - check if it's a special character
+            if (/[()[\]{}<>"'`,.;:_=+&*@^$!%?#~₩\-/|\\]/.test(token)) {
+                category = 'type'; // Will use earcons
+            } else if (/[a-zA-Z0-9]/.test(token)) {
+                category = 'variable'; // Alphanumeric characters
+            }
+        } else {
+            // Multi-character tokens
+            if (/^\d+$/.test(token)) {
+                category = 'literal'; // Numbers
+            } else if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(token)) {
+                category = 'variable'; // Identifiers
+            } else if (token.includes('/') || token.includes('\\') || token.includes('.')) {
+                category = 'literal'; // Paths and filenames
+            } else {
+                category = 'variable'; // Default for other text
+            }
+        }
+        
+        chunks.push({
+            tokens: [token],
+            category: category,
+            panning: undefined // Terminal reading doesn't use panning
+        });
+    }
+    
+    return chunks;
 }
 
 function speakSingleChar(ch: string): Promise<void> {
@@ -907,7 +971,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
             pendingSuggestions.push(...highPrioritySuggestions);
         }
         // We still want to give a *short* audible status of run result even if dialog is active
-        await readInEspeak([{ tokens: [summary], category: undefined }], lineAbortController.signal);
+        await speakTokenList([{ tokens: [summary], category: undefined }], lineAbortController.signal);
         return;
     }
 
@@ -917,7 +981,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
         log('[Terminal] Too soon for new suggestions, queuing...');
         pendingSuggestions.push(...suggestions);
         // still speak one-line status
-        await readInEspeak([{ tokens: [summary], category: undefined }], lineAbortController.signal);
+        await speakTokenList([{ tokens: [summary], category: undefined }], lineAbortController.signal);
         return;
     }
 
@@ -947,7 +1011,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
         popupMessage = `Error running ${fileLabel}. ${errBrief}.${maybe}`;
         actionButtons.push('Go to error line');
         // Speak the error message right away so it is read out even if user navigates to error line
-        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
+        await speakTokenList([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
         spoken = true;
     }
 
@@ -973,7 +1037,7 @@ async function showTerminalOutputSummary(analysis: TerminalAnalysis): Promise<vo
 
     // Speak the same concise message (if not already spoken for error case)
     if (!spoken) {
-        await readInEspeak([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
+        await speakTokenList([{ tokens: [popupMessage], category: 'vibe_text' }], lineAbortController.signal);
     }
 }
 
@@ -1016,7 +1080,7 @@ async function showCodeExecutionSuggestions(suggestions: CodeExecutionSuggestion
             log(`[Terminal] User selected suggestion: ${choice.label} - ${choice.instruction}`);
             
             // Speak the selection with explanation
-            await readInEspeak([{
+            await speakTokenList([{
                 tokens: [`Selected: ${choice.label.replace(/^[🚨🔧🔄🗂️📦🏷️🧪✅🐍🚀🔬⚡📋]\s*/, '')}. ${choice.description}`],
                 category: undefined
             }]);
@@ -1496,7 +1560,7 @@ function updateScreenBuffer(data: string): void {
 /**
  * Create PTY-based terminal with screen buffer capture
  */
-function createPtyTerminal(pty: any): void {
+async function createPtyTerminal(pty: any): Promise<void> {
     logSuccess('[Terminal] Creating PTY-based terminal with screen buffer');
     hasNodePty = true;
     
@@ -1508,8 +1572,67 @@ function createPtyTerminal(pty: any): void {
     currentInputBuffer = '';
     isReadingMode = false;
 
-    // Spawn shell with proper encoding for Korean support
-    const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL']!;
+    // Spawn shell with proper encoding for Korean support and better error handling
+    let shell: string;
+    if (process.platform === 'win32') {
+        shell = process.env.COMSPEC || 'cmd.exe';
+    } else {
+        const fs = require('fs');
+        
+        // Function to validate shell (exists and is executable)
+        function isValidShell(shellPath: string): boolean {
+            try {
+                if (!fs.existsSync(shellPath)) {
+                    log(`[Terminal] Shell does not exist: ${shellPath}`);
+                    return false;
+                }
+                
+                const stats = fs.statSync(shellPath);
+                if (!stats.isFile()) {
+                    log(`[Terminal] Shell is not a file: ${shellPath}`);
+                    return false;
+                }
+                
+                // Check if executable (basic check)
+                try {
+                    fs.accessSync(shellPath, fs.constants.F_OK | fs.constants.X_OK);
+                    log(`[Terminal] Shell is valid and executable: ${shellPath}`);
+                    return true;
+                } catch (accessError) {
+                    log(`[Terminal] Shell exists but not executable: ${shellPath} - ${accessError}`);
+                    return false;
+                }
+            } catch (error) {
+                log(`[Terminal] Error validating shell ${shellPath}: ${error}`);
+                return false;
+            }
+        }
+        
+        // Try shells in order of preference with validation
+        const shellCandidates = [
+            process.env.SHELL,
+            '/bin/bash',
+            '/bin/sh',
+            '/usr/bin/bash',
+            '/usr/bin/sh',
+            '/bin/zsh'  // Move zsh to end as it seems problematic
+        ].filter(Boolean) as string[];
+        
+        shell = '/bin/sh'; // Safe default
+        
+        for (const candidate of shellCandidates) {
+            if (isValidShell(candidate)) {
+                shell = candidate;
+                log(`[Terminal] Selected shell: ${shell}`);
+                break;
+            }
+        }
+        
+        if (!isValidShell(shell)) {
+            throw new Error(`No valid shell found. Tried: ${shellCandidates.join(', ')}`);
+        }
+    }
+    
     const env = { ...process.env };
     
     // Ensure UTF-8 encoding for Korean support
@@ -1519,12 +1642,56 @@ function createPtyTerminal(pty: any): void {
         env.LC_CTYPE = env.LC_CTYPE || 'en_US.UTF-8';
     }
     
-    const ptyProcess = pty.spawn(shell, [], {
-        name: 'xterm-color',
-        cwd: vscode.workspace.workspaceFolders?.[0].uri.fsPath,
-        env: env,
-        encoding: 'utf8' // Explicitly set UTF-8 encoding
-    });
+    log(`[Terminal] Attempting to spawn shell: ${shell}`);
+    
+    let ptyProcess: any;
+    try {
+        // More conservative PTY options to avoid posix_spawnp issues
+        const ptyOptions = {
+            name: 'xterm-256color',
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
+            env: env,
+            encoding: 'utf8',
+            // Add these options to help with spawn issues
+            cols: 80,
+            rows: 24,
+            handleFlowControl: false,
+            experimentalUseConpty: false  // Disable Windows ConPTY if on Windows
+        };
+        
+        log(`[Terminal] Spawning PTY with options: ${JSON.stringify({
+            shell,
+            cwd: ptyOptions.cwd,
+            cols: ptyOptions.cols,
+            rows: ptyOptions.rows
+        })}`);
+        
+        ptyProcess = pty.spawn(shell, [], ptyOptions);
+        log(`[Terminal] Successfully spawned PTY process with shell: ${shell}`);
+    } catch (spawnError) {
+        logError(`[Terminal] Failed to spawn PTY with shell ${shell}: ${spawnError}`);
+        
+        // Try with even more basic options as last resort
+        if (shell !== '/bin/sh') {
+            log(`[Terminal] Retrying with /bin/sh as last resort`);
+            try {
+                ptyProcess = pty.spawn('/bin/sh', [], {
+                    name: 'xterm',
+                    cwd: process.cwd(),
+                    env: { ...process.env },
+                    encoding: 'utf8',
+                    cols: 80,
+                    rows: 24
+                });
+                log(`[Terminal] Successfully spawned PTY process with /bin/sh fallback`);
+            } catch (fallbackError) {
+                logError(`[Terminal] Even /bin/sh fallback failed: ${fallbackError}`);
+                throw spawnError; // Throw original error
+            }
+        } else {
+            throw spawnError;
+        }
+    }
     
     // Store current process reference
     currentPtyProcess = ptyProcess;
@@ -2170,6 +2337,8 @@ export async function goToLastDetectedError(): Promise<void> {
     }
 }
 
+
+
 /**
  * Register terminal commands with simple navigation
  */
@@ -2181,27 +2350,35 @@ export function registerTerminalReader(context: ExtensionContext) {
             await vscode.commands.executeCommand('lipcoder.openTerminal');
             
             vscode.window.showInformationMessage('Terminal closed - LipCoder terminal opened', { modal: false });
-            await speakGPT('Terminal closed, LipCoder terminal opened', lineAbortController.signal);
+            await speakTokenList([{ tokens: ['Terminal closed, LipCoder terminal opened'], category: undefined }], lineAbortController.signal);
         }
     });
     
     context.subscriptions.push(terminalCloseListener);
     context.subscriptions.push(
         // Open LipCoder terminal
-        vscode.commands.registerCommand('lipcoder.openTerminal', () => {
+        vscode.commands.registerCommand('lipcoder.openTerminal', async () => {
             let pty: any;
             try {
                 // Try to load node-pty with better error handling
                 pty = require('node-pty');
                 if (pty && typeof pty.spawn === 'function') {
-                    createPtyTerminal(pty);
+                    log('[Terminal] node-pty loaded successfully, creating PTY terminal');
+                    await createPtyTerminal(pty);
                 } else {
                     throw new Error('node-pty loaded but spawn function not available');
                 }
             } catch (err) {
-                logError(`[Terminal] Failed to load node-pty: ${err}`);
-                logWarning(`[Terminal] Using fallback terminal mode`);
-                createFallbackTerminal();
+                logError(`[Terminal] Failed to load or use node-pty: ${err}`);
+                
+                // If it's a spawn error, provide more specific guidance
+                if (err && err.toString().includes('posix_spawnp failed')) {
+                    logError('[Terminal] posix_spawnp failed - this usually indicates shell path or permission issues');
+                    vscode.window.showErrorMessage('Terminal failed to start: Shell execution error. Check your shell configuration.');
+                } else {
+                    logWarning(`[Terminal] Using fallback terminal mode`);
+                    createFallbackTerminal();
+                }
             }
         }),
 
@@ -2214,28 +2391,42 @@ export function registerTerminalReader(context: ExtensionContext) {
                 // Current terminal is already a lipcoder terminal, just focus it
                 log('[Terminal] Current terminal is already a LipCoder terminal, focusing it');
                 await vscode.commands.executeCommand('workbench.action.terminal.focus');
-                await speakGPT('In lipcoder terminal', lineAbortController.signal);
+                await speakTokenList([{ tokens: ['In lipcoder terminal'], category: undefined }], lineAbortController.signal);
             } else {
                 // Current terminal is not a lipcoder terminal, open a new lipcoder terminal
                 log('[Terminal] Current terminal is not a LipCoder terminal, opening new LipCoder terminal');
                 let pty: any;
                 try {
                     pty = require('node-pty');
-                    createPtyTerminal(pty);
+                    if (pty && typeof pty.spawn === 'function') {
+                        await createPtyTerminal(pty);
+                        await speakTokenList([{ tokens: ['Opened lipcoder terminal'], category: undefined }], lineAbortController.signal);
+                    } else {
+                        throw new Error('node-pty loaded but spawn function not available');
+                    }
                 } catch (err) {
-                    logError(`[Terminal] Failed to load node-pty: ${err}`);
-                    createFallbackTerminal();
+                    logError(`[Terminal] Failed to load or use node-pty: ${err}`);
+                    
+                    // If it's a spawn error, provide more specific guidance
+                    if (err && err.toString().includes('posix_spawnp failed')) {
+                        logError('[Terminal] posix_spawnp failed - this usually indicates shell path or permission issues');
+                        vscode.window.showErrorMessage('Terminal failed to start: Shell execution error. Check your shell configuration.');
+                    } else {
+                        createFallbackTerminal();
+                        await speakTokenList([{ tokens: ['Opened fallback terminal'], category: undefined }], lineAbortController.signal);
+                    }
                 }
-                await speakGPT('Opened lipcoder terminal', lineAbortController.signal);
             }
         }),
+
+
 
         // Toggle terminal reading mode (Ctrl+H)
         vscode.commands.registerCommand('lipcoder.toggleTerminalReadingMode', async () => {
             stopAllAudio();
             
             if (terminalBuffer.length === 0) {
-                await speakGPT('No terminal content available for reading mode', lineAbortController.signal);
+                await speakTokenList([{ tokens: ['No terminal content available for reading mode'], category: undefined }], lineAbortController.signal);
                 return;
             }
             
@@ -2277,7 +2468,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const enterReadingEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
                 await playWave(enterReadingEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                await new Promise(resolve => setTimeout(resolve, 30));
+                await new Promise(resolve => setTimeout(resolve, 5));
                 await speakTokenList([{ 
                     tokens: [`Reading mode activated.`], // ${terminalBuffer.length} lines available. Use up and down arrows to navigate.
                     category: undefined 
@@ -2290,7 +2481,10 @@ export function registerTerminalReader(context: ExtensionContext) {
                     const lineTokens = parseTerminalLineToTokens(currentEntry.content);
                     const prefix = getSpokenPrefix(currentEntry.type);
                     const lineNumberChunk: TokenChunk = { tokens: [`${prefix} line ${currentLineIndex + 1}`], category: 'keyword' };
-                    await readInEspeak([lineNumberChunk, ...lineTokens], lineAbortController.signal);
+                    
+                    // Combine line number and content tokens for proper playspeed handling
+                    const allTokens = [lineNumberChunk, ...lineTokens];
+                    await speakTokenList(allTokens, lineAbortController.signal);
                 }
             } else {
                 // Exiting reading mode
@@ -2301,36 +2495,37 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const exitReadingEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
                 await playWave(exitReadingEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                await new Promise(resolve => setTimeout(resolve, 30));
-                await speakGPT('Reading mode deactivated. Terminal is now interactive.', lineAbortController.signal);
+                await new Promise(resolve => setTimeout(resolve, 10));
+                await speakTokenList([{ tokens: ['Reading mode deactivated. Terminal is now interactive.'], category: undefined }], lineAbortController.signal);
             }
         }),
 
         // Read current terminal screen content
         vscode.commands.registerCommand('lipcoder.terminalReadHistory', async () => {
             if (terminalScreenLines.length === 0) {
-                await speakGPT('No terminal content available', lineAbortController.signal);
+                await speakTokenList([{ tokens: ['No terminal content available'], category: undefined }], lineAbortController.signal);
                 return;
             }
             
             // Stop any previous reading immediately
             stopAllAudio();
             
-            // Read last 5 screen lines
-            const recentLines = terminalScreenLines.slice(-5);
-            const screenText = recentLines.join(' ... ');
+            // Read last 10 screen lines for better context, but combine them efficiently
+            const recentLines = terminalScreenLines.slice(-10);
+            const screenText = recentLines.join(' ');
             
             const historyEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
             await playWave(historyEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            await new Promise(resolve => setTimeout(resolve, 30));
-            await speakGPT(`Terminal screen: ${screenText}`, lineAbortController.signal);
+            // Minimal delay for faster response
+            await new Promise(resolve => setTimeout(resolve, 5));
+            await speakTokenList([{ tokens: [`Terminal screen: ${screenText}`], category: undefined }], lineAbortController.signal);
         }),
 
         // Read last terminal line
         vscode.commands.registerCommand('lipcoder.terminalReadLast', async () => {
             if (terminalScreenLines.length === 0) {
-                await speakGPT('No terminal content', lineAbortController.signal);
+                await speakTokenList([{ tokens: ['No terminal content'], category: undefined }], lineAbortController.signal);
                 return;
             }
             
@@ -2341,8 +2536,33 @@ export function registerTerminalReader(context: ExtensionContext) {
             const lastEarcon = path.join(config.audioPath(), 'earcon', 'dot.pcm');
             await playWave(lastEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            await new Promise(resolve => setTimeout(resolve, 20));
-            await speakGPT(lastLine, lineAbortController.signal);
+            // Reduce delay for faster response
+            await new Promise(resolve => setTimeout(resolve, 5));
+            await speakTokenList([{ tokens: [lastLine], category: undefined }], lineAbortController.signal);
+        }),
+
+        // Read all terminal output at once - fast bulk reading
+        vscode.commands.registerCommand('lipcoder.terminalReadAll', async () => {
+            if (terminalBuffer.length === 0) {
+                await speakTokenList([{ tokens: ['No terminal content available'], category: undefined }], lineAbortController.signal);
+                return;
+            }
+            
+            // Stop any previous reading immediately
+            stopAllAudio();
+            
+            // Combine all terminal content into one text for fast reading
+            const allContent = terminalBuffer
+                .map(entry => entry.content)
+                .filter(content => content.trim().length > 0)
+                .join(' ');
+            
+            const allEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
+            await playWave(allEarcon, { isEarcon: true, immediate: true }).catch(console.error);
+            
+            // Minimal delay for fastest response
+            await new Promise(resolve => setTimeout(resolve, 5));
+            await speakTokenList([{ tokens: [`Reading all terminal content: ${allContent}`], category: undefined }], lineAbortController.signal);
         }),
 
         // Navigate up through terminal buffer
@@ -2369,7 +2589,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     // Already at top, give feedback but don't read line again
                     const topEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
                     await playWave(topEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                    await new Promise(resolve => setTimeout(resolve, 30));
+                    await new Promise(resolve => setTimeout(resolve, 5));
                     await speakTerminalTokens([{ tokens: ['Top of terminal buffer'], category: undefined }], 'terminal navigation');
                     return;
                 }
@@ -2392,7 +2612,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             const upEarcon = path.join(config.audioPath(), 'earcon', 'indent_1.pcm');
             await playWave(upEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 5));
             
             if (!currentEntry || currentEntry.content.trim().length === 0) {
                 const prefix = getSpokenPrefix((currentEntry?.type as ('input'|'output')) || 'output');
@@ -2430,7 +2650,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     // Already at bottom, give feedback
                     const bottomEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
                     await playWave(bottomEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                    await new Promise(resolve => setTimeout(resolve, 30));
+                    await new Promise(resolve => setTimeout(resolve, 5));
                     await speakTerminalTokens([{ tokens: ['Bottom of terminal buffer'], category: undefined }], 'terminal navigation');
                     return;
                 }
@@ -2452,7 +2672,7 @@ export function registerTerminalReader(context: ExtensionContext) {
             const downEarcon = path.join(config.audioPath(), 'earcon', 'indent_2.pcm');
             await playWave(downEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 5));
             
             if (!currentEntry || currentEntry.content.trim().length === 0) {
                 const prefix = getSpokenPrefix((currentEntry?.type as ('input'|'output')) || 'output');
@@ -2496,15 +2716,15 @@ export function registerTerminalReader(context: ExtensionContext) {
             const clearEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
             await playWave(clearEarcon, { isEarcon: true, immediate: true }).catch(console.error);
             
-            await new Promise(resolve => setTimeout(resolve, 30));
-            await speakGPT('Terminal buffer cleared');
+            await new Promise(resolve => setTimeout(resolve, 5));
+            await speakTokenList([{ tokens: ['Terminal buffer cleared'], category: undefined }]);
         }),
 
         // Capture current terminal content manually
         vscode.commands.registerCommand('lipcoder.captureTerminalOutput', async () => {
             const activeTerminal = vscode.window.activeTerminal;
             if (!activeTerminal) {
-                await speakGPT('No active terminal to capture');
+                await speakTokenList([{ tokens: ['No active terminal to capture'], category: undefined }]);
                 return;
             }
 
@@ -2513,11 +2733,11 @@ export function registerTerminalReader(context: ExtensionContext) {
             
             // Select all terminal content
             await vscode.commands.executeCommand('workbench.action.terminal.selectAll');
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 5));
             
             // Copy to clipboard
             await vscode.commands.executeCommand('workbench.action.terminal.copySelection');
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 5));
             
             // Get the copied content
             const terminalContent = await vscode.env.clipboard.readText();
@@ -2562,13 +2782,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const captureEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
                 await playWave(captureEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                await new Promise(resolve => setTimeout(resolve, 30));
+                await new Promise(resolve => setTimeout(resolve, 5));
                 await speakTokenList([{ 
                     tokens: [`Captured ${terminalBuffer.length} lines from terminal. Press Ctrl+H to enter reading mode.`], 
                     category: undefined 
                 }]);
             } else {
-                await speakGPT('No terminal content captured');
+                await speakTokenList([{ tokens: ['No terminal content captured'], category: undefined }]);
             }
         }),
 
@@ -2596,8 +2816,8 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const confirmEarcon = path.join(config.audioPath(), 'earcon', 'enter.pcm');
                 await playWave(confirmEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                await new Promise(resolve => setTimeout(resolve, 20));
-                await speakGPT('Added to terminal screen');
+                await new Promise(resolve => setTimeout(resolve, 5));
+                await speakTokenList([{ tokens: ['Added to terminal screen'], category: undefined }]);
             }
         }),
 
@@ -2715,13 +2935,13 @@ export function registerTerminalReader(context: ExtensionContext) {
                 const killEarcon = path.join(config.audioPath(), 'earcon', 'backspace.pcm');
                 await playWave(killEarcon, { isEarcon: true, immediate: true }).catch(console.error);
                 
-                await new Promise(resolve => setTimeout(resolve, 30));
+                await new Promise(resolve => setTimeout(resolve, 5));
                 await vscode.commands.executeCommand('lipcoder.openTerminal');
                 
-                await speakGPT('Terminal killed, LipCoder terminal opened');
+                await speakTokenList([{ tokens: ['Terminal killed, LipCoder terminal opened'], category: undefined }]);
             } else {
                 await vscode.commands.executeCommand('lipcoder.openTerminal');
-                await speakGPT('No active terminal, LipCoder terminal opened');
+                await speakTokenList([{ tokens: ['No active terminal, LipCoder terminal opened'], category: undefined }]);
             }
         }),
 
@@ -2794,7 +3014,7 @@ export function registerTerminalReader(context: ExtensionContext) {
                     // Already at first word, give feedback
                     const startEarcon = path.join(config.audioPath(), 'earcon', 'enter2.pcm');
                     await playWave(startEarcon, { isEarcon: true, immediate: true }).catch(console.error);
-                    await new Promise(resolve => setTimeout(resolve, 30));
+                    await new Promise(resolve => setTimeout(resolve, 5));
                     await speakTerminalTokens([{ tokens: ['Beginning of line'], category: undefined }], 'terminal navigation');
                     return;
                 }

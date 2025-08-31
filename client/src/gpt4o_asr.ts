@@ -56,6 +56,11 @@ export class GPT4oASRClient {
             logSuccess('🔴 [GPT4o-ASR-DEBUG] About to initialize microphone...');
             log('[Whisper-ASR] Starting Whisper ASR recording...');
             
+            // Clear any existing audio buffers and state to prevent text mixing
+            this.audioBuffer = [];
+            this.recordingStartTime = Date.now();
+            log('[Whisper-ASR] Cleared audio buffers and reset state to prevent text mixing');
+            
             // Initialize microphone with fallback
             let microphoneInitialized = false;
             
@@ -278,6 +283,10 @@ export class GPT4oASRClient {
             } else {
                 logWarning('[Whisper-ASR] No audio data to process');
             }
+            
+            // Clear audio buffer after processing to prevent text mixing in next session
+            this.audioBuffer = [];
+            log('[Whisper-ASR] Cleared audio buffer after processing to prevent text mixing');
 
         } catch (error) {
             logError(`[Whisper-ASR] Error stopping recording: ${error}`);

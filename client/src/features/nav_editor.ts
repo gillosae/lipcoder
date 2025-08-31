@@ -199,7 +199,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     let skipNextIndentObj = { value: false }; // Flag to skip indent sound once after Enter
 
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument((e) => {
+        vscode.workspace.onDidChangeTextDocument(async (e) => {
             // Track typing time to prevent double audio
             lastTypingTime = Date.now();
             
@@ -242,7 +242,17 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             if (isLikelyUndo) {
                 isUndoOperation = true;
                 lastUndoTime = Date.now();
-                log('[NavEditor] Undo operation detected - suppressing TTS to prevent flooding');
+                log('[NavEditor] Undo operation detected - playing undo sound and suppressing TTS');
+                
+                // Play "Undo" sound
+                try {
+                    await speakTokenList([{
+                        tokens: ['Undo'],
+                        category: 'comment_text'
+                    }]);
+                } catch (error) {
+                    log(`[NavEditor] Error playing undo sound: ${error}`);
+                }
                 
                 // Clear any existing timeout
                 if (undoDetectionTimeout) {
@@ -611,6 +621,41 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
     // Register reset undo detection command for debugging
     context.subscriptions.push(
         vscode.commands.registerCommand('lipcoder.resetUndoDetection', resetUndoDetection)
+    );
+
+    // Register undo command interceptor to play sound immediately
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.undoWithSound', async () => {
+            log('[NavEditor] Undo command triggered - playing undo sound');
+            
+            // Play "Undo" sound immediately
+            try {
+                await speakTokenList([{
+                    tokens: ['Undo'],
+                    category: 'comment_text'
+                }]);
+            } catch (error) {
+                log(`[NavEditor] Error playing undo sound: ${error}`);
+            }
+            
+            // Execute the actual undo command
+            await vscode.commands.executeCommand('undo');
+            
+            // Set undo operation flag to suppress subsequent TTS
+            isUndoOperation = true;
+            lastUndoTime = Date.now();
+            
+            // Clear any existing timeout
+            if (undoDetectionTimeout) {
+                clearTimeout(undoDetectionTimeout);
+            }
+            
+            // Set timeout to resume normal TTS after undo window
+            undoDetectionTimeout = setTimeout(() => {
+                isUndoOperation = false;
+                log('[NavEditor] Undo detection window expired - resuming normal TTS');
+            }, UNDO_DETECTION_WINDOW_MS);
+        })
     );
 
     // Register cleanup disposal

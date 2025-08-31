@@ -688,7 +688,6 @@ async function stopASRWriteMode(): Promise<void> {
  */
 async function startRecording(): Promise<void> {
     logSuccess('🔴 [ASR-DEBUG] startRecording() function called!');
-    console.log('🔴 [ASR-DEBUG] startRecording() function called!');
     
     if (isRecording) {
         logWarning('[Enhanced-ASR] Already recording');

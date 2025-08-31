@@ -3,6 +3,7 @@ import { speakTokenList, speakGPT, TokenChunk } from '../audio';
 import { lipcoderLog } from '../logger';
 import * as cp from 'child_process';
 import { installDependencies } from '../install_dependencies';
+import { showConversationalStatus } from '../conversational_popup';
 
 // Helper to promisify spawn for running CLI tools and CAPTURE output
 async function spawnCapture(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -91,7 +92,11 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                     await editor.document.save();
                     await vscode.commands.executeCommand('workbench.action.files.revert');
                     const note = stdout?.trim() ? `Document formatted with Black.\n${stdout.trim()}` : 'Document formatted with Black';
-                    vscode.window.showInformationMessage('Document formatted with Black');
+                    
+                    // Use non-blocking status notification as preferred by user
+                    showConversationalStatus('Document formatted with Black', 3000);
+                    
+                    // Use GPT TTS for notification as preferred by user
                     await speakGPT("Document formatted with Black");
                     // Also log stderr in case Black emitted warnings
                     if (stderr?.trim()) {
@@ -137,7 +142,11 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                         });
                         await editor.document.save();
                         await vscode.commands.executeCommand('workbench.action.files.revert');
-                        vscode.window.showInformationMessage('Document formatted with Prettier');
+                        
+                        // Use non-blocking status notification as preferred by user
+                        showConversationalStatus('Document formatted with Prettier', 3000);
+                        
+                        // Use GPT TTS for notification as preferred by user
                         await speakGPT("Document formatted with Prettier");
                         return;
                     } catch (err) {
@@ -163,10 +172,17 @@ export function registerFormatCode(context: vscode.ExtensionContext) {
                     );
                     await vscode.workspace.applyEdit(workspaceEdit);
                     await editor.document.save();
-                    vscode.window.showInformationMessage('Document formatted');
+                    
+                    // Use non-blocking status notification as preferred by user
+                    showConversationalStatus('Document formatted', 3000);
+                    
+                    // Use GPT TTS for notification as preferred by user
                     await speakGPT("Document formatted");
                 } else {
-                    vscode.window.showInformationMessage('Nothing to format');
+                    // Use non-blocking status notification as preferred by user
+                    showConversationalStatus('Nothing to format', 3000);
+                    
+                    // Use GPT TTS for notification as preferred by user
                     await speakGPT("Nothing to format");
                 }
             } catch (err: any) {
