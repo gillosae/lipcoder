@@ -10,6 +10,71 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Function to kill processes on a port with retry logic
+# Usage: kill_port_processes <port_number>
+kill_port_processes() {
+    local port=$1
+    local max_attempts=3
+    local attempt=1
+    
+    if [ -z "$port" ]; then
+        echo -e "${RED}❌ Error: Port number is required${NC}" >&2
+        return 1
+    fi
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo -e "${BLUE}🔍 Checking port $port (attempt $attempt/$max_attempts)...${NC}" >&2
+        
+        # Get all PIDs using the port
+        PIDS=$(lsof -ti:$port 2>/dev/null)
+        
+        if [ -z "$PIDS" ]; then
+            echo -e "${GREEN}✅ Port $port is free${NC}" >&2
+            return 0
+        fi
+        
+        echo -e "${YELLOW}⚠️  Found processes on port $port: $PIDS${NC}" >&2
+        echo -e "${YELLOW}   Attempting to kill processes...${NC}" >&2
+        
+        # Try graceful termination first (SIGTERM)
+        for pid in $PIDS; do
+            if kill -TERM "$pid" 2>/dev/null; then
+                echo -e "${BLUE}   Sent SIGTERM to PID $pid${NC}" >&2
+            fi
+        done
+        
+        sleep 2
+        
+        # Check if processes are still running
+        REMAINING_PIDS=$(lsof -ti:$port 2>/dev/null)
+        if [ -z "$REMAINING_PIDS" ]; then
+            echo -e "${GREEN}✅ All processes terminated gracefully${NC}" >&2
+            return 0
+        fi
+        
+        # Force kill remaining processes (SIGKILL)
+        echo -e "${YELLOW}   Force killing remaining processes: $REMAINING_PIDS${NC}" >&2
+        for pid in $REMAINING_PIDS; do
+            if kill -9 "$pid" 2>/dev/null; then
+                echo -e "${BLUE}   Sent SIGKILL to PID $pid${NC}" >&2
+            fi
+        done
+        
+        sleep 3
+        attempt=$((attempt + 1))
+    done
+    
+    # Final check
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo -e "${RED}❌ Failed to free port $port after $max_attempts attempts${NC}" >&2
+        echo -e "${RED}   Please manually kill processes using: sudo lsof -ti:$port | xargs kill -9${NC}" >&2
+        return 1
+    else
+        echo -e "${GREEN}✅ Port $port is now free${NC}" >&2
+        return 0
+    fi
+}
+
 # Function to find Python with ML packages already installed
 find_python_with_ml_packages() {
     # Try different Python executables and check if they have ML packages

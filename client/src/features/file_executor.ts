@@ -188,7 +188,7 @@ export function registerFileExecutor(context: ExtensionContext) {
             if (!filename) {
                 const activeEditor = vscode.window.activeTextEditor;
                 if (activeEditor) {
-                    filename = path.basename(activeEditor.document.fileName);
+                    filename = activeEditor.document.fileName ? path.basename(activeEditor.document.fileName) : 'untitled';
                 } else {
                     await speakGPT('파일명을 제공하거나 파일을 열어주세요');
                     return;

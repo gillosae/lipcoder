@@ -57,15 +57,24 @@ class ServerManager {
             script: 'start_macos_tts.sh',
             defaultPort: 5008  // Use unique port for macOS TTS
         });
+        
+        this.servers.set('huggingface-whisper', {
+            name: 'Hugging Face Whisper ASR Server',
+            script: 'start_huggingface_whisper.sh',
+            defaultPort: 5005  // Use unique port for Hugging Face Whisper
+        });
     }
 
     private findServerDirectory(): string {
+        // Get current directory, with fallback if __dirname is undefined
+        const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+        
         // Try different possible server directory locations
         const possiblePaths = [
             // Standard build structure: dist/client -> ../../server
-            path.join(__dirname, '../../server'),
+            path.join(currentDir, '../../server'),
             // Development structure: client/src -> ../../server  
-            path.join(__dirname, '../../../server'),
+            path.join(currentDir, '../../../server'),
             // Alternative: from workspace root
             path.join(process.cwd(), 'server'),
             // If running from different location, try to find server relative to package.json
@@ -93,7 +102,7 @@ class ServerManager {
         }
 
         // Fallback to the standard path even if it doesn't exist
-        const fallbackPath = path.join(__dirname, '../../server');
+        const fallbackPath = path.join(currentDir, '../../server');
         logWarning(`[ServerManager] Could not find server directory, using fallback: ${fallbackPath}`);
         return fallbackPath;
     }
@@ -102,10 +111,31 @@ class ServerManager {
     private async isPortAvailable(port: number): Promise<boolean> {
         return new Promise((resolve) => {
             const server = net.createServer();
-            server.listen(port, () => {
-                server.close(() => resolve(true));
+            
+            server.listen(port, '127.0.0.1', () => {
+                server.close(() => {
+                    log(`[ServerManager] Port ${port} is available`);
+                    resolve(true);
+                });
             });
-            server.on('error', () => resolve(false));
+            
+            server.on('error', (err: any) => {
+                if (err.code === 'EADDRINUSE') {
+                    log(`[ServerManager] Port ${port} is already in use`);
+                    resolve(false);
+                } else {
+                    logWarning(`[ServerManager] Port ${port} check error: ${err.message}`);
+                    resolve(false);
+                }
+            });
+            
+            // Timeout after 2 seconds
+            setTimeout(() => {
+                server.close(() => {
+                    logWarning(`[ServerManager] Port ${port} check timed out`);
+                    resolve(false);
+                });
+            }, 2000);
         });
     }
 
@@ -128,13 +158,42 @@ class ServerManager {
             throw new Error(`Unknown server: ${serverKey}`);
         }
 
-        // Check if server is already running
+        // Check if server is already running (process-based check)
         if (config.process && !config.process.killed && config.process.exitCode === null) {
             log(`[ServerManager] ${config.name} is already running on port ${config.actualPort}`);
             return;
         }
 
-        // Find available port
+        // Check if default port is already in use by external process
+        const defaultPortInUse = !(await this.isPortAvailable(config.defaultPort));
+        if (defaultPortInUse) {
+            log(`[ServerManager] ${config.name} default port ${config.defaultPort} is already in use by external process`);
+            
+            // Try to connect to existing server to verify it's working
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                
+                const response = await fetch(`http://localhost:${config.defaultPort}/health`, {
+                    method: 'GET',
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (response.ok) {
+                    config.actualPort = config.defaultPort;
+                    log(`[ServerManager] ✅ Using existing ${config.name} on port ${config.defaultPort}`);
+                    return;
+                } else {
+                    logWarning(`[ServerManager] External server on port ${config.defaultPort} is not responding properly`);
+                }
+            } catch (error) {
+                logWarning(`[ServerManager] Failed to connect to external server on port ${config.defaultPort}: ${error}`);
+            }
+        }
+
+        // Find available port (only if default port is not usable)
         try {
             config.actualPort = await this.findAvailablePort(config.defaultPort);
             log(`[ServerManager] ${config.name} assigned to port ${config.actualPort}`);
@@ -299,6 +358,19 @@ class ServerManager {
             // Clean up any partially started servers
             await this.stopServers();
             throw error;
+        }
+    }
+
+    /**
+     * Register an existing server without starting a new process
+     */
+    registerExistingServer(serverId: string, port: number): void {
+        const config = this.servers.get(serverId);
+        if (config) {
+            config.actualPort = port;
+            logSuccess(`✅ Registered existing ${config.name} on port ${port}`);
+        } else {
+            logWarning(`⚠️ Unknown server ID: ${serverId}`);
         }
     }
 

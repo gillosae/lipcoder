@@ -63,7 +63,7 @@ fi
 
 # Test 'say' command (silent test)
 echo -e "${BLUE}🔍 Testing macOS 'say' command...${NC}"
-if echo "test" | say 2>/dev/null; then
+if echo "" | say >/dev/null 2>&1; then
     echo -e "${GREEN}✅ macOS 'say' command is working${NC}"
 else
     echo -e "${RED}❌ Error: macOS 'say' command test failed${NC}"
@@ -88,7 +88,14 @@ if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
     PID=$(lsof -ti:$PORT)
     if [ ! -z "$PID" ]; then
         kill -9 $PID 2>/dev/null
-        sleep 2
+        sleep 3
+        
+        # Verify the process is actually killed
+        if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
+            echo -e "${RED}❌ Failed to kill process on port $PORT${NC}"
+            exit 1
+        fi
+        
         echo -e "${GREEN}✅ Killed existing process on port $PORT${NC}"
     fi
 fi

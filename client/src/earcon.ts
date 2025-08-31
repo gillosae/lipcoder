@@ -202,14 +202,19 @@ function applyEarconPanning(pcm: Buffer, format: any, pan: number): Buffer {
  * Play a text-based earcon using TTS or pre-generated text PCM files
  */
 async function playTextEarcon(token: string, pan?: number): Promise<void> {
+    log(`[playTextEarcon] Called for token: "${token}"`);
     const spokenText = earconTextMap[token];
     if (!spokenText) {
         log(`[playTextEarcon] No text mapping for token: "${token}"`);
         return Promise.resolve();
     }
     
+    log(`[playTextEarcon] Found text mapping: "${token}" → "${spokenText}"`);
+    
     // Try to find pre-generated text earcon PCM file first
     const textEarconFile = findTextEarconSound(token);
+    log(`[playTextEarcon] Looking for pre-generated file: ${textEarconFile}`);
+    
     if (textEarconFile && fs.existsSync(textEarconFile)) {
         log(`[playTextEarcon] Using pre-generated text earcon: ${textEarconFile}`);
         const { playWave } = require('./audio');
@@ -217,10 +222,11 @@ async function playTextEarcon(token: string, pan?: number): Promise<void> {
     }
     
     // Fallback to live TTS generation
-    log(`[playTextEarcon] Generating TTS for "${spokenText}"`);
+    log(`[playTextEarcon] Pre-generated file not found, generating TTS for "${spokenText}"`);
     try {
         const { genTokenAudio } = require('./tts');
         const audioPath = await genTokenAudio(spokenText, 'earcon_text');
+        log(`[playTextEarcon] Generated TTS file: ${audioPath}`);
         const { playWave } = require('./audio');
         return playWave(audioPath, { isEarcon: true, immediate: true, panning: pan });
     } catch (error) {
@@ -321,6 +327,8 @@ function findTextEarconSound(token: string): string | null {
  */
 export function playEarcon(token: string, pan?: number): Promise<void> {
     log(`[playEarcon] Starting playback for token: "${token}" with panning: ${pan}`);
+    log(`[playEarcon] Current earcon mode: ${earconModeState.mode}`);
+    log(`[playEarcon] Token "${token}" in earconTextMap: ${!!earconTextMap[token]}`);
     
     // Check earcon mode and decide whether to use text or sound
     if (earconModeState.mode === EarconMode.Text && earconTextMap[token]) {
@@ -335,6 +343,8 @@ export function playEarcon(token: string, pan?: number): Promise<void> {
             log(`[playEarcon] ParenthesesOnly mode: using TTS for "${token}" → "${earconTextMap[token]}"`);
             return playTextEarcon(token, pan);
         }
+    } else {
+        log(`[playEarcon] No text mapping or wrong mode for "${token}", mode: ${earconModeState.mode}`);
     }
     
     const file = findTokenSound(token);

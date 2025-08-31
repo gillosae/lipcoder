@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ASRClient, ASRChunk } from '../asr';
 import { GPT4oASRClient, GPT4oASRChunk } from '../gpt4o_asr';
+import { HuggingFaceWhisperClient, HuggingFaceWhisperChunk } from '../huggingface_whisper_asr';
 import { ASRPopup } from '../asr_popup';
 import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config';
 import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
@@ -15,6 +16,7 @@ import { goToLastDetectedError } from './terminal';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
+let huggingFaceWhisperClient: HuggingFaceWhisperClient | null = null;
 let asrPopup: ASRPopup | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
@@ -101,6 +103,11 @@ export function cleanupASRResources(): void {
         gpt4oAsrClient = null;
     }
     
+    if (huggingFaceWhisperClient) {
+        huggingFaceWhisperClient.dispose();
+        huggingFaceWhisperClient = null;
+    }
+    
     // Hide popup
     if (asrPopup) {
         asrPopup.dispose();
@@ -125,26 +132,7 @@ export function cleanupASRResources(): void {
     logSuccess('[Enhanced-ASR] ASR resources cleaned up');
 }
 
-/**
- * Update status bar item
- */
-function updateStatusBar(recording: boolean): void {
-    if (!statusBarItem) {
-        return;
-    }
-    
-    if (recording) {
-        const modeText = currentASRMode === ASRMode.Command ? 'Command' : 'Write';
-        const stopKey = currentASRMode === ASRMode.Command ? 'Ctrl+Shift+A' : 'Ctrl+Shift+W';
-        statusBarItem.text = `$(record) Recording ${modeText} Mode... Press ${stopKey} to stop (${currentASRBackend})`;
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-        statusBarItem.tooltip = `Recording in ${modeText} mode. Press ${stopKey} again to stop and process speech.`;
-    } else {
-        statusBarItem.text = `$(mic) ASR Ready - Ctrl+Shift+A (Commands) / Ctrl+Shift+W (Write) (${currentASRBackend})`;
-        statusBarItem.backgroundColor = undefined;
-        statusBarItem.tooltip = 'Press Ctrl+Shift+A for command mode or Ctrl+Shift+W for write mode. Commands execute in current editor context.';
-    }
-}
+
 
 /**
  * Initialize ASR clients based on current backend
@@ -154,11 +142,13 @@ function initializeASRClients(): void {
         // Load configuration from VS Code settings
         loadConfigFromSettings();
         
-        log(`[Enhanced-ASR] Initializing ASR clients for backend: ${currentASRBackend}`);
+        log(`[Enhanced-ASR] 🔍 Initializing ASR clients for backend: ${currentASRBackend}`);
+        log(`[Enhanced-ASR] 🔍 Current client states - asrClient: ${!!asrClient}, gpt4oAsrClient: ${!!gpt4oAsrClient}, huggingFaceWhisperClient: ${!!huggingFaceWhisperClient}`);
         
         // Pre-warm ASR clients for faster startup
         if (!asrClient) {
             try {
+                log(`[Enhanced-ASR] 🔍 Creating new Silero ASRClient...`);
                 asrClient = new ASRClient({
                     onTranscription: async (chunk: ASRChunk) => {
                         if (chunk && chunk.text) {
@@ -233,6 +223,41 @@ function initializeASRClients(): void {
             }
         }
         
+        // Pre-warm Hugging Face Whisper client for faster startup
+        if (!huggingFaceWhisperClient) {
+            try {
+                log(`[Enhanced-ASR] 🔍 Creating new Hugging Face Whisper ASRClient...`);
+                huggingFaceWhisperClient = new HuggingFaceWhisperClient({
+                    onTranscription: async (chunk: HuggingFaceWhisperChunk) => {
+                        if (chunk && chunk.text) {
+                            await handleTranscription(chunk.text);
+                        }
+                    },
+                    onError: async (error: Error) => {
+                        await handleASRError(error, 'Hugging Face Whisper ASR');
+                    },
+                    onRecordingStart: async () => {
+                        await playEarcon('asr_start', 0);
+                        log('[Enhanced-ASR] Played ASR start sound');
+                    },
+                    onRecordingStop: async () => {
+                        await playEarcon('asr_stop', 0);
+                        log('[Enhanced-ASR] Played ASR stop sound');
+                    }
+                });
+                
+                // Verify the client was created properly
+                if (!huggingFaceWhisperClient || typeof huggingFaceWhisperClient !== 'object') {
+                    throw new Error('HuggingFaceWhisperClient constructor returned invalid object');
+                }
+                
+                log('[Enhanced-ASR] HuggingFaceWhisperClient initialized successfully');
+            } catch (error) {
+                logError(`[Enhanced-ASR] Failed to initialize HuggingFaceWhisperClient: ${error}`);
+                huggingFaceWhisperClient = null; // Ensure it's explicitly null on failure
+            }
+        }
+        
         // Initialize popup
         if (!asrPopup) {
             try {
@@ -289,13 +314,14 @@ function initializeASRClients(): void {
         const initialized = {
             asrClient: !!asrClient,
             gpt4oAsrClient: !!gpt4oAsrClient,
+            huggingFaceWhisperClient: !!huggingFaceWhisperClient,
             asrPopup: !!asrPopup,
             commandRouter: !!commandRouter
         };
         
         log(`[Enhanced-ASR] Initialization status: ${JSON.stringify(initialized)}`);
         
-        if (!asrClient && !gpt4oAsrClient) {
+        if (!asrClient && !gpt4oAsrClient && !huggingFaceWhisperClient) {
             logError('[Enhanced-ASR] Critical: No ASR clients successfully initialized!');
         }
         
@@ -460,7 +486,7 @@ async function handleDirectTextInsertion(text: string): Promise<void> {
                 editBuilder.insert(insertPosition, text + ' ');
             });
             
-            const fileName = path.basename(targetEditor.document.fileName);
+            const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
             log(`[Enhanced-ASR] Text inserted in ${fileName} at line ${insertPosition.line + 1}`);
             
             // Show subtle notification
@@ -485,48 +511,7 @@ function setRecordingContextKey(recording: boolean): void {
     vscode.commands.executeCommand('setContext', 'lipcoder.isRecording', recording);
 }
 
-/**
- * Handle recording start
- */
-function handleRecordingStart(): void {
-    log('[Enhanced-ASR] Recording started');
-    isRecording = true;
-    setRecordingContextKey(true);
-    updateStatusBar(true);
-    
-    // Set up auto-stop timer
-    autoStopTimer = setTimeout(() => {
-        if (isRecording) {
-            log('[Enhanced-ASR] Auto-stopping recording after maximum duration');
-            stopRecording();
-            vscode.window.showInformationMessage('Recording stopped automatically after 30 seconds');
-        }
-    }, MAX_RECORDING_DURATION);
-    
-    if (asrPopup) {
-        asrPopup.setRecordingStatus(true);
-    }
-}
 
-/**
- * Handle recording stop
- */
-function handleRecordingStop(): void {
-    log('[Enhanced-ASR] Recording stopped');
-    isRecording = false;
-    setRecordingContextKey(false);
-    updateStatusBar(false);
-    
-    // Clear auto-stop timer
-    if (autoStopTimer) {
-        clearTimeout(autoStopTimer);
-        autoStopTimer = null;
-    }
-    
-    if (asrPopup) {
-        asrPopup.setRecordingStatus(false);
-    }
-}
 
 /**
  * Handle errors
@@ -546,36 +531,22 @@ async function handleError(error: Error): Promise<void> {
     }
 }
 
-/**
- * Capture current editor context for command execution
- */
-function captureEditorContext(): EditorContext | null {
-    // Use the enhanced editor tracking system for better fallback
-    const editor = isEditorActive();
-    if (!editor) {
-        return null;
-    }
-    
-    const context = {
-        editor: editor,
-        position: editor.selection.active,
-        selection: editor.selection,
-        documentUri: editor.document.uri
-    };
-    
-    // Always update the last known context when we have a valid editor
-    lastKnownEditorContext = context;
-    
-    return context;
-}
+
 
 /**
  * Get editor context with fallback to last known editor
  */
 function getEditorContextWithFallback(): EditorContext | null {
     // Try to get current active editor first
-    const currentContext = captureEditorContext();
-    if (currentContext) {
+    const editor = isEditorActive();
+    if (editor) {
+        const currentContext = {
+            editor: editor,
+            position: editor.selection.active,
+            selection: editor.selection,
+            documentUri: editor.document.uri
+        };
+        lastKnownEditorContext = currentContext;
         return currentContext;
     }
     
@@ -733,6 +704,7 @@ async function startRecording(): Promise<void> {
         logSuccess(`🔴 [ASR-DEBUG] Current backend: ${currentASRBackend}`);
         logSuccess(`🔴 [ASR-DEBUG] GPT4o client exists: ${!!gpt4oAsrClient}`);
         logSuccess(`🔴 [ASR-DEBUG] Silero client exists: ${!!asrClient}`);
+        logSuccess(`🔴 [ASR-DEBUG] HuggingFace Whisper client exists: ${!!huggingFaceWhisperClient}`);
         
         if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient && typeof gpt4oAsrClient === 'object') {
             logSuccess('🔴 [ASR-DEBUG] Using GPT4o backend...');
@@ -747,21 +719,41 @@ async function startRecording(): Promise<void> {
             }
         } else if (currentASRBackend === ASRBackend.Silero && asrClient && typeof asrClient === 'object') {
             logSuccess('🔴 [ASR-DEBUG] Using Silero backend...');
+            logSuccess(`🔴 [ASR-DEBUG] ASR client type: ${typeof asrClient}, has startStreaming: ${typeof asrClient.startStreaming}`);
             try {
                 if (typeof asrClient.startStreaming === 'function') {
                     logSuccess('🔴 [ASR-DEBUG] Calling asrClient.startStreaming()...');
                     await asrClient.startStreaming();
+                    logSuccess('🔴 [ASR-DEBUG] asrClient.startStreaming() completed successfully');
                     handleRecordingStart(); // Manual call for Silero
+                    logSuccess('🔴 [ASR-DEBUG] handleRecordingStart() completed');
                 } else {
                     throw new Error('Silero ASR client startStreaming method not available');
                 }
             } catch (error) {
+                logError(`🔴 [ASR-DEBUG] Error in Silero ASR: ${error}`);
                 throw new Error(`Failed to start Silero ASR recording: ${error}`);
+            }
+        } else if (currentASRBackend === ASRBackend.HuggingFaceWhisper && huggingFaceWhisperClient && typeof huggingFaceWhisperClient === 'object') {
+            logSuccess('🔴 [ASR-DEBUG] Using Hugging Face Whisper backend...');
+            logSuccess(`🔴 [ASR-DEBUG] HF Whisper client type: ${typeof huggingFaceWhisperClient}, has startRecording: ${typeof huggingFaceWhisperClient.startRecording}`);
+            try {
+                if (typeof huggingFaceWhisperClient.startRecording === 'function') {
+                    logSuccess('🔴 [ASR-DEBUG] Calling huggingFaceWhisperClient.startRecording()...');
+                    await huggingFaceWhisperClient.startRecording();
+                    handleRecordingStart(); // Manual call for Hugging Face Whisper
+                } else {
+                    throw new Error('Hugging Face Whisper ASR client startRecording method not available');
+                }
+            } catch (error) {
+                logError(`🔴 [ASR-DEBUG] Error in Hugging Face Whisper ASR: ${error}`);
+                throw new Error(`Failed to start Hugging Face Whisper ASR recording: ${error}`);
             }
         } else {
             const availableClients = {
                 gpt4o: !!gpt4oAsrClient,
                 silero: !!asrClient,
+                huggingFaceWhisper: !!huggingFaceWhisperClient,
                 currentBackend: currentASRBackend
             };
             throw new Error(`ASR backend ${currentASRBackend} not available or not initialized. Status: ${JSON.stringify(availableClients)}`);
@@ -810,6 +802,17 @@ async function stopRecording(): Promise<void> {
             } catch (error) {
                 logError(`[Enhanced-ASR] Error stopping Silero recording: ${error}`);
             }
+        } else if (currentASRBackend === ASRBackend.HuggingFaceWhisper && huggingFaceWhisperClient && typeof huggingFaceWhisperClient === 'object') {
+            try {
+                if (typeof huggingFaceWhisperClient.stopRecording === 'function') {
+                    await huggingFaceWhisperClient.stopRecording();
+                    handleRecordingStop(); // Manual call for Hugging Face Whisper
+                } else {
+                    logError('[Enhanced-ASR] Hugging Face Whisper ASR client stopRecording method not available');
+                }
+            } catch (error) {
+                logError(`[Enhanced-ASR] Error stopping Hugging Face Whisper recording: ${error}`);
+            }
         } else {
             logWarning(`[Enhanced-ASR] No valid ASR client available to stop for backend: ${currentASRBackend}`);
         }
@@ -830,6 +833,66 @@ async function stopRecording(): Promise<void> {
 }
 
 /**
+ * Handle recording start callback
+ */
+function handleRecordingStart(): void {
+    log('[Enhanced-ASR] Recording started - setting up UI state');
+    isRecording = true;
+    setASRRecordingActive(true);
+    setRecordingContextKey(true); // Set VS Code context for key bindings
+    
+    // Update status bar
+    updateStatusBar(true);
+    
+    // Clear any auto-stop timer
+    if (autoStopTimer) {
+        clearTimeout(autoStopTimer);
+        autoStopTimer = null;
+    }
+    
+    // Set auto-stop timer for safety
+    autoStopTimer = setTimeout(async () => {
+        logWarning('[Enhanced-ASR] Auto-stopping recording after maximum duration');
+        await stopRecording();
+    }, MAX_RECORDING_DURATION);
+    
+    // Capture editor context when recording starts
+    const editor = isEditorActive();
+    if (editor) {
+        recordingContext = {
+            editor: editor,
+            position: editor.selection.active,
+            selection: editor.selection,
+            documentUri: editor.document.uri
+        };
+        lastKnownEditorContext = recordingContext;
+    }
+    
+    log('[Enhanced-ASR] Recording state initialized');
+}
+
+/**
+ * Handle recording stop callback
+ */
+function handleRecordingStop(): void {
+    log('[Enhanced-ASR] Recording stopped - cleaning up UI state');
+    isRecording = false;
+    setASRRecordingActive(false);
+    setRecordingContextKey(false); // Clear VS Code context for key bindings
+    
+    // Update status bar
+    updateStatusBar(false);
+    
+    // Clear auto-stop timer
+    if (autoStopTimer) {
+        clearTimeout(autoStopTimer);
+        autoStopTimer = null;
+    }
+    
+    log('[Enhanced-ASR] Recording state cleaned up');
+}
+
+/**
  * Toggle recording
  */
 async function toggleRecording(): Promise<void> {
@@ -837,6 +900,57 @@ async function toggleRecording(): Promise<void> {
         await stopRecording();
     } else {
         await startRecording();
+    }
+}
+
+/**
+ * Capture current editor context
+ */
+function captureEditorContext(): void {
+    try {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+            recordingContext = {
+                editor: activeEditor,
+                position: activeEditor.selection.active,
+                selection: activeEditor.selection,
+                documentUri: activeEditor.document.uri
+            };
+            lastKnownEditorContext = recordingContext; // Also update last known
+            log(`[Enhanced-ASR] Captured editor context: ${activeEditor.document.fileName}`);
+        } else {
+            recordingContext = null;
+            log('[Enhanced-ASR] No active editor to capture context from');
+        }
+    } catch (error) {
+        logError(`[Enhanced-ASR] Failed to capture editor context: ${error}`);
+        recordingContext = null;
+    }
+}
+
+/**
+ * Update status bar item
+ */
+function updateStatusBar(recording: boolean): void {
+    try {
+        if (!statusBarItem) {
+            statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+            statusBarItem.command = 'lipcoder.toggleEnhancedASR';
+        }
+        
+        if (recording) {
+            statusBarItem.text = `$(record) ASR Recording (${currentASRBackend})`;
+            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            statusBarItem.tooltip = 'ASR is recording - click to stop';
+        } else {
+            statusBarItem.text = `$(mic) ASR Ready (${currentASRBackend})`;
+            statusBarItem.backgroundColor = undefined;
+            statusBarItem.tooltip = 'Click to start ASR recording';
+        }
+        
+        statusBarItem.show();
+    } catch (error) {
+        logError(`[Enhanced-ASR] Failed to update status bar: ${error}`);
     }
 }
 

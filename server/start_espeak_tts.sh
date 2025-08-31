@@ -40,6 +40,11 @@ fi
 export PORT=${1:-5005}
 echo -e "${BLUE}📡 Starting eSpeak TTS server on port $PORT...${NC}"
 
+# Kill any existing processes on the target port using common function
+if ! kill_port_processes $PORT; then
+    exit 1
+fi
+
 # Start the server
 echo -e "${GREEN}🚀 eSpeak TTS Server starting on http://localhost:$PORT${NC}"
 exec $PYTHON_CMD espeak_tts_server.py

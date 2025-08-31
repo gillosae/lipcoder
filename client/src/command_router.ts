@@ -306,7 +306,7 @@ export class CommandRouter {
                     targetEditor.selection = new vscode.Selection(newPosition, newPosition);
                     targetEditor.revealRange(new vscode.Range(newPosition, newPosition));
                     
-                    const fileName = path.basename(targetEditor.document.fileName);
+                    const fileName = targetEditor.document.fileName ? targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled' : 'untitled';
                     vscode.window.showInformationMessage(`Found function: ${functionName} at line ${position.line + 1} in ${fileName}`);
                     return true;
                 } catch (error) {
@@ -389,7 +389,7 @@ export class CommandRouter {
                 targetEditor.selection = new vscode.Selection(position, position);
                 targetEditor.revealRange(new vscode.Range(position, position));
                 
-                const fileName = path.basename(targetEditor.document.fileName);
+                const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                 vscode.window.showInformationMessage(`Went to line ${lineNumber} in ${fileName}`);
                 logSuccess(`[CommandRouter] Successfully navigated to line ${lineNumber} in ${fileName}`);
                 return true;
@@ -474,7 +474,7 @@ export class CommandRouter {
                 targetEditor.selection = new vscode.Selection(position, position);
                 targetEditor.revealRange(new vscode.Range(position, position));
                 
-                const fileName = path.basename(targetEditor.document.fileName);
+                const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                 vscode.window.showInformationMessage(`Went to line ${lineNumber} in ${fileName}`);
                 logSuccess(`[CommandRouter] Successfully navigated to line ${lineNumber} in ${fileName}`);
                 return true;
@@ -558,7 +558,7 @@ export class CommandRouter {
                     targetEditor.selection = new vscode.Selection(foundPosition, foundPosition);
                     targetEditor.revealRange(new vscode.Range(foundPosition, foundPosition));
                     
-                    const fileName = path.basename(targetEditor.document.fileName);
+                    const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                     vscode.window.showInformationMessage(`Found variable: ${variableName} at line ${foundLine + 1} in ${fileName}`);
                     logSuccess(`[CommandRouter] Successfully navigated to variable ${variableName} at line ${foundLine + 1}`);
                     return true;
@@ -672,7 +672,7 @@ export class CommandRouter {
                     targetEditor.selection = new vscode.Selection(parentPosition, parentPosition);
                     targetEditor.revealRange(new vscode.Range(parentPosition, parentPosition));
                     
-                    const fileName = path.basename(targetEditor.document.fileName);
+                    const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                     const parentType = vscode.SymbolKind[parentSymbol.kind] ? vscode.SymbolKind[parentSymbol.kind].toLowerCase() : 'symbol';
                     vscode.window.showInformationMessage(`Moved to parent ${parentType}: ${parentSymbol.name} at line ${parentPosition.line + 1} in ${fileName}`);
                     logSuccess(`[CommandRouter] Successfully navigated to parent ${parentType} ${parentSymbol.name}`);
@@ -946,7 +946,7 @@ Only include parameters relevant to the category. Use null for missing parameter
             targetEditor.selection = new vscode.Selection(position, position);
             targetEditor.revealRange(new vscode.Range(position, position));
             
-            const fileName = path.basename(targetEditor.document.fileName);
+            const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
             vscode.window.showInformationMessage(`🚀 Went to line ${lineNumber} in ${fileName}`);
             logSuccess(`[CommandRouter] ✅ LLM navigated to line ${lineNumber}`);
             return true;
@@ -980,7 +980,7 @@ Only include parameters relevant to the category. Use null for missing parameter
                 targetEditor.selection = new vscode.Selection(newPosition, newPosition);
                 targetEditor.revealRange(new vscode.Range(newPosition, newPosition));
                 
-                const fileName = path.basename(targetEditor.document.fileName);
+                const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                 vscode.window.showInformationMessage(`🎯 Found function: ${functionName} at line ${position.line + 1} in ${fileName}`);
                 return true;
             } catch (error) {
@@ -1056,7 +1056,7 @@ Only include parameters relevant to the category. Use null for missing parameter
                 targetEditor.selection = new vscode.Selection(parentPosition, parentPosition);
                 targetEditor.revealRange(new vscode.Range(parentPosition, parentPosition));
                 
-                const fileName = path.basename(targetEditor.document.fileName);
+                const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                 const parentType = vscode.SymbolKind[parentSymbol.kind] ? vscode.SymbolKind[parentSymbol.kind].toLowerCase() : 'symbol';
                 vscode.window.showInformationMessage(`⬆️ Moved to parent ${parentType}: ${parentSymbol.name} in ${fileName}`);
                 return true;
@@ -1417,7 +1417,7 @@ Only include parameters relevant to the category. Use null for missing parameter
         if (!filename) {
             const activeEditor = vscode.window.activeTextEditor;
             if (activeEditor) {
-                filename = path.basename(activeEditor.document.fileName);
+                filename = activeEditor.document.fileName ? path.basename(activeEditor.document.fileName) : 'untitled';
                 if (this.options.enableLogging) {
                     log(`[CommandRouter] 📄 Using current active file: ${filename}`);
                 }
@@ -1920,7 +1920,7 @@ Generate appropriate ${languageId} code that:
                         targetEditor.selection = new vscode.Selection(position, position);
                         targetEditor.revealRange(new vscode.Range(position, position));
                         
-                        const fileName = path.basename(targetEditor.document.fileName);
+                        const fileName = targetEditor.document.fileName ? path.basename(targetEditor.document.fileName) : 'untitled';
                         const message = `Went to line ${lineNumber} in ${fileName}`;
                         vscode.window.showInformationMessage(message);
                         log(`[CommandRouter] ✅ Successfully navigated to line ${lineNumber}`);

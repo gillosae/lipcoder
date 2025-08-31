@@ -189,7 +189,7 @@ export async function showCurrentSuggestions(): Promise<ConversationalAction | n
     if (items.length > 0) {
         quickPick.activeItems = [items[0]];
         const first = items[0];
-        const base = current.context?.fileName ? path.basename(current.context.fileName) : '';
+        const base = (current.context?.fileName && typeof current.context.fileName === 'string') ? path.basename(current.context.fileName) : '';
         const ctx = base ? ` in ${base}` : '';
         speakDebounced(
             `${items.length} suggestions${ctx}. Selected: ${first.label}. ${first.description || ''}`,
@@ -260,7 +260,7 @@ export async function showSuggestionHistory(): Promise<SavedSuggestion | null> {
     }
 
     const items: HistoryItem[] = all.map((s) => {
-        const base = s.context?.fileName ? path.basename(s.context.fileName) : undefined;
+        const base = (s.context?.fileName && typeof s.context.fileName === 'string') ? path.basename(s.context.fileName) : undefined;
         return {
             label: `$(history) ${new Date(s.timestamp).toLocaleTimeString()} — ${s.originalCommand}`,
             description: `${s.suggestions.length} suggestion${s.suggestions.length > 1 ? 's' : ''}`,

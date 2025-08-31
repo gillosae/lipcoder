@@ -29,6 +29,9 @@ export class ASRClient {
     private audioBuffer: Buffer[] = [];
     private chunkTimer: NodeJS.Timeout | null = null;
     private disposed = false;
+    private lastTranscriptionText: string = '';
+    private lastTranscriptionTime: number = 0;
+    private isProcessing = false;
     
     // Buffer size limits to prevent memory bloat
     private readonly MAX_BUFFER_SIZE_MB = 10; // 10MB max
@@ -144,6 +147,12 @@ export class ASRClient {
             this.chunkCount = 0;
             this.totalAudioProcessed = 0;
             this.startTime = Date.now();
+            
+            // 중복 인식 방지를 위한 상태 초기화
+            this.lastTranscriptionText = '';
+            this.lastTranscriptionTime = 0;
+            this.isProcessing = false;
+            
             log('[ASR] Cleared audio buffers and reset state to prevent text mixing');
             
             // Import microphone module with fallback
@@ -281,9 +290,10 @@ export class ASRClient {
             clearInterval(this.chunkTimer);
         }
         
-        // Handle incoming audio data from microphone
+        // Handle incoming audio data from microphone - 중복 리스너 방지
+        this.audioStream.removeAllListeners('data'); // 기존 리스너 제거
         this.audioStream.on('data', (chunk: Buffer) => {
-            if (this.isRecording) {
+            if (this.isRecording && !this.disposed) {
                 log(`🎤 [ASR] Received real audio chunk: ${chunk.length} bytes`);
                 
                 // Prevent buffer from growing too large
@@ -302,13 +312,19 @@ export class ASRClient {
         });
         
         this.chunkTimer = setInterval(async () => {
-            if (this.isRecording && this.audioBuffer.length > 0) {
-                // Combine all audio chunks
-                const combinedAudio = Buffer.concat(this.audioBuffer);
-                this.audioBuffer = []; // Clear buffer
+            if (this.isRecording && this.audioBuffer.length > 0 && !this.isProcessing) {
+                this.isProcessing = true; // 중복 처리 방지
                 
-                log(`[ASR] Processing real audio chunk: ${combinedAudio.length} bytes`);
-                await this.processAudioChunk(combinedAudio);
+                try {
+                    // Combine all audio chunks
+                    const combinedAudio = Buffer.concat(this.audioBuffer);
+                    this.audioBuffer = []; // Clear buffer
+                    
+                    log(`[ASR] Processing real audio chunk: ${combinedAudio.length} bytes`);
+                    await this.processAudioChunk(combinedAudio);
+                } finally {
+                    this.isProcessing = false;
+                }
             }
         }, this.options.chunkDuration);
         
@@ -390,6 +406,30 @@ export class ASRClient {
             log(`[ASR] Real audio chunk processed in ${processingTime}ms`);
             
             if (transcription) {
+                // 중복 텍스트 인식 방지 (더 관대한 설정)
+                const currentTime = Date.now();
+                const timeDiff = currentTime - this.lastTranscriptionTime;
+                
+                // 이전 인식 결과가 있을 때만 중복 체크
+                if (this.lastTranscriptionText && this.lastTranscriptionTime > 0) {
+                    const isSimilarText = this.isSimilarTranscription(transcription, this.lastTranscriptionText);
+                    const isExactMatch = transcription.trim() === this.lastTranscriptionText.trim();
+                    
+                    logSuccess(`[ASR] 🔍 Duplicate check: current="${transcription}", last="${this.lastTranscriptionText}", timeDiff=${timeDiff}ms, similar=${isSimilarText}, exact=${isExactMatch}`);
+                    
+                    // 매우 짧은 시간 내 완전히 같은 텍스트만 무시 (1초 이내)
+                    if (isExactMatch && timeDiff < 1000) {
+                        logWarning(`[ASR] ❌ Exact duplicate detected (${timeDiff}ms ago), skipping: "${transcription}"`);
+                        return;
+                    }
+                } else {
+                    logSuccess(`[ASR] 🔍 First transcription or reset state, processing: "${transcription}"`);
+                }
+                
+                // 새로운 유효한 인식 결과
+                this.lastTranscriptionText = transcription;
+                this.lastTranscriptionTime = currentTime;
+                
                 log(`[ASR] Real transcription received: "${transcription}"`);
                 
                 // Log ASR command with comprehensive tracking
@@ -547,6 +587,61 @@ export class ASRClient {
             logError(`[ASR] Server connection test failed: ${error}`);
             return false;
         }
+    }
+
+    /**
+     * 유사한 텍스트인지 확인 (중복 인식 방지)
+     */
+    private isSimilarTranscription(newText: string, lastText: string): boolean {
+        if (!lastText || !newText) return false;
+        
+        // 정규화: 소문자, 공백 제거, 특수문자 제거
+        const normalize = (text: string) => text.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+        
+        const normalizedNew = normalize(newText);
+        const normalizedLast = normalize(lastText);
+        
+        // 완전히 같은 경우
+        if (normalizedNew === normalizedLast) return true;
+        
+        // 한쪽이 다른 쪽을 포함하는 경우 (부분 중복)
+        if (normalizedNew.includes(normalizedLast) || normalizedLast.includes(normalizedNew)) {
+            return true;
+        }
+        
+        // 레벤슈타인 거리로 유사도 계산
+        const similarity = this.calculateSimilarity(normalizedNew, normalizedLast);
+        return similarity > 0.8; // 80% 이상 유사하면 중복으로 간주
+    }
+    
+    /**
+     * 두 문자열의 유사도 계산 (0~1)
+     */
+    private calculateSimilarity(str1: string, str2: string): number {
+        const len1 = str1.length;
+        const len2 = str2.length;
+        
+        if (len1 === 0) return len2 === 0 ? 1 : 0;
+        if (len2 === 0) return 0;
+        
+        const matrix = Array(len2 + 1).fill(null).map(() => Array(len1 + 1).fill(null));
+        
+        for (let i = 0; i <= len1; i++) matrix[0][i] = i;
+        for (let j = 0; j <= len2; j++) matrix[j][0] = j;
+        
+        for (let j = 1; j <= len2; j++) {
+            for (let i = 1; i <= len1; i++) {
+                const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+                matrix[j][i] = Math.min(
+                    matrix[j - 1][i] + 1,     // deletion
+                    matrix[j][i - 1] + 1,     // insertion
+                    matrix[j - 1][i - 1] + cost // substitution
+                );
+            }
+        }
+        
+        const maxLen = Math.max(len1, len2);
+        return (maxLen - matrix[len2][len1]) / maxLen;
     }
 
     /**

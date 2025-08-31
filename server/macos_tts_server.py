@@ -75,7 +75,7 @@ def tts():
         text = data['text']
         
         # Extract macOS say parameters from request
-        voice = data.get('voice', 'Alex')  # Default to Alex voice
+        voice = data.get('voice', 'Albert')  # Default to Albert voice (available on macOS)
         rate = data.get('rate', 200)       # words per minute (default: 200)
         volume = data.get('volume', 0.7)   # volume 0.0-1.0 (default: 0.7)
         sample_rate = data.get('sample_rate', 24000)  # output sample rate
@@ -86,8 +86,8 @@ def tts():
         
         # Validate voice name
         if voice not in AVAILABLE_VOICES:
-            logger.warning(f"Voice '{voice}' not found, using default 'Alex'")
-            voice = 'Alex'
+            logger.warning(f"Voice '{voice}' not found, using default 'Albert'")
+            voice = 'Albert'
         
         # Create temporary file for output
         with tempfile.NamedTemporaryFile(suffix='.aiff', delete=False) as temp_file:

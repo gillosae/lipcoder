@@ -63,7 +63,7 @@ fi
 
 # Test 'say' command (silent test)
 echo -e "${BLUE}🔍 Testing macOS 'say' command...${NC}"
-if echo "test" | say 2>/dev/null; then
+if echo "" | say >/dev/null 2>&1; then
     echo -e "${GREEN}✅ macOS 'say' command is working${NC}"
 else
     echo -e "${RED}❌ Error: macOS 'say' command test failed${NC}"
@@ -79,18 +79,9 @@ done
 
 echo -e "${BLUE}📡 Starting server on port $PORT...${NC}"
 
-# Check if port is already in use
-if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
-    echo -e "${YELLOW}⚠️  Warning: Port $PORT is already in use${NC}"
-    echo -e "${YELLOW}   Attempting to kill existing process...${NC}"
-    
-    # Kill existing process on the port
-    PID=$(lsof -ti:$PORT)
-    if [ ! -z "$PID" ]; then
-        kill -9 $PID 2>/dev/null
-        sleep 2
-        echo -e "${GREEN}✅ Killed existing process on port $PORT${NC}"
-    fi
+# Kill any existing processes on the target port using common function
+if ! kill_port_processes $PORT; then
+    exit 1
 fi
 
 # Export port for the Python script

@@ -57,18 +57,9 @@ fi
 PORT=${1:-5004}
 echo -e "${BLUE}📡 Starting ASR server on port $PORT...${NC}"
 
-# Check if port is already in use
-if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
-    echo -e "${YELLOW}⚠️  Warning: Port $PORT is already in use${NC}"
-    echo -e "${YELLOW}   Attempting to kill existing process...${NC}"
-    
-    # Kill existing process on the port
-    PID=$(lsof -ti:$PORT 2>/dev/null)
-    if [ ! -z "$PID" ]; then
-        kill -9 $PID 2>/dev/null
-        sleep 2
-        echo -e "${GREEN}✅ Killed existing process on port $PORT${NC}"
-    fi
+# Kill any existing processes on the target port using common function
+if ! kill_port_processes $PORT; then
+    exit 1
 fi
 
 # Start the server

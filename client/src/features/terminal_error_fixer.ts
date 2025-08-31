@@ -587,7 +587,7 @@ export async function fixTerminalErrors(): Promise<void> {
             }
 
             const currentCode = activeEditor.document.getText();
-            const fileName = path.basename(activeEditor.document.fileName);
+            const fileName = activeEditor.document.fileName ? path.basename(activeEditor.document.fileName) : 'untitled';
             const fileExtension = path.extname(fileName);
             const filePath = activeEditor.document.uri.fsPath;
 
@@ -1006,7 +1006,7 @@ export async function fixTerminalErrorsVibeCoding(instruction?: string): Promise
         }
 
         const currentCode = activeEditor.document.getText();
-        const fileName = path.basename(activeEditor.document.fileName);
+        const fileName = activeEditor.document.fileName ? path.basename(activeEditor.document.fileName) : 'untitled';
         const fileExtension = path.extname(fileName);
 
         // Use enhanced LLM fixing with diff approach

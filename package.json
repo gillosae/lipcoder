@@ -745,18 +745,18 @@
       },
       {
         "command": "lipcoder.runFirstTimeSetup",
-        "title": "LipCoder: 🚀 First Time Setup (신규 사용자 자동 설정)",
-        "category": "Auto Setup"
+        "title": "🚀 LipCoder: 자동 환경 설정 (First Time Setup)",
+        "category": "Setup"
       },
       {
         "command": "lipcoder.resetSetup",
-        "title": "LipCoder: ⚠️ Reset First Time Setup",
-        "category": "Auto Setup"
+        "title": "⚠️ LipCoder: 설정 초기화 (Reset Setup)",
+        "category": "Setup"
       },
       {
         "command": "lipcoder.checkSetupStatus",
-        "title": "LipCoder: ✅ Check Auto Setup Status",
-        "category": "Auto Setup"
+        "title": "✅ LipCoder: 설정 상태 확인 (Check Setup Status)",
+        "category": "Setup"
       }
     ],
     "menus": {
@@ -1010,11 +1010,12 @@
         "lipcoder.asrBackend": {
           "type": "string",
           "enum": [
+            "huggingface-whisper",
             "gpt4o-transcribe",
             "silero"
           ],
-          "default": "gpt4o-transcribe",
-          "description": "Choose the ASR backend for voice recognition. GPT-4o Transcribe supports multilingual recognition including Korean and English."
+          "default": "huggingface-whisper",
+          "description": "Choose the ASR backend for voice recognition. Hugging Face Whisper (recommended) runs locally for fast and accurate recognition. GPT-4o Transcribe uses OpenAI API. Silero is lightweight but less accurate."
         },
         "lipcoder.asrLanguage": {
           "type": [
@@ -1024,18 +1025,15 @@
           "enum": [
             null,
             "en",
-            "ko",
-            "ja",
-            "zh",
-            "es",
-            "fr",
-            "de",
-            "it",
-            "pt",
-            "ru"
+            "ko"
+          ],
+          "enumDescriptions": [
+            "Automatic language detection (Korean, English, and others)",
+            "English only - prevents misrecognition of other languages",
+            "Korean only - prevents misrecognition of other languages"
           ],
           "default": null,
-          "description": "Language for ASR recognition. Set to null for automatic language detection (supports Korean, English, and many others). Only works with GPT-4o Transcribe backend."
+          "description": "Language constraint for ASR recognition. Choose 'en' or 'ko' to limit recognition to specific language and prevent misrecognition. Set to null for automatic detection. Only works with GPT-4o Transcribe backend."
         },
         "lipcoder.diffPreviewMode": {
           "type": "string",

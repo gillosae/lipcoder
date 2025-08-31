@@ -151,7 +151,7 @@ function startMemoryMonitoring(): void {
         }
         
         // Trigger aggressive cleanup if memory usage is too high OR if pending cleanup is requested
-        const shouldCleanup = currentMemory.heapUsed > 60 * 1024 * 1024 || (global as any).pendingMemoryCleanup;
+        const shouldCleanup = currentMemory.heapUsed > 40 * 1024 * 1024 || (global as any).pendingMemoryCleanup;
         
         if (shouldCleanup) {
             const reason = (global as any).pendingMemoryCleanup ? 
@@ -391,14 +391,14 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 1.1) First Time Setup - 새로운 사용자를 위한 자동 환경 구축 ─────────────────────────
 	const firstTimeSetup = new FirstTimeSetup(context);
 	
-	// 첫 실행 시 자동 설정 확인 (비동기로 실행하여 Extension 활성화 속도 유지)
-	setTimeout(async () => {
-		try {
-			await firstTimeSetup.checkAndRunFirstTimeSetup();
-		} catch (error) {
-			logError(`[Extension] 첫 설정 확인 실패: ${error}`);
-		}
-	}, 1000); // 1초 후 실행하여 Extension 활성화 완료 후 진행
+	// 자동 팝업 비활성화 - Command Palette에서만 실행 가능
+	// setTimeout(async () => {
+	// 	try {
+	// 		await firstTimeSetup.checkAndRunFirstTimeSetup();
+	// 	} catch (error) {
+	// 		logError(`[Extension] 첫 설정 확인 실패: ${error}`);
+	// 	}
+	// }, 1000); // 1초 후 실행하여 Extension 활성화 완료 후 진행
 	
 	// 1.2) Load configuration from VS Code settings ─────────────────────────────────────
 	const { loadConfigFromSettings } = require('./config');
@@ -504,12 +504,45 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 2) Start TTS and ASR servers ──────────────────────────────────────────────────────
+	// TEMPORARILY DISABLED: Server auto-start causing VS Code crashes
+	// Only register existing servers without starting new ones
 	try {
-		await serverManager.startServers();
-		logSuccess('✅ All servers started successfully');
+		// Check if ASR server is already running and register it
+		const asrHealthResponse = await fetch('http://localhost:5004/health', { 
+			method: 'GET',
+			signal: AbortSignal.timeout(2000)
+		});
+		if (asrHealthResponse.ok) {
+			logSuccess('✅ Found existing ASR server on port 5004');
+			// Register the existing server
+			serverManager.registerExistingServer('asr', 5004);
+		}
+		
+		// Check if TTS server is already running and register it
+		const ttsHealthResponse = await fetch('http://localhost:5008/health', { 
+			method: 'GET',
+			signal: AbortSignal.timeout(2000)
+		});
+		if (ttsHealthResponse.ok) {
+			logSuccess('✅ Found existing TTS server on port 5008');
+			// Register the existing server
+			serverManager.registerExistingServer('macos_tts', 5008);
+		}
+		
+		// Check if Hugging Face Whisper server is already running and register it
+		const hfWhisperHealthResponse = await fetch('http://localhost:5005/health', { 
+			method: 'GET',
+			signal: AbortSignal.timeout(2000)
+		});
+		if (hfWhisperHealthResponse.ok) {
+			logSuccess('✅ Found existing Hugging Face Whisper server on port 5005');
+			// Register the existing server
+			serverManager.registerExistingServer('huggingface-whisper', 5005);
+		}
+		
+		logSuccess('✅ Server registration completed without starting new processes');
 	} catch (error) {
-		logError(`❌ Failed to start servers: ${error}`);
-		vscode.window.showErrorMessage(`Failed to start lipcoder servers: ${error}`);
+		logWarning(`⚠️ Server registration failed: ${error}`);
 		// Continue anyway - some features may still work without servers
 	}
 

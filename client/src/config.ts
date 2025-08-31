@@ -16,6 +16,11 @@ function getExtRoot(): string {
     return extRoot;
 }
 
+// Safe helper function that returns empty string if not initialized (for early calls)
+function safeGetExtRoot(): string {
+    return extRoot || '';
+}
+
 // TTS Backends & Config ─────────────────────────────────────────────────────
 export enum TTSBackend {
     SileroGPT = 'silero-gpt',     // Silero for English + GPT for Korean
@@ -30,6 +35,7 @@ export enum TTSBackend {
 export enum ASRBackend {
     Silero = 'silero',
     GPT4o = 'gpt4o-transcribe',
+    HuggingFaceWhisper = 'huggingface-whisper',
 }
 
 // LLM Backends & Config ─────────────────────────────────────────────────────
@@ -50,6 +56,14 @@ export interface GPT4oASRConfig {
     language?: string | null; // null for auto-detection, string for specific language
     sampleRate: number;
     temperature?: number;
+}
+
+export interface HuggingFaceWhisperConfig {
+    serverUrl: string;
+    model: string; // Whisper model (e.g., openai/whisper-large-v3)
+    language?: string | null; // null for auto-detection, string for specific language
+    sampleRate: number;
+    chunkDuration: number; // milliseconds
 }
 
 export interface SileroConfig {
@@ -112,7 +126,7 @@ export interface VibeCodingConfig {
 export let currentBackend = TTSBackend.MacOS;
 
 // ASR Configuration ─────────────────────────────────────────────────────
-export let currentASRBackend = ASRBackend.GPT4o; // Default to GPT-4o as requested
+export let currentASRBackend = ASRBackend.GPT4o; // Use optimized HF Whisper with adjusted VAD thresholds
 
 // LLM Configuration ─────────────────────────────────────────────────────
 export let currentLLMBackend = LLMBackend.Claude; // Claude for vibe coding, ChatGPT used directly for routing
@@ -126,9 +140,17 @@ export let sileroASRConfig: SileroASRConfig = {
 export let gpt4oASRConfig: GPT4oASRConfig = {
     apiKey: '', // Will be loaded from VS Code settings
     model: 'whisper-1', // Using Whisper for reliable transcription
-    language: null, // null for automatic language detection (supports Korean, English, etc.)
+    language: null, // Auto-detection for all languages
     sampleRate: 16000, // Whisper prefers 16kHz
-    temperature: 0.0, // For accurate transcription
+    temperature: 0.2, // Minimize hallucination with conservative temperature
+};
+
+export let huggingFaceWhisperConfig: HuggingFaceWhisperConfig = {
+    serverUrl: 'http://localhost:5005/asr', // Local Hugging Face Whisper server
+    model: 'openai/whisper-small', // Small model for faster loading and good accuracy
+    language: 'ko', // Korean language for better recognition
+    sampleRate: 16000, // Whisper prefers 16kHz
+    chunkDuration: 2000, // 2 seconds chunks
 };
 
 export let sileroConfig: SileroConfig = {
@@ -569,45 +591,78 @@ export const config = {
     audioMinimapSpeedThreshold: 3.5, // lines per second threshold to trigger minimap (increased to reduce false triggers)
     audioMinimapTimeout: 150,    // minimum milliseconds between line changes to calculate speed (reduced for more responsive detection)
 
-    audioPath: () => path.join(getExtRoot(), 'client', 'audio'),
-    alphabetPath: () => path.join(
-        getExtRoot(),
-        'client',
-        'audio',
-        `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : 
-                   currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
-    ),
-    earconPath: () => path.join(getExtRoot(), 'client', 'audio', 'earcon'),
-    numberPath: () => path.join(
-        getExtRoot(),
-        'client',
-        'audio',
-        `number${currentBackend === TTSBackend.Espeak ? '_espeak' : 
-                 currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
-    ),
-    pythonKeywordsPath: () => path.join(
-        getExtRoot(),
-        'client',
-        'audio',
-        `python${currentBackend === TTSBackend.Espeak ? '_espeak' : 
-                 currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
-    ),
-    typescriptKeywordsPath: () => path.join(
-        getExtRoot(),
-        'client',
-        'audio',
-        `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+    audioPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(root, 'client', 'audio') : '';
+    },
+    alphabetPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(
+            root,
+            'client',
+            'audio',
+            `alphabet${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                       currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
+        ) : '';
+    },
+    earconPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(root, 'client', 'audio', 'earcon') : '';
+    },
+    numberPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(
+            root,
+            'client',
+            'audio',
+            `number${currentBackend === TTSBackend.Espeak ? '_espeak' : 
                      currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
-    ),
-    pythonPath: () => path.join(getExtRoot(), 'client', 'src', 'python', 'bin', 'python'),
-    scriptPath: () => path.join(getExtRoot(), 'client', 'src', 'python', 'silero_tts_infer.py'),
-    specialPath: () => path.join(
-        config.audioPath(),
-        `special${currentBackend === TTSBackend.Espeak ? '_espeak' : 
-                  currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
-    ),
-    musicalPath: () => path.join(config.audioPath(), 'musical'),
-    alertPath: () => path.join(config.audioPath(), 'alert'),
+        ) : '';
+    },
+    pythonKeywordsPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(
+            root,
+            'client',
+            'audio',
+            `python${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                     currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
+        ) : '';
+    },
+    typescriptKeywordsPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(
+            root,
+            'client',
+            'audio',
+            `typescript${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                         currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
+        ) : '';
+    },
+    pythonPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(root, 'client', 'src', 'python', 'bin', 'python') : '';
+    },
+    scriptPath: () => {
+        const root = safeGetExtRoot();
+        return root ? path.join(root, 'client', 'src', 'python', 'silero_tts_infer.py') : '';
+    },
+    specialPath: () => {
+        const audioPath = config.audioPath();
+        return audioPath ? path.join(
+            audioPath,
+            `special${currentBackend === TTSBackend.Espeak ? '_espeak' : 
+                      currentBackend === TTSBackend.MacOS || currentBackend === TTSBackend.MacOSGPT ? '_macos' : '_silero'}`
+        ) : '';
+    },
+    musicalPath: () => {
+        const audioPath = config.audioPath();
+        return audioPath ? path.join(audioPath, 'musical') : '';
+    },
+    alertPath: () => {
+        const audioPath = config.audioPath();
+        return audioPath ? path.join(audioPath, 'alert') : '';
+    },
 
 } as {
     typingSpeechEnabled: boolean;
@@ -657,20 +712,34 @@ export function loadConfigFromSettings() {
         }
         
         // Load ASR backend selection
-        const asrBackend = config.get('asrBackend', 'gpt4o-transcribe') as string;
+        const asrBackend = config.get('asrBackend', 'huggingface-whisper') as string;
         if (asrBackend === 'silero') {
             currentASRBackend = ASRBackend.Silero;
         } else if (asrBackend === 'gpt4o-transcribe') {
             currentASRBackend = ASRBackend.GPT4o;
+        } else if (asrBackend === 'huggingface-whisper') {
+            currentASRBackend = ASRBackend.HuggingFaceWhisper;
         }
         
         // Load Whisper model
         const whisperModel = config.get('gpt4oModel', 'whisper-1') as string;
         gpt4oASRConfig.model = whisperModel;
         
-        // Load ASR language (null for auto-detection, 'en' for English, 'ko' for Korean, etc.)
+        // Load ASR language (null for auto-detection, 'en' for English, 'ko' for Korean)
         const asrLanguage = config.get('asrLanguage', null) as string | null;
-        gpt4oASRConfig.language = asrLanguage;
+        
+        // Validate ASR language setting
+        if (asrLanguage !== null && asrLanguage !== 'en' && asrLanguage !== 'ko') {
+            console.warn(`[Config] Invalid ASR language '${asrLanguage}', falling back to auto-detection`);
+            gpt4oASRConfig.language = null;
+        } else {
+            gpt4oASRConfig.language = asrLanguage;
+            if (asrLanguage) {
+                console.log(`[Config] ASR language constraint set to: ${asrLanguage === 'en' ? 'English only' : 'Korean only'}`);
+            } else {
+                console.log('[Config] ASR language set to auto-detection (all languages)');
+            }
+        }
         
         // Load OpenAI TTS configuration
         if (apiKey) {

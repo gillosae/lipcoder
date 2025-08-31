@@ -22,6 +22,16 @@ read_batch, split_into_batches, read_audio, prepare_model_input = utils
 # Wrap the Flask app for ASGI servers if you want to run with Uvicorn/Hypercorn
 asgi_app = WsgiToAsgi(app)
 
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for server monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Silero ASR Server',
+        'device': str(device),
+        'model_loaded': model is not None
+    })
+
 @app.route('/asr', methods=['POST'])
 def asr():
     print(f"[ASR] Received request with content-type: {request.content_type}")

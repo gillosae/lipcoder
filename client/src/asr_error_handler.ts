@@ -64,7 +64,7 @@ export async function handleASRError(error: Error, context?: string): Promise<vo
         
         // Generate TTS for the error message
         const ttsFilePath = await genTokenAudio(ttsMessage, 'error', { 
-            speaker: 'default' // Use default voice for error messages
+            speaker: 'Albert' // Use Albert voice for error messages (available on macOS)
         });
         
         // Play the TTS audio
