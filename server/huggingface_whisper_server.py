@@ -315,14 +315,18 @@ def transcribe_audio():
         }), 503
     
     try:
-        # Check if audio file is provided
-        if 'audio' not in request.files:
+        # Check if audio file is provided (support both 'audio' and 'audio_file' fields)
+        audio_file = None
+        if 'audio_file' in request.files:
+            audio_file = request.files['audio_file']
+        elif 'audio' in request.files:
+            audio_file = request.files['audio']
+        
+        if audio_file is None:
             return jsonify({
                 'error': 'No audio file provided',
-                'details': 'Please provide an audio file in the "audio" field'
+                'details': 'Please provide an audio file in the "audio_file" or "audio" field'
             }), 400
-        
-        audio_file = request.files['audio']
         if audio_file.filename == '':
             return jsonify({
                 'error': 'Empty audio file',

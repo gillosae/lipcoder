@@ -356,7 +356,7 @@ export class HuggingFaceWhisperClient {
                 return null;
             }
 
-            formData.append('audio', audioBuffer, {
+            formData.append('audio_file', audioBuffer, {
                 filename: 'audio.wav',
                 contentType: 'audio/wav'
             });
