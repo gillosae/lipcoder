@@ -1,4 +1,5 @@
 import { lipcoderLog } from './logger';
+import { crashLogger, LogLevel, logDebug, logInfo as logCrashInfo, logWarn, logError as logCrashError, logTyping } from './crash_logger';
 
 // ANSI color codes for console output
 const Colors = {
@@ -44,6 +45,9 @@ export function log(message: string, color?: ColorName): void {
     
     // Also log to the LipCoder output channel
     lipcoderLog.appendLine(`[${new Date().toISOString()}] ${message}`);
+    
+    // Also log to crash logger for persistent storage
+    logDebug('GENERAL', message);
 }
 
 /**
@@ -56,8 +60,10 @@ export function logMemory(message: string): void {
 /**
  * Log an error message in red
  */
-export function logError(message: string): void {
+export function logError(message: string, error?: Error): void {
     log(message, 'BrightRed');
+    // Also log to crash logger with error details
+    logCrashError('ERROR', message, error);
 }
 
 /**
@@ -151,4 +157,22 @@ export function initializeLogging(): void {
     
     // Log startup message
     log('[LipCoder] Logging initialized - debug output ready', 'BrightGreen');
+    
+    // Initialize crash logger
+    logCrashInfo('STARTUP', 'LipCoder extension logging system initialized');
+    logCrashInfo('STARTUP', `Log directory: ${crashLogger.getLogDirectory()}`);
+}
+
+/**
+ * Log typing events for crash analysis
+ */
+export function logTypingEvent(event: string, details?: any): void {
+    logTyping(event, details);
+}
+
+/**
+ * Cleanup logging resources
+ */
+export function cleanupLogging(): void {
+    crashLogger.cleanup();
 }

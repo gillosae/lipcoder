@@ -193,8 +193,17 @@ export async function readTextTokens(
         const text = change.text;
         if (text.length > 1) {
             // Break grouped input into individual tokens
-            // Stop audio once at the beginning of the sequence, not per character
-            stopAllAudio();
+            // OPTIMIZATION: Check if this is all alphabet characters for faster stopping
+            const isAllAlphabet = /^[a-zA-Z]+$/.test(text);
+            
+            if (isAllAlphabet) {
+                // For all-alphabet input, use direct audioPlayer stopping for faster response
+                audioPlayer.stopCurrentPlayback(true);
+                log(`[read_text_tokens] MULTI-ALPHABET FAST STOP: Used direct audioPlayer stop for "${text}"`);
+            } else {
+                // For mixed content, use regular stopAllAudio()
+                stopAllAudio();
+            }
             
             for (let i = 0; i < text.length; i++) {
                 const ch = text[i];
@@ -246,7 +255,16 @@ export async function readTextTokens(
         }
         // Single-character logic
         const char = text;
-        stopAllAudio();
+        
+        // OPTIMIZATION: For alphabet characters, use direct audioPlayer stopping for faster response
+        if (/^[a-zA-Z]$/.test(char)) {
+            // For alphabet characters, use immediate audioPlayer stopping instead of stopAllAudio()
+            audioPlayer.stopCurrentPlayback(true);
+            log(`[read_text_tokens] ALPHABET FAST STOP: Used direct audioPlayer stop for "${char}"`);
+        } else {
+            // For non-alphabet characters, use regular stopAllAudio()
+            stopAllAudio();
+        }
         try {
             const specialCharSpoken = getSpecialCharSpoken(char);
             const isEarconChar = isEarcon(char);

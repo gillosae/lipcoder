@@ -932,14 +932,55 @@ class AudioPlayer {
     }
 
     async playPcmCached(filePath: string, panning?: number): Promise<void> {
-        // Check if we're in the middle of stopping - abort immediately  
-        if (this.isStopping) {
-            log(`[playPcmCached] Aborted - stopping in progress for: ${path.basename(filePath)}`);
-            return;
-        }
-        
-        // Check if this is an alphabet character - bypass pitch-preserving for instant playback
+        // OPTIMIZATION: For alphabet characters, force immediate stopping and bypass delay checks
         const isAlphabetChar = filePath.includes('/alphabet/') || filePath.includes('\\alphabet\\');
+        
+        if (isAlphabetChar) {
+            // For alphabet characters, AGGRESSIVE immediate stop of any current audio
+            log(`[playPcmCached] ALPHABET AGGRESSIVE STOP: Destroying current speaker for: ${path.basename(filePath)}`);
+            
+            // Multiple aggressive stop attempts for alphabet characters
+            if (this.currentSpeaker) {
+                try {
+                    // Immediate destroy without any delay
+                    this.currentSpeaker.destroy();
+                    this.currentSpeaker.removeAllListeners();
+                    this.currentSpeaker = null;
+                } catch (e) {
+                    // Ignore errors, just force null
+                    this.currentSpeaker = null;
+                }
+            }
+            
+            // Clear all other audio sources immediately
+            if (this.currentFallback) {
+                try { this.currentFallback.kill('SIGKILL'); } catch {}
+                this.currentFallback = null;
+            }
+            if (this.currentReader) {
+                try { this.currentReader.destroy(); } catch {}
+                this.currentReader = null;
+            }
+            if (this.currentFileStream) {
+                try { this.currentFileStream.destroy(); } catch {}
+                this.currentFileStream = null;
+            }
+            
+            // Immediately clear stopping state for alphabet characters
+            this.isStopping = false;
+            if (this.stoppingTimeout) {
+                clearTimeout(this.stoppingTimeout);
+                this.stoppingTimeout = null;
+            }
+            
+            log(`[playPcmCached] ALPHABET AGGRESSIVE STOP COMPLETE: Ready for immediate playback`);
+        } else {
+            // Check if we're in the middle of stopping - abort immediately for non-alphabet
+            if (this.isStopping) {
+                log(`[playPcmCached] Aborted - stopping in progress for: ${path.basename(filePath)}`);
+                return;
+            }
+        }
         
         // Use pitch-preserving for all audio when enabled and speed is not 1.0, 
         // BUT skip it for alphabet characters to avoid delay
@@ -1055,7 +1096,10 @@ class AudioPlayer {
         }
         
         return new Promise<void>((resolve, reject) => {
-            this.stopCurrentPlayback();
+            // For non-alphabet characters, use regular stopping
+            if (!isAlphabetChar) {
+                this.stopCurrentPlayback();
+            }
             
             // Apply global playspeed to cached PCM playback (changes pitch)
             const adjustedFormat = { 
@@ -1064,8 +1108,16 @@ class AudioPlayer {
             };
             log(`[playPcmCached] Using sample rate adjustment: playspeed ${config.playSpeed}x - adjusted sample rate to ${adjustedFormat.sampleRate}Hz (pitch will change)`);
             
+            // OPTIMIZATION: Use smaller buffer for alphabet characters for faster response
+            const bufferSize = isAlphabetChar ? 128 : 512;
+            const waterMark = isAlphabetChar ? 256 : 1024;
+            
             // @ts-ignore: samplesPerFrame used for low-latency despite missing in type
-            const speaker = new Speaker({ ...adjustedFormat, samplesPerFrame: 512 } as any);
+            const speaker = new Speaker({ 
+                ...adjustedFormat, 
+                samplesPerFrame: bufferSize,
+                highWaterMark: waterMark
+            } as any);
             this.currentSpeaker = speaker;
             
             speaker.on('close', resolve);
@@ -1532,11 +1584,14 @@ class AudioPlayer {
         
         this.playQueue = Promise.resolve();
         
-        // Reset the stopping flag immediately for faster recovery
-        this.stoppingTimeout = setTimeout(() => {
-            this.isStopping = false;
+        // OPTIMIZATION: For alphabet typing speed - reset stopping flag IMMEDIATELY
+        // This allows the next audio to start without any delay
+        if (this.stoppingTimeout) {
+            clearTimeout(this.stoppingTimeout);
             this.stoppingTimeout = null;
-        }, 1); // Reduced to 1ms for immediate recovery
+        }
+        this.isStopping = false;
+        log(`[AudioPlayer] Stopping completed immediately (immediate=${immediate}) - ready for new audio`);
     }
 
     stopAll(): void {
@@ -2010,6 +2065,7 @@ export type TokenChunk = {
 /**
  * Speak text using GPT TTS specifically - for notifications and important messages
  * Includes timeout and fallback mechanisms to prevent delayed responses
+ * For ASR responses, bypasses token processing to avoid "space" conversion
  */
 export async function speakGPT(text: string, signal?: AbortSignal): Promise<void> {
     const startTime = Date.now();
@@ -2039,7 +2095,7 @@ export async function speakGPT(text: string, signal?: AbortSignal): Promise<void
     lastGPTTTSTime = currentTime;
     
     try {
-        log(`[speakGPT] Speaking with GPT TTS: "${text}"`);
+        log(`[speakGPT] Speaking with GPT TTS (direct mode): "${text}"`);
         
         // Create a new controller for this request
         activeGPTTTSController = new AbortController();
@@ -2052,7 +2108,7 @@ export async function speakGPT(text: string, signal?: AbortSignal): Promise<void
             }, TIMEOUT_MS);
         });
         
-        // Create the TTS promise
+        // Create the TTS promise - bypass token processing for ASR responses
         const ttsPromise = async () => {
             // Check global stop flag before starting TTS
             if (globalTTSStopFlag) {
@@ -2060,14 +2116,16 @@ export async function speakGPT(text: string, signal?: AbortSignal): Promise<void
                 throw new Error('TTS stopped by global flag');
             }
             
-            // Force GPT TTS by using 'vibe_text' category
-            const chunks: TokenChunk[] = [{
-                tokens: [text],
-                category: 'vibe_text', // This forces OpenAI/GPT TTS
-                panning: undefined
-            }];
+            // DIRECT TTS: Generate audio directly without token processing
+            // This prevents spaces from being converted to "space"
+            const audioPath = await genTokenAudio(text, 'vibe_text', { abortSignal: combinedSignal });
             
-            await speakTokenList(chunks, combinedSignal);
+            // Play the generated audio directly
+            await playWave(audioPath, { 
+                isEarcon: false, 
+                immediate: true, 
+                panning: 0
+            });
         };
         
         // Race between TTS and timeout

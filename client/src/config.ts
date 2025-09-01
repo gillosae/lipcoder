@@ -123,10 +123,10 @@ export interface VibeCodingConfig {
     showPopups: boolean;
 }
 
-export let currentBackend = TTSBackend.MacOS;
+export let currentBackend = TTSBackend.MacOS; // Changed from XTTS to MacOS for stability
 
 // ASR Configuration ─────────────────────────────────────────────────────
-export let currentASRBackend = ASRBackend.GPT4o; // Use optimized HF Whisper with adjusted VAD thresholds
+export let currentASRBackend = ASRBackend.HuggingFaceWhisper; // Use Hugging Face Whisper with VAD for better accuracy
 
 // LLM Configuration ─────────────────────────────────────────────────────
 export let currentLLMBackend = LLMBackend.Claude; // Claude for vibe coding, ChatGPT used directly for routing
@@ -140,9 +140,9 @@ export let sileroASRConfig: SileroASRConfig = {
 export let gpt4oASRConfig: GPT4oASRConfig = {
     apiKey: '', // Will be loaded from VS Code settings
     model: 'whisper-1', // Using Whisper for reliable transcription
-    language: null, // Auto-detection for all languages
+    language: 'ko', // Force Korean to prevent Japanese hallucinations
     sampleRate: 16000, // Whisper prefers 16kHz
-    temperature: 0.2, // Minimize hallucination with conservative temperature
+    temperature: 0.0, // Maximum anti-hallucination setting
 };
 
 export let huggingFaceWhisperConfig: HuggingFaceWhisperConfig = {
@@ -762,7 +762,7 @@ export function loadConfigFromSettings() {
         openaiTTSConfig.volumeBoost = ttsVolumeBoost;
         
         // Load TTS backend selection
-        const ttsBackend = config.get('ttsBackend', 'espeak') as string;
+        const ttsBackend = config.get('ttsBackend', 'macos') as string; // Changed default from 'espeak' to 'macos'
         if (ttsBackend === 'silero-gpt') {
             currentBackend = TTSBackend.SileroGPT;
         } else if (ttsBackend === 'espeak-gpt') {
@@ -770,7 +770,9 @@ export function loadConfigFromSettings() {
         } else if (ttsBackend === 'espeak') {
             currentBackend = TTSBackend.Espeak;
         } else if (ttsBackend === 'xtts-v2') {
-            currentBackend = TTSBackend.XTTSV2;
+            // XTTS disabled due to stability issues - fallback to MacOS
+            console.warn('[Config] XTTS-v2 backend disabled due to stability issues, using MacOS instead');
+            currentBackend = TTSBackend.MacOS;
         } else if (ttsBackend === 'macos-gpt') {
             currentBackend = TTSBackend.MacOSGPT;
         } else if (ttsBackend === 'macos') {

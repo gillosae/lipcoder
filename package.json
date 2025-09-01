@@ -757,6 +757,41 @@
         "command": "lipcoder.checkSetupStatus",
         "title": "✅ LipCoder: 설정 상태 확인 (Check Setup Status)",
         "category": "Setup"
+      },
+      {
+        "command": "lipcoder.openLogDirectory",
+        "title": "📁 LipCoder: 로그 디렉토리 열기 (Open Log Directory)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.viewCrashLogs",
+        "title": "💥 LipCoder: 크래시 로그 보기 (View Crash Logs)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.viewDebugLogs",
+        "title": "🐛 LipCoder: 디버그 로그 보기 (View Debug Logs)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.viewPerformanceLogs",
+        "title": "⚡ LipCoder: 성능 로그 보기 (View Performance Logs)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.clearLogs",
+        "title": "🗑️ LipCoder: 로그 파일 삭제 (Clear Logs)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.checkLogStatus",
+        "title": "📊 LipCoder: 로그 상태 확인 (Check Log Status)",
+        "category": "Debug"
+      },
+      {
+        "command": "lipcoder.testCrash",
+        "title": "⚠️ LipCoder: 테스트 크래시 생성 (Test Crash - Debug Only)",
+        "category": "Debug"
       }
     ],
     "menus": {
@@ -1015,7 +1050,7 @@
             "silero"
           ],
           "default": "huggingface-whisper",
-          "description": "Choose the ASR backend for voice recognition. Hugging Face Whisper (recommended) runs locally for fast and accurate recognition. GPT-4o Transcribe uses OpenAI API. Silero is lightweight but less accurate."
+          "description": "Choose the ASR backend for voice recognition. GPT-4o Transcribe (recommended) uses OpenAI API for high accuracy. Hugging Face Whisper runs locally. Silero is lightweight but less accurate."
         },
         "lipcoder.asrLanguage": {
           "type": [

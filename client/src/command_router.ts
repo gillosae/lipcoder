@@ -5,7 +5,7 @@ import { analyzeCodeWithQuestion } from './features/code_analysis';
 import { askLLMQuestion } from './features/llm_question';
 import { selectAndAnalyzeImage, findAndAnalyzeImageWithQuestion } from './features/image_description';
 import { explainTerminalOutput } from './features/terminal_error_fixer';
-import { startThinkingAudio, stopThinkingAudio, speakTokenList, TokenChunk } from './audio';
+import { startThinkingAudio, stopThinkingAudio, speakTokenList, TokenChunk, speakGPT } from './audio';
 import { logCommandExecution, logFeatureUsage } from './activity_logger';
 import { comprehensiveEventTracker } from './comprehensive_event_tracker';
 import { getLastActiveEditor, getLastActiveEditorTabAware, openFileTabAware } from './features/last_editor_tracker';
@@ -719,13 +719,14 @@ Available command categories:
 12. CODE_GENERATION - Generate or modify code (e.g., "complete function x", "make test function for x", "make function x", "create function that does x", "change function x", "modify function x", "함수 x를 바꿔줘", "x를 어떻게 바꿔줘", "refactor function x", "update function x", "코드의 신택스 에러를 고쳐줘", "이 함수에 에러 핸들링을 추가해줘", "이 코드를 리팩토링해줘", "테스트 함수를 만들어줘", "주석을 추가해줘", "타입 힌트를 추가해줘")
 13. CODE_ANALYSIS - Analyze code and answer questions about CODE ONLY (e.g., "what does this function do?", "지금 내가 있는 함수는 뭐하는 함수야?", "explain current function", "코드 설명해줘", "이 코드 뭐하는 코드야?", "함수 설명해줘")
 14. IMAGE_DESCRIPTION - Describe images, pictures, or visual content ONLY (e.g., "그림 설명해줘", "이미지 설명해줘", "describe image", "explain this picture", "what's in this image?", "사진 설명해줘", "그림 분석해줘")
-15. TERMINAL_OUTPUT_EXPLANATION - Explain terminal output, terminal results, or terminal errors ONLY (e.g., "터미널 결과 설명해줘", "터미널 출력 설명해줘", "터미널 에러 설명해줘", "explain terminal output", "what does this terminal output mean?", "결과 설명해줘", "터미널 설명해줘", "터미널 분석해줘")
+15. TERMINAL_OUTPUT_EXPLANATION - Explain terminal output, terminal results, or terminal errors ONLY (e.g., "터미널 결과 설명해줘", "터미널 출력 설명해줘", "터미널 에러 설명해줘", "explain terminal output", "what does this terminal output mean?", "결과 설명해줘", "실행 결과 설명해줘", "터미널 설명해줘", "터미널 분석해줘")
 16. LLM_QUESTION - General questions to LLM (e.g., "사인 함수가 뭐야?", "what is a sine function?", "how do I center a div?", "파이썬에서 리스트와 튜플의 차이점은?", "explain machine learning", "수학 문제를 풀어줘")
 17. NOT_A_COMMAND - Just regular text to type
 
 CRITICAL CLASSIFICATION RULES:
 - If the command contains "그림" or "이미지" or "사진" → MUST be IMAGE_DESCRIPTION
 - If the command contains "터미널" → MUST be TERMINAL_OUTPUT_EXPLANATION (unless it says "바탕으로 코드" then TERMINAL_ERROR_FIX)
+- If the command contains "실행 결과 설명" or "결과 설명" → MUST be TERMINAL_OUTPUT_EXPLANATION
 - If the command contains "코드 설명" or "함수 설명" → MUST be CODE_ANALYSIS
 - Be very specific about the category - do not confuse similar categories
 
@@ -1462,10 +1463,9 @@ Only include parameters relevant to the category. Use null for missing parameter
                 // Provide audio feedback [[memory:6411078]]
                 vscode.window.setStatusBarMessage(`🚀 ${result.message}`, 3000);
                 
-                // Speak confirmation using TTS
-                await speakTokenList([
-                    { tokens: [result.message], category: 'comment' }
-                ]);
+                // Speak confirmation using TTS - use consistent "executed" message
+                const fileName = path.basename(result.filePath || filename);
+                await speakGPT(`executed ${fileName}`);
                 
                 return true;
             } else {

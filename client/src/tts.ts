@@ -102,48 +102,54 @@ export async function genTokenAudio(
         log(`[genTokenAudio] keyword asset not found for "${token}" (${category}), falling back to TTS`);
     }
 
-    // 0.1) Pre-generated alphabet audio for single letters
-    // Use PCM files for single letters in variable names, special chars, etc.
-    // Also use for navigation (no category) and other general cases
-    // Skip for keywords and types which might need different pronunciation
-    const useAlphabetPCM = token.length === 1 && isAlphabet(token) && 
-        (category === 'special' || category === 'variable' || category === 'literal' || 
-         category === undefined || category === null || category === '');
-    
-    if (useAlphabetPCM) {
-        const filename = token.toLowerCase();
-        const alphabetPath = config.alphabetPath();
-        const pcmPath = path.join(alphabetPath, `${filename}.pcm`);
-        const wavPath = path.join(alphabetPath, `${filename}.wav`);
-        log(`[genTokenAudio] Current backend: ${currentBackend}, Alphabet path: ${alphabetPath}`);
-        log(`[genTokenAudio] looking up alphabet assets at ${pcmPath} or ${wavPath}`);
-        if (fs.existsSync(pcmPath)) {
-            log(`[genTokenAudio] *** ALPHABET BYPASS (PCM): ${pcmPath}`);
-            return pcmPath;
+    // Skip special character processing for ASR responses (vibe_text category)
+    // This prevents spaces from being converted to "space" earcons
+    if (category === 'vibe_text') {
+        log(`[genTokenAudio] ASR response mode - bypassing special character processing for: "${token}"`);
+    } else {
+        // 0.1) Pre-generated alphabet audio for single letters - OPTIMIZED FOR SPEED
+        // Use PCM files for single letters in variable names, special chars, etc.
+        // Also use for navigation (no category) and other general cases
+        // Skip for keywords and types which might need different pronunciation
+        const useAlphabetPCM = token.length === 1 && isAlphabet(token) && 
+            (category === 'special' || category === 'variable' || category === 'literal' || 
+             category === undefined || category === null || category === '');
+        
+        if (useAlphabetPCM) {
+            const filename = token.toLowerCase();
+            const alphabetPath = config.alphabetPath();
+            // OPTIMIZATION: Check PCM first as it's faster to load
+            const pcmPath = path.join(alphabetPath, `${filename}.pcm`);
+            const wavPath = path.join(alphabetPath, `${filename}.wav`);
+            log(`[genTokenAudio] ALPHABET OPTIMIZATION: Fast lookup for "${token}"`);
+            if (fs.existsSync(pcmPath)) {
+                log(`[genTokenAudio] *** ALPHABET BYPASS (PCM): ${pcmPath}`);
+                return pcmPath;
+            }
+            if (fs.existsSync(wavPath)) {
+                log(`[genTokenAudio] *** ALPHABET BYPASS (WAV): ${wavPath}`);
+                return wavPath;
+            }
+            log(`[genTokenAudio] Alphabet asset not found for "${token}" (${category}), falling back to TTS`);
+        } else if (token.length === 1 && isAlphabet(token)) {
+            log(`[genTokenAudio] Single letter "${token}" with category "${category}" - not using alphabet PCM (useAlphabetPCM=${useAlphabetPCM})`);
         }
-        if (fs.existsSync(wavPath)) {
-            log(`[genTokenAudio] *** ALPHABET BYPASS (WAV): ${wavPath}`);
-            return wavPath;
-        }
-        log(`[genTokenAudio] Alphabet asset not found for "${token}" (${category}), falling back to TTS`);
-    } else if (token.length === 1 && isAlphabet(token)) {
-        log(`[genTokenAudio] Single letter "${token}" with category "${category}" - not using alphabet PCM (useAlphabetPCM=${useAlphabetPCM})`);
-    }
 
-    // 0.2) Pre-generated number audio for single digits
-    // Use PCM files for single digits in variable names, literals, etc.
-    if (token.length === 1 && isNumber(token) && (category === 'special' || category === 'variable' || category === 'literal')) {
-        const filename = token;  // digits are already 0-9
-        const numPcmPath = path.join(config.numberPath(), `${filename}.pcm`);
-        const numWavPath = path.join(config.numberPath(), `${filename}.wav`);
-        log(`[genTokenAudio] looking up number assets at ${numPcmPath} or ${numWavPath}`);
-        if (fs.existsSync(numPcmPath)) {
-            log(`[genTokenAudio] *** NUMBER BYPASS (PCM): ${numPcmPath}`);
-            return numPcmPath;  // skip TTS entirely for fast number playback
-        }
-        if (fs.existsSync(numWavPath)) {
-            log(`[genTokenAudio] *** NUMBER BYPASS (WAV): ${numWavPath}`);
-            return numWavPath;  // skip TTS entirely for fast number playback
+        // 0.2) Pre-generated number audio for single digits
+        // Use PCM files for single digits in variable names, literals, etc.
+        if (token.length === 1 && isNumber(token) && (category === 'special' || category === 'variable' || category === 'literal')) {
+            const filename = token;  // digits are already 0-9
+            const numPcmPath = path.join(config.numberPath(), `${filename}.pcm`);
+            const numWavPath = path.join(config.numberPath(), `${filename}.wav`);
+            log(`[genTokenAudio] looking up number assets at ${numPcmPath} or ${numWavPath}`);
+            if (fs.existsSync(numPcmPath)) {
+                log(`[genTokenAudio] *** NUMBER BYPASS (PCM): ${numPcmPath}`);
+                return numPcmPath;  // skip TTS entirely for fast number playback
+            }
+            if (fs.existsSync(numWavPath)) {
+                log(`[genTokenAudio] *** NUMBER BYPASS (WAV): ${numWavPath}`);
+                return numWavPath;  // skip TTS entirely for fast number playback
+            }
         }
     }
 

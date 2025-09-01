@@ -62,7 +62,9 @@ export const EXACT_COMMANDS: ExactCommand[] = [
             '터미널 출력 분석해줘', '터미널 출력 분석', '이 출력 설명해줘', '이 출력 설명', '출력을 설명해줘', '출력을 설명',
             '터미널 출력을 설명해줘', '터미널 출력을 설명', '무슨 출력이야', '무슨 출력', '이게 무슨 출력이야', '이게 무슨 출력',
             '터미널에서 뭐가 나왔어', '터미널에서 뭐가 나왔나', '터미널 결과 설명해줘', '터미널 결과 설명',
-            'terminal output explain', 'explain this output', 'what output is this', 'describe terminal output'
+            'terminal output explain', 'explain this output', 'what output is this', 'describe terminal output', 
+            "실행 결과 설명해줘", "실행 결과 설명해", "실행 결과를 설명해줘", "실행 결과", "실행결과 설명해줘", "실행결과 설명",
+            "결과 설명해줘", "결과 설명", "결과를 설명해줘", "결과를 설명", "결과 뭐야", "결과가 뭐야"
         ], 
         command: 'lipcoder.explainTerminalOutput', 
         feedback: 'Explaining terminal output', 
@@ -85,7 +87,7 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         type: 'action' 
     },
     { 
-        patterns: ['go to editor', 'editor', 'go editor', '코드 창', '코드 창', '코드 창으로 가', '코드 창 열기', '코드 창 열기', '코드 창 열어', '코드 창으로 가', '코드 창', '에디터', '에디터로 가', '에디터 창 열어'], 
+        patterns: ['go to editor', 'editor', 'go editor', '코드 창', '코드 창', '코드 창으로 가', '코드 창 열기', '코드 창 열기', '코드 창 열어', '코드 창으로 가', '코드 창', '에디터', '에디터로 가', '에디터 창 열어', '에디터로가'], 
         command: 'workbench.action.focusActiveEditorGroup', 
         feedback: 'In editor', 
         type: 'navigation' 
@@ -94,6 +96,12 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         patterns: ['go to terminal', 'terminal', 'go terminal', '터미널로 가', '터미널', '터미널 열어', '터미널 창 열어', '터미널으로 가'], 
         command: 'lipcoder.smartGoToTerminal', 
         feedback: 'In terminal', 
+        type: 'navigation' 
+    },
+    { 
+        patterns: ['go to explorer', 'explorer', 'go explorer', '탐색기로 가', '탐색기', '탐색기 열어', '탐색기 창 열어', '탐색기으로 가', '파일 탐색기', '파일 탐색기로 가'], 
+        command: 'workbench.view.explorer', 
+        feedback: 'In explorer', 
         type: 'navigation' 
     },
     { 
@@ -181,7 +189,7 @@ export const EXACT_COMMANDS: ExactCommand[] = [
     
     // File opening commands
     { 
-        patterns: ['open file readme', 'open readme', 'readme', 'readme 열어', 'readme 파일 열어', 'readme 파일 열기', 'readme 열기', '리드미 열어', '리드미 파일 열어', '리드미 열기'], 
+        patterns: ['open file readme', 'open readme', 'readme', 'readme 열어', 'readme 파일 열어', 'readme 파일 열기', 'readme 열기', '리드미 열어', '리드미 파일 열어', '리드미 열기', "리듬이 열어줘", "리듬이 열어"], 
         command: 'lipcoder.openFile', 
         feedback: 'Opening README', 
         type: 'action' 
@@ -203,7 +211,7 @@ export const EXACT_COMMANDS: ExactCommand[] = [
     { 
         patterns: [
             'open python file', 'python file', 'python 파일 열어', 'python 파일 열기', '파이썬 파일 열어', '파이썬 파일 열기', '파이썬 파일', 'python 파일',
-            '파이썬 파일 열어줘', 'python 파일 열어줘', '파이썬 파일을 열어', 'python 파일을 열어', '파이썬 파일을 열어줘', 'python 파일을 열어줘'
+            '파이썬 파일 열어줘', 'python 파일 열어줘', '파이썬 파일을 열어', 'python 파일을 열어', '파이썬 파일을 열어줘', 'python 파일을 열어줘', "파이손 파일 열어", "파이선 파일 열어", "파이선 파일 열어줘", "파이손 파일 열어줘"
         ], 
         command: 'lipcoder.openFileByType', 
         feedback: 'Opening Python file', 

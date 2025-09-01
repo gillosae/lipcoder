@@ -83,6 +83,13 @@ export const DEFAULT_HALLUCINATION_CONFIG: HallucinationFilterConfig = {
         "Thanks for your attention",
         "Please subscribe to my channel",
         
+        // Japanese common hallucinations
+        "字幕をオンにしてください",
+        "チャンネル登録お願いします",
+        "高評価お願いします",
+        "ご視聴ありがとうございました",
+        "次回もお楽しみに",
+        
         // Generic patterns
         "음악",
         "박수",
@@ -99,8 +106,8 @@ export const DEFAULT_HALLUCINATION_CONFIG: HallucinationFilterConfig = {
     ],
     
     enableRepetitiveFilter: true,
-    maxRepetitionRatio: 0.6,      // 60% repetition threshold
-    minRepetitionLength: 3,       // Minimum 3 characters to consider repetition
+    maxRepetitionRatio: 0.8,      // 80% repetition threshold (more lenient)
+    minRepetitionLength: 5,       // Minimum 5 characters to consider repetition
     
     enableLengthFilter: true,
     minTextLength: 2,             // Minimum 2 characters

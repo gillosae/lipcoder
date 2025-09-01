@@ -155,10 +155,14 @@ export async function executeCurrentFile(): Promise<void> {
         // Execute the file
         const result = await executeFile(fileName);
         
+        log(`[executeCurrentFile] Execution result: success=${result.success}, message=${result.message}`);
+        
         if (result.success) {
-            await speakGPT('파일 실행이 완료되었습니다');
+            await speakGPT(`executed ${fileName}`);
+            log(`[executeCurrentFile] Success message spoken: executed ${fileName}`);
         } else {
             await speakGPT(`실행 실패: ${result.message}`);
+            log(`[executeCurrentFile] Failure message spoken: ${result.message}`);
         }
 
     } catch (error) {
@@ -307,12 +311,15 @@ export async function executeFile(filename: string): Promise<FileExecutionResult
         command 
     });
     
-    return {
+    const result = {
         success: true,
         message: `${path.basename(filePath)} 실행됨`,
         filePath: filePath,
         command: command
     };
+    
+    log(`[executeFile] Returning result: ${JSON.stringify(result)}`);
+    return result;
 }
 
 /**

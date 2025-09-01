@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# XTTS-v2 TTS Server - DISABLED DUE TO STABILITY ISSUES
+# This script is disabled to prevent crashes. Use MacOS TTS instead.
+echo "⚠️  XTTS-v2 server is disabled due to stability issues."
+echo "💡 Using MacOS TTS server on port 5008 instead."
+exit 0
+
 # Start XTTS-v2 server with precomputed speaker embeddings
 # This script starts the server and automatically preloads all voice embeddings
 

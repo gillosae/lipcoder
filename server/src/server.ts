@@ -416,8 +416,13 @@ connection.onRequest('lipcoder/readLineTokens', (params: { uri: string; line: nu
     const lines = text.split(/\r?\n/);
     const lineText = lines[params.line] || '';
     
-    // Check if this is a full comment line first
+    // Check if this is a blank line (empty or only whitespace)
     const trimmedLine = lineText.trim();
+    if (trimmedLine === '') {
+        return [{ text: 'blank line', category: 'comment_text' }];
+    }
+    
+    // Check if this is a full comment line first
     if (trimmedLine.startsWith('#') || trimmedLine.startsWith('//') || 
         trimmedLine.startsWith('/*') || trimmedLine.startsWith('/**') ||
         trimmedLine.startsWith(' *') || trimmedLine.startsWith('*')) {

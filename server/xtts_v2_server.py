@@ -1,3 +1,10 @@
+# XTTS-v2 Server - DISABLED DUE TO STABILITY ISSUES
+# This server is disabled to prevent crashes. Use MacOS TTS server on port 5008 instead.
+print("⚠️  XTTS-v2 server is disabled due to stability issues.")
+print("💡 Please use MacOS TTS server on port 5008 instead.")
+print("   The MacOS TTS server is more stable and provides better performance.")
+exit(1)
+
 from flask import Flask, request, send_file, jsonify
 import torch
 import uuid

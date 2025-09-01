@@ -36,7 +36,7 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"/Users/gillosae/Desktop/lipcoder-test/boost1",
+				"/Users/gillosae/Desktop/lipcoder-test/training",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

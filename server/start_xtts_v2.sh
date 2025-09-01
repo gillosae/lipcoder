@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# XTTS-v2 TTS Server Startup Script - DISABLED DUE TO STABILITY ISSUES
+# This script is disabled to prevent crashes. Use MacOS TTS instead.
+echo "⚠️  XTTS-v2 server is disabled due to stability issues."
+echo "💡 Using MacOS TTS server on port 5008 instead."
+exit 0
+
 # XTTS-v2 TTS Server Startup Script with Dynamic Python Detection
 # This script finds Python and starts the XTTS-v2 TTS server
 

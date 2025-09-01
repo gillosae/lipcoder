@@ -48,7 +48,11 @@ let currentASRMode: ASRMode = ASRMode.Command;
 /**
  * Get the appropriate ASR client based on current backend
  */
-function getCurrentASRClient(): ASRClient | GPT4oASRClient | null {
+function getCurrentASRClient(): ASRClient | GPT4oASRClient | HuggingFaceWhisperClient | null {
+    // Force use Hugging Face Whisper for better accuracy with VAD
+    if (currentASRBackend === ASRBackend.HuggingFaceWhisper && huggingFaceWhisperClient) {
+        return huggingFaceWhisperClient;
+    }
     return currentASRBackend === ASRBackend.GPT4o ? gpt4oAsrClient : asrClient;
 }
 

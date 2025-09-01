@@ -148,7 +148,7 @@ def filter_hallucinations(text: str) -> str:
         logger.info(f"🚫 [HF-Whisper] Text too long: {len(text)} characters")
         return ""
     
-    # 3. Repetitive pattern filtering (word level)
+    # 3. Repetitive pattern filtering (word level) - Remove duplicates, keep one
     words = text.split()
     if len(words) > 1:
         word_counts = {}
@@ -164,10 +164,21 @@ def filter_hallucinations(text: str) -> str:
             repetition_ratio = max_repetitions / total_words
             
             if repetition_ratio > 0.6:  # 60% repetition threshold
-                logger.info(f"🚫 [HF-Whisper] Filtered repetitive pattern: ratio={repetition_ratio:.2f}")
-                return ""
+                # Instead of returning empty, remove duplicates and keep one instance
+                unique_words = []
+                seen = set()
+                for word in words:
+                    # Keep all short words (< 3 chars) and first occurrence of longer words
+                    if len(word) < 3 or word not in seen:
+                        unique_words.append(word)
+                        if len(word) >= 3:  # Only track longer words for deduplication
+                            seen.add(word)
+                
+                deduplicated_text = ' '.join(unique_words)
+                logger.info(f"🔄 [HF-Whisper] Removed repetitive pattern: '{text}' → '{deduplicated_text}'")
+                text = deduplicated_text
     
-    # 4. Repetitive pattern filtering (character level)
+    # 4. Repetitive pattern filtering (character level) - Only for extreme cases
     chars = re.sub(r'\s+', '', text)  # Remove whitespace
     if len(chars) > 0:
         char_counts = {}
@@ -177,9 +188,12 @@ def filter_hallucinations(text: str) -> str:
         max_char_repetitions = max(char_counts.values()) if char_counts else 0
         char_repetition_ratio = max_char_repetitions / len(chars)
         
-        if char_repetition_ratio > 0.6:  # 60% character repetition threshold
-            logger.info(f"🚫 [HF-Whisper] Filtered character repetition: ratio={char_repetition_ratio:.2f}")
+        # Only filter if it's extremely repetitive (90%+) and short
+        if char_repetition_ratio > 0.9 and len(text) < 10:
+            logger.info(f"🚫 [HF-Whisper] Filtered extreme character repetition: ratio={char_repetition_ratio:.2f}")
             return ""
+        elif char_repetition_ratio > 0.6:
+            logger.info(f"⚠️ [HF-Whisper] High character repetition detected but keeping text: ratio={char_repetition_ratio:.2f}")
     
     # 5. Special character filtering
     special_chars = len([c for c in text if not re.match(r'[a-zA-Z0-9가-힣\s]', c)])
@@ -189,12 +203,28 @@ def filter_hallucinations(text: str) -> str:
         logger.info(f"🚫 [HF-Whisper] Too many special chars: ratio={special_char_ratio:.2f}")
         return ""
     
-    # 6. Consecutive repetition filtering (same word 3+ times in a row)
+    # 6. Consecutive repetition filtering (same word 3+ times in a row) - Remove extras, keep one
+    words = text.split()  # Re-split in case text was modified above
     if len(words) >= 3:
-        for i in range(len(words) - 2):
-            if words[i] == words[i+1] == words[i+2]:
-                logger.info(f"🚫 [HF-Whisper] Consecutive repetition: '{words[i]}'")
-                return ""
+        cleaned_words = []
+        i = 0
+        while i < len(words):
+            current_word = words[i]
+            cleaned_words.append(current_word)
+            
+            # Skip consecutive identical words
+            consecutive_count = 1
+            while i + consecutive_count < len(words) and words[i + consecutive_count] == current_word:
+                consecutive_count += 1
+            
+            if consecutive_count >= 3:
+                logger.info(f"🔄 [HF-Whisper] Removed consecutive repetition: '{current_word}' (appeared {consecutive_count} times)")
+            
+            i += consecutive_count
+        
+        if len(cleaned_words) != len(words):
+            text = ' '.join(cleaned_words)
+            logger.info(f"🔄 [HF-Whisper] Cleaned consecutive repetitions: '{' '.join(words)}' → '{text}'")
     
     logger.info(f"✅ [HF-Whisper] Text passed hallucination filter: '{text}'")
     return text

@@ -4,7 +4,7 @@ import { createAudioMap } from './mapping';
 import { preloadEverything } from './preload';
 import { config, initConfig } from './config';
 import { installDependencies } from './install_dependencies';
-import { log, logWarning, logSuccess, logError, logMemory, initializeLogging } from './utils';
+import { log, logWarning, logSuccess, logError, logMemory, initializeLogging, cleanupLogging } from './utils';
 
 import { registerEchoTest } from './features/echo_test';
 import { registerWhereAmI } from './features/where_am_i';
@@ -63,6 +63,7 @@ import { registerNaturalLanguageCommand } from './features/natural_language_comm
 import { registerInlineSuggestions } from './features/inline_suggestions';
 import { registerVenvCommands, setupVirtualEnvironment, getVenvStatus } from './features/venv_installer';
 import { FirstTimeSetup, registerFirstTimeSetupCommands } from './features/first_time_setup';
+import { registerCrashReporter } from './features/crash_reporter';
 
 import { getConversationalProcessor } from './conversational_asr';
 import { getConversationalPopup } from './conversational_popup';
@@ -171,6 +172,9 @@ function startMemoryMonitoring(): void {
                 } else if ((global as any).koreanTTSActive) {
                     // Don't interrupt Korean TTS for memory cleanup to prevent dual voice issue
                     logWarning(`[Memory] Skipping cleanup during Korean TTS to avoid audio conflicts`);
+                } else if ((global as any).terminalExplanationTTSActive) {
+                    // Don't interrupt terminal explanation TTS for memory cleanup
+                    logWarning(`[Memory] Skipping cleanup during terminal explanation TTS to avoid interruption`);
                 } else {
                     // Clear the pending flag before cleanup
                     (global as any).pendingMemoryCleanup = false;
@@ -763,6 +767,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	firstTimeSetupCommands.forEach(disposable => context.subscriptions.push(disposable));
 	log('✅ registerFirstTimeSetupCommands completed');
 
+	// Register crash reporter commands
+	registerCrashReporter(context);
+	log('✅ registerCrashReporter completed');
+
 	// Add command to restart language server
 	try {
 		log('📝 Registering restart language server command...');
@@ -1205,6 +1213,14 @@ export async function deactivate() {
 		
 		// Clear the force exit timeout
 		clearTimeout(forceExitTimer);
+		
+		// Clean up logging system last
+		try {
+			cleanupLogging();
+			logSuccess('✅ Logging system cleaned up');
+		} catch (err) {
+			logError(`❌ Failed to cleanup logging: ${err}`);
+		}
 		
 		// Final memory report
 		const finalMemory = process.memoryUsage();

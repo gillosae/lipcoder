@@ -871,32 +871,25 @@ async function generateTerminalOutputExplanation(terminalOutput: string): Promis
     try {
         const client = getOpenAIClient();
         
-        const prompt = `You are a helpful coding assistant that explains terminal output in detail. Analyze this terminal output and provide a comprehensive explanation in Korean.
+        const prompt = `터미널 출력을 간결하게 분석해주세요. 사용자는 실행한 명령어를 이미 알고 있으므로 명령어 설명은 생략하세요.
 
-TERMINAL OUTPUT:
+터미널 출력:
 ${terminalOutput}
 
-Please analyze this terminal output and explain:
-1. What commands were executed
-2. What the output means
-3. Whether there are any issues or important information
-4. What the user should know about this output
+다음 규칙을 따라 10줄 내외로 간결하게 설명하세요:
+- 번호나 목록 형식(1, 2, 3, 4 등) 사용하지 말 것
+- 실행된 명령어 설명 생략 (사용자가 이미 알고 있음)
+- 출력 결과의 핵심 의미만 설명
+- 오류가 있다면 간단히 언급
+- 중요한 정보나 주의사항만 포함
+- 자연스러운 한국어로 대화하듯 설명
 
-Rules:
-1. Explain everything in Korean
-2. Be clear and concise
-3. Focus on helping the user understand what happened
-4. If there are errors, mention them but don't go into deep technical details (that's for the error explainer)
-5. If it's normal output, explain what it means
-6. Use simple, clear language
-7. Keep the explanation conversational and helpful
-
-Provide a natural Korean explanation (not JSON format):`;
+간결한 한국어 설명:`;
 
         const response = await client.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [{ role: "user", content: prompt }],
-            max_tokens: 800,
+            max_tokens: 300,  // 더 간결한 응답을 위해 토큰 수 감소
             temperature: 0.2
         });
 
@@ -953,8 +946,16 @@ export async function explainTerminalOutput(): Promise<void> {
             return;
         }
 
-        // Speak the explanation with abort controller support
-        await speakGPT(explanation, lineAbortController.signal);
+        // Set flag to protect terminal explanation TTS from memory cleanup
+        (global as any).terminalExplanationTTSActive = true;
+        
+        try {
+            // Speak the explanation with abort controller support
+            await speakGPT(explanation, lineAbortController.signal);
+        } finally {
+            // Clear flag when TTS is complete
+            (global as any).terminalExplanationTTSActive = false;
+        }
 
         // Show detailed information in VS Code output channel
         const outputChannel = vscode.window.createOutputChannel('LipCoder 터미널 출력 분석');

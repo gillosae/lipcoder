@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { log, logError, logSuccess, logWarning } from './utils';
 import { huggingFaceWhisperConfig } from './config';
-// VAD disabled for Push-to-Talk mode
-// import { detectVoiceActivity, createLenientVADConfig } from './utils/vad';
+// VAD enabled for better noise filtering
+import { detectVoiceActivity, createUltraPermissiveVADConfig } from './utils/vad';
 
 export interface HuggingFaceWhisperChunk {
     text: string;
@@ -275,13 +275,33 @@ export class HuggingFaceWhisperClient {
 
 
     private createWavFile(pcmData: Buffer): Buffer {
-        // Push-to-Talk mode: Skip VAD and process all audio (user intentionally started recording)
+        // Apply VAD to filter out silence and noise
         const samples = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.length / 2);
         
-        log(`[HF-Whisper-ASR] 🎤 Push-to-Talk mode: Creating WAV with all ${samples.length} samples (no VAD filtering)`);
+        log(`[HF-Whisper-ASR] 🎤 Applying VAD to ${samples.length} samples to filter silence/noise`);
         
-        // Use all samples without VAD filtering
-        const processedData = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+        // Apply ultra-permissive VAD to keep most audio but filter obvious silence
+        const vadConfig = {
+            energyThreshold: 1,      // Extremely low - catches even whispers
+            zcrThreshold: 0.000001,  // Almost no threshold
+            centroidMin: 10,         // Extremely wide range
+            centroidMax: 22000,      // Extremely wide range
+            voiceRatioThreshold: 0.00001, // 0.001% voice activity needed
+            frameSize: 400,
+            frameStep: 160
+        };
+        const vadResult = detectVoiceActivity(samples, huggingFaceWhisperConfig.sampleRate, vadConfig);
+        
+        // Use trimmed samples from VAD
+        const processedData = vadResult.hasVoice ? 
+            Buffer.from(vadResult.trimmedSamples.buffer, vadResult.trimmedSamples.byteOffset, vadResult.trimmedSamples.byteLength) :
+            Buffer.alloc(0);
+            
+        if (vadResult.hasVoice) {
+            log(`[HF-Whisper-ASR] ✅ VAD detected voice activity (${vadResult.voiceFrames}/${vadResult.totalFrames} frames)`);
+        } else {
+            log(`[HF-Whisper-ASR] 🔇 VAD detected no voice activity, returning empty audio`);
+        }
         
         const sampleRate = huggingFaceWhisperConfig.sampleRate;
         const numChannels = 1;
