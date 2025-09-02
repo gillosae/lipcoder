@@ -326,7 +326,8 @@ class ServerManager {
             const { currentBackend, TTSBackend } = await import('./config.js');
             
             const serverPromises = [
-                this.startServer('asr')  // Always start ASR
+                this.startServer('asr'),  // Always start ASR (port 5004)
+                this.startServer('huggingface-whisper')  // Always start Hugging Face Whisper ASR (port 5005)
             ];
             
             // Start appropriate TTS servers based on current backend
