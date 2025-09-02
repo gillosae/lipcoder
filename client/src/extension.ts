@@ -508,45 +508,75 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 2) Start TTS and ASR servers ──────────────────────────────────────────────────────
-	// TEMPORARILY DISABLED: Server auto-start causing VS Code crashes
-	// Only register existing servers without starting new ones
 	try {
-		// Check if ASR server is already running and register it
-		const asrHealthResponse = await fetch('http://localhost:5004/health', { 
-			method: 'GET',
-			signal: AbortSignal.timeout(2000)
-		});
-		if (asrHealthResponse.ok) {
-			logSuccess('✅ Found existing ASR server on port 5004');
-			// Register the existing server
-			serverManager.registerExistingServer('asr', 5004);
+		// Check if servers are already running first
+		let asrRunning = false;
+		let ttsRunning = false;
+		let hfWhisperRunning = false;
+		
+		try {
+			// Check if ASR server is already running and register it
+			const asrHealthResponse = await fetch('http://localhost:5004/health', { 
+				method: 'GET',
+				signal: AbortSignal.timeout(2000)
+			});
+			if (asrHealthResponse.ok) {
+				logSuccess('✅ Found existing ASR server on port 5004');
+				serverManager.registerExistingServer('asr', 5004);
+				asrRunning = true;
+			}
+		} catch (error) {
+			log('ASR server not running on port 5004');
 		}
 		
-		// Check if TTS server is already running and register it
-		const ttsHealthResponse = await fetch('http://localhost:5008/health', { 
-			method: 'GET',
-			signal: AbortSignal.timeout(2000)
-		});
-		if (ttsHealthResponse.ok) {
-			logSuccess('✅ Found existing TTS server on port 5008');
-			// Register the existing server
-			serverManager.registerExistingServer('macos_tts', 5008);
+		try {
+			// Check if TTS server is already running and register it
+			const ttsHealthResponse = await fetch('http://localhost:5008/health', { 
+				method: 'GET',
+				signal: AbortSignal.timeout(2000)
+			});
+			if (ttsHealthResponse.ok) {
+				logSuccess('✅ Found existing TTS server on port 5008');
+				serverManager.registerExistingServer('macos_tts', 5008);
+				ttsRunning = true;
+			}
+		} catch (error) {
+			log('TTS server not running on port 5008');
 		}
 		
-		// Check if Hugging Face Whisper server is already running and register it
-		const hfWhisperHealthResponse = await fetch('http://localhost:5005/health', { 
-			method: 'GET',
-			signal: AbortSignal.timeout(2000)
-		});
-		if (hfWhisperHealthResponse.ok) {
-			logSuccess('✅ Found existing Hugging Face Whisper server on port 5005');
-			// Register the existing server
-			serverManager.registerExistingServer('huggingface-whisper', 5005);
+		try {
+			// Check if Hugging Face Whisper server is already running and register it
+			const hfWhisperHealthResponse = await fetch('http://localhost:5005/health', { 
+				method: 'GET',
+				signal: AbortSignal.timeout(2000)
+			});
+			if (hfWhisperHealthResponse.ok) {
+				logSuccess('✅ Found existing Hugging Face Whisper server on port 5005');
+				serverManager.registerExistingServer('huggingface-whisper', 5005);
+				hfWhisperRunning = true;
+			}
+		} catch (error) {
+			log('Hugging Face Whisper server not running on port 5005');
 		}
 		
-		logSuccess('✅ Server registration completed without starting new processes');
+		// Start servers that are not already running
+		if (!asrRunning || !ttsRunning || !hfWhisperRunning) {
+			log('🚀 Starting missing servers...');
+			
+			// Start servers in background to avoid blocking extension activation
+			setTimeout(async () => {
+				try {
+					await serverManager.startServers();
+					logSuccess('✅ All servers started successfully');
+				} catch (error) {
+					logWarning(`⚠️ Failed to start some servers: ${error}`);
+				}
+			}, 3000); // Start after 3 seconds to allow extension to fully activate
+		}
+		
+		logSuccess('✅ Server initialization completed');
 	} catch (error) {
-		logWarning(`⚠️ Server registration failed: ${error}`);
+		logWarning(`⚠️ Server initialization failed: ${error}`);
 		// Continue anyway - some features may still work without servers
 	}
 
