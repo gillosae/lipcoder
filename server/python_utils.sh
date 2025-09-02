@@ -77,6 +77,23 @@ kill_port_processes() {
 
 # Function to find Python with ML packages already installed
 find_python_with_ml_packages() {
+    # First check for virtual environment in the current script directory
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local venv_python="$script_dir/lipcoder_venv/bin/python"
+    
+    if [ -x "$venv_python" ]; then
+        # Check if it's Python 3.8+
+        local version=$($venv_python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local major=$(echo $version | cut -d. -f1)
+        local minor=$(echo $version | cut -d. -f2)
+        
+        if [ "$major" -ge 3 ] && [ "$minor" -ge 8 ]; then
+            echo -e "${GREEN}✅ Found virtual environment Python: $venv_python${NC}" >&2
+            PYTHON_CMD="$venv_python"
+            return 0
+        fi
+    fi
+    
     # Try different Python executables and check if they have ML packages
     local python_candidates=(
         "python3.10"
@@ -150,7 +167,23 @@ find_python_with_ml_packages() {
 
 # Function to find any suitable Python
 find_python() {
-    # First try to find Python with ML packages
+    # First check for virtual environment in the current script directory
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local venv_python="$script_dir/lipcoder_venv/bin/python"
+    
+    if [ -x "$venv_python" ]; then
+        # Check if it's Python 3.8+
+        local version=$($venv_python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local major=$(echo $version | cut -d. -f1)
+        local minor=$(echo $version | cut -d. -f2)
+        
+        if [ "$major" -ge 3 ] && [ "$minor" -ge 8 ]; then
+            echo "$venv_python"
+            return 0
+        fi
+    fi
+    
+    # Then try to find Python with ML packages
     local python_with_ml=$(find_python_with_ml_packages)
     if [ $? -eq 0 ] && [ ! -z "$python_with_ml" ]; then
         echo "$python_with_ml"
@@ -330,8 +363,29 @@ setup_python_environment() {
     
     echo -e "${BLUE}🐍 Setting up Python environment for $server_name...${NC}" >&2
     
-    # Find Python executable
-    local python_cmd=$(find_python)
+    # First check for virtual environment in the current script directory
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local venv_python="$script_dir/lipcoder_venv/bin/python"
+    
+    if [ -x "$venv_python" ]; then
+        # Check if it's Python 3.8+
+        local version=$($venv_python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local major=$(echo $version | cut -d. -f1)
+        local minor=$(echo $version | cut -d. -f2)
+        
+        if [ "$major" -ge 3 ] && [ "$minor" -ge 8 ]; then
+            echo -e "${GREEN}✅ Using virtual environment Python: $venv_python${NC}" >&2
+            local python_cmd="$venv_python"
+        else
+            echo -e "${YELLOW}⚠️  Virtual environment Python version too old, searching for system Python...${NC}" >&2
+            # Find Python executable
+            local python_cmd=$(find_python)
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Virtual environment not found, searching for system Python...${NC}" >&2
+        # Find Python executable
+        local python_cmd=$(find_python)
+    fi
     
     if [ $? -ne 0 ] || [ -z "$python_cmd" ]; then
         echo -e "${RED}❌ Error: Could not find Python 3.8+ installation${NC}" >&2

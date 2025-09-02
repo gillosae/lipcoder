@@ -18,14 +18,23 @@ kill_port_processes $PORT
 
 echo "🐍 Setting up Python environment for Hugging Face Whisper..."
 
-# Find Python with ML packages
-find_python_with_ml_packages
-
-if [ -z "$PYTHON_CMD" ]; then
-    echo "❌ No suitable Python installation found"
-    echo "   Please install Python with PyTorch and Transformers:"
-    echo "   pip install torch torchaudio transformers flask"
-    exit 1
+# Check for virtual environment first
+VENV_PYTHON="$SCRIPT_DIR/lipcoder_venv/bin/python"
+if [ -x "$VENV_PYTHON" ]; then
+    echo "✅ Found virtual environment Python: $VENV_PYTHON"
+    PYTHON_CMD="$VENV_PYTHON"
+else
+    echo "⚠️  Virtual environment not found, searching for system Python..."
+    # Find Python with ML packages
+    find_python_with_ml_packages
+    
+    if [ -z "$PYTHON_CMD" ]; then
+        echo "❌ No suitable Python installation found"
+        echo "   Please install Python with PyTorch and Transformers:"
+        echo "   pip install torch torchaudio transformers flask"
+        echo "   Or activate the virtual environment: source $SCRIPT_DIR/lipcoder_venv/bin/activate"
+        exit 1
+    fi
 fi
 
 echo "✅ Found Python: $PYTHON_CMD"
