@@ -13,6 +13,7 @@ import { playEarcon } from '../earcon';
 import { handleASRError } from '../asr_error_handler';
 import { getLastActiveEditor, isEditorActive } from '../ide/active';
 import { goToLastDetectedError } from './terminal';
+import { onASRStart, onASRStop } from '../profiler';
 
 let asrClient: ASRClient | null = null;
 let gpt4oAsrClient: GPT4oASRClient | null = null;
@@ -711,6 +712,7 @@ async function startRecording(): Promise<void> {
         logSuccess(`🔴 [ASR-DEBUG] HuggingFace Whisper client exists: ${!!huggingFaceWhisperClient}`);
         
         if (currentASRBackend === ASRBackend.GPT4o && gpt4oAsrClient && typeof gpt4oAsrClient === 'object') {
+            await onASRStart('asr-gpt4o');
             logSuccess('🔴 [ASR-DEBUG] Using GPT4o backend...');
             try {
                 if (typeof gpt4oAsrClient.startRecording === 'function') {
@@ -722,6 +724,7 @@ async function startRecording(): Promise<void> {
                 throw new Error(`Failed to start GPT4o ASR recording: ${error}`);
             }
         } else if (currentASRBackend === ASRBackend.Silero && asrClient && typeof asrClient === 'object') {
+            await onASRStart('asr-silero');
             logSuccess('🔴 [ASR-DEBUG] Using Silero backend...');
             logSuccess(`🔴 [ASR-DEBUG] ASR client type: ${typeof asrClient}, has startStreaming: ${typeof asrClient.startStreaming}`);
             try {
@@ -739,6 +742,7 @@ async function startRecording(): Promise<void> {
                 throw new Error(`Failed to start Silero ASR recording: ${error}`);
             }
         } else if (currentASRBackend === ASRBackend.HuggingFaceWhisper && huggingFaceWhisperClient && typeof huggingFaceWhisperClient === 'object') {
+            await onASRStart('asr-hf');
             logSuccess('🔴 [ASR-DEBUG] Using Hugging Face Whisper backend...');
             logSuccess(`🔴 [ASR-DEBUG] HF Whisper client type: ${typeof huggingFaceWhisperClient}, has startRecording: ${typeof huggingFaceWhisperClient.startRecording}`);
             try {
@@ -820,6 +824,11 @@ async function stopRecording(): Promise<void> {
         } else {
             logWarning(`[Enhanced-ASR] No valid ASR client available to stop for backend: ${currentASRBackend}`);
         }
+
+        // Stop ASR CPU profiling if it was enabled
+        try {
+            await onASRStop();
+        } catch {}
         
         // Play ASR stop sound
         try {

@@ -3,7 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { fetch, Agent } from 'undici';
-import { log } from './utils';
+import type { Response as UndiciResponse } from 'undici';
+import { log, logWarning } from './utils';
 import { config, categoryVoiceMap, sileroConfig, espeakConfig, espeakCategoryVoiceMap, openaiTTSConfig, openaiCategoryVoiceMap, xttsV2Config, macosConfig, macosCategoryVoiceMap, currentBackend, TTSBackend } from './config';
 import { isAlphabet, isNumber } from './mapping';
 import { serverManager } from './server_manager';
@@ -11,6 +12,21 @@ import { detectLanguage, DetectedLanguage, shouldUseKoreanTTS, shouldUseEnglishT
 
 // Keep-alive agent for HTTP fetch to reuse connections
 const keepAliveAgent = new Agent({ keepAliveTimeout: 60000 });
+
+/**
+ * Dispose the TTS HTTP keep-alive agent to free sockets/memory
+ */
+export function disposeTTSAgent(): void {
+    try {
+        // Close idle sockets and prevent new requests from reusing the agent
+        // Undici Agent supports close() for graceful shutdown
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        keepAliveAgent.close();
+        log('[TTS] Keep-alive agent closed');
+    } catch (error) {
+        logWarning(`[TTS] Failed to close keep-alive agent: ${error}`);
+    }
+}
 
 // Note: specialWordCache removed - now using direct TTS inference
 
@@ -658,7 +674,18 @@ async function generateMacOSTTS(
     
     log(`[generateMacOSTTS] Using macOS server on port ${macosPort} for token "${token}"`);
     
-    const res = await fetch(`http://localhost:${macosPort}/tts`, {
+    // Quick health check to fail fast if server is not responsive
+    try {
+        const health = await fetch(`http://localhost:${macosPort}/health`, { method: 'GET', dispatcher: keepAliveAgent, signal: AbortSignal.timeout(2000) });
+        if (!health.ok) {
+            log(`[generateMacOSTTS] Health check failed: ${health.status} ${health.statusText}`);
+        }
+    } catch (e) {
+        log(`[generateMacOSTTS] Health check error: ${e}`);
+    }
+
+    // Post with timeout and one retry on transient errors
+    const postOnce = async () => fetch(`http://localhost:${macosPort}/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -668,8 +695,17 @@ async function generateMacOSTTS(
             volume: macosSettings.volume,
             sample_rate: macosSettings.sampleRate,
         }),
-        dispatcher: keepAliveAgent
+        dispatcher: keepAliveAgent,
+        signal: AbortSignal.timeout(5000)
     });
+
+    let res: UndiciResponse;
+    try {
+        res = await postOnce();
+    } catch (e) {
+        log(`[generateMacOSTTS] First fetch failed, retrying once: ${e}`);
+        res = await postOnce();
+    }
     
     if (!res.ok) {
         // Capture and log the error body for debugging

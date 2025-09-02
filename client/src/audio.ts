@@ -2569,7 +2569,10 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     if (!ttsPregenPromises.has(pregenKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for ${category}: "${token}" with key: "${pregenKey}"`);
                         // Don't pass speaker override - let genTokenAudio use category-based voice selection
-                        ttsPregenPromises.set(pregenKey, genTokenAudio(token, category, { abortSignal: signal }));
+                        const p = genTokenAudio(token, category, { abortSignal: signal });
+                        // Prevent unhandledRejection noise; awaiters will still see rejection
+                        p.catch(() => {});
+                        ttsPregenPromises.set(pregenKey, p);
                     } else {
                         log(`[speakTokenList] Pre-generation already queued for key: "${pregenKey}"`);
                     }
@@ -2579,14 +2582,18 @@ export async function speakTokenList(chunks: TokenChunk[], signal?: AbortSignal)
                     const specialKey = `special_${token}`;
                     if (!ttsPregenPromises.has(specialKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for special character: "${token}" -> "${spokenForm}"`);
-                        ttsPregenPromises.set(specialKey, genTokenAudio(spokenForm, 'special', { abortSignal: signal }));
+                        const p = genTokenAudio(spokenForm, 'special', { abortSignal: signal });
+                        p.catch(() => {});
+                        ttsPregenPromises.set(specialKey, p);
                     }
                 } else if (isTTSRequired(token)) {
                     // Other tokens that need TTS - use token+category as key
                     const pregenKey = category ? `${token}:${category}` : token;
                     if (!ttsPregenPromises.has(pregenKey)) {
                         log(`[speakTokenList] Queuing TTS pre-generation for: "${token}"`);
-                        ttsPregenPromises.set(pregenKey, genTokenAudio(token, category, { abortSignal: signal }));
+                        const p = genTokenAudio(token, category, { abortSignal: signal });
+                        p.catch(() => {});
+                        ttsPregenPromises.set(pregenKey, p);
                     }
                 }
             }

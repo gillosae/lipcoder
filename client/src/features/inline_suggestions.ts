@@ -50,8 +50,8 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
     periodicCheckInterval = setInterval(() => {
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
-            // Hide suggestions
-            vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            // Hide suggestions (ignore cancellations)
+            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
             
             // Disable at context level
             Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', false)).catch(() => {});
@@ -83,7 +83,7 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
         // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active OR ASR is recording
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
-            vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
             if (koreanTTSActive) {
                 log(`[InlineSuggestions] Skipping due to Korean TTS protection`);
             }
@@ -100,7 +100,7 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
                 log(`[InlineSuggestions] BLOCKING suggestion generation during line token reading or audio playback (trigger: ${context.triggerKind})`);
                 
                 // Also try to hide any existing suggestions
-                vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+                Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
                 
                 return { items: [] };
             }

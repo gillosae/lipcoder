@@ -552,6 +552,45 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 currentCursor = sel;
                 return;
             }
+
+            // ULTRA-AGGRESSIVE STOP for line change on ANY selection kind (keyboard or mouse)
+            try {
+                const timeSinceTyping = Date.now() - lastTypingTime;
+                const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
+                log(`[NavEditor] (Mouse/Keyboard) Line change detected → aggressive stop. typingRelated=${isTypingRelated}`);
+
+                if (pendingLineReadTimeout) {
+                    clearTimeout(pendingLineReadTimeout);
+                    pendingLineReadTimeout = null;
+                    log('[NavEditor] Cancelled pending line read timeout (mouse/keyboard)');
+                }
+
+                (global as any).koreanTTSActive = false;
+                setLineTokenReadingActive(false);
+
+                // Stop all audio systems immediately
+                stopForCursorMovement();
+                stopAllAudio();
+                stopForCursorMovement();
+
+                // Abort the controller if still active
+                if (lineAbortController && !lineAbortController.signal.aborted) {
+                    lineAbortController.abort();
+                    log('[NavEditor] Force aborted line reading controller (mouse/keyboard)');
+                }
+
+                // Extra safety: stop audio player directly
+                try {
+                    const { audioPlayer } = require('../audio');
+                    if (audioPlayer && audioPlayer.stopCurrentPlayback) {
+                        audioPlayer.stopCurrentPlayback(true);
+                        log('[NavEditor] Force stopped audio player (mouse/keyboard)');
+                    }
+                } catch {}
+            } catch (stopErr) {
+                // Ignore errors during stop
+            }
+
             currentLineNum = sel.line;
             vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor);
             currentCursor = sel;

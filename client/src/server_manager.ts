@@ -322,13 +322,22 @@ class ServerManager {
         log('[ServerManager] Starting servers with default TTS backend...');
         
         try {
-            // Import config to check current backend
-            const { currentBackend, TTSBackend } = await import('./config.js');
+            // Import config to check current TTS and ASR backends
+            const { currentBackend, TTSBackend, currentASRBackend, ASRBackend } = await import('./config.js');
             
-            const serverPromises = [
-                this.startServer('asr'),  // Always start ASR (port 5004)
-                this.startServer('huggingface-whisper')  // Always start Hugging Face Whisper ASR (port 5005)
-            ];
+            const serverPromises: Promise<void>[] = [];
+
+            // Start ASR server(s) based on selected backend
+            if (currentASRBackend === ASRBackend.HuggingFaceWhisper) {
+                serverPromises.push(this.startServer('huggingface-whisper'));
+                log('[ServerManager] Starting Hugging Face Whisper ASR');
+            } else if (currentASRBackend === ASRBackend.Silero) {
+                serverPromises.push(this.startServer('asr'));
+                log('[ServerManager] Starting Silero ASR');
+            } else if (currentASRBackend === ASRBackend.GPT4o) {
+                // Remote ASR; no local process needed
+                log('[ServerManager] Skipping local ASR startup (using GPT-4o Transcribe)');
+            }
             
             // Start appropriate TTS servers based on current backend
             if (currentBackend === TTSBackend.SileroGPT) {
@@ -353,7 +362,7 @@ class ServerManager {
             }
             
             await Promise.all(serverPromises);
-            logSuccess(`✅ Default servers started successfully (${currentBackend} + ASR)`);
+            logSuccess(`✅ Default servers started successfully (${currentBackend} + ${currentASRBackend})`);
         } catch (error) {
             logError(`Failed to start servers: ${error}`);
             // Clean up any partially started servers

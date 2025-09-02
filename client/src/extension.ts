@@ -73,6 +73,7 @@ import { registerSpeedTestCommand } from './features/speed_test_command';
 import { registerTestSuggestionStorage } from './features/test_suggestion_storage';
 import { registerTerminalErrorFixer } from './features/terminal_error_fixer';
 import { registerFindDialogSimple } from './features/find_dialog_simple';
+import { toggleAutoSnapshots, toggleASRProfiling, takeHeapSnapshot, startCPUProfile, stopCPUProfile, maybeSnapshotOnHighMemory, analyzeLatestCPUProfile, openProfilesFolder } from './profiler';
 
 // Configure VS Code to automatically overwrite files on save conflicts
 async function configureAutoOverwrite() {
@@ -141,7 +142,7 @@ function startMemoryMonitoring(): void {
     let lastMemoryUsage = process.memoryUsage();
     let logCounter = 0;
     
-    memoryMonitorInterval = setInterval(() => {
+    memoryMonitorInterval = setInterval(async () => {
         const currentMemory = process.memoryUsage();
         const heapUsedDelta = currentMemory.heapUsed - lastMemoryUsage.heapUsed;
         const rssUsedDelta = currentMemory.rss - lastMemoryUsage.rss;
@@ -176,6 +177,11 @@ function startMemoryMonitoring(): void {
                     // Don't interrupt terminal explanation TTS for memory cleanup
                     logWarning(`[Memory] Skipping cleanup during terminal explanation TTS to avoid interruption`);
                 } else {
+                    // Auto heap snapshot when enabled
+                    try {
+                        await maybeSnapshotOnHighMemory(reason);
+                    } catch {}
+                    
                     // Clear the pending flag before cleanup
                     (global as any).pendingMemoryCleanup = false;
                     
@@ -774,6 +780,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerFindDialogSimple(context);
 	log('✅ registerFindDialogSimple completed');
 
+	// Profiler commands
+	context.subscriptions.push(
+		vscode.commands.registerCommand('lipcoder.profiler.toggleAutoSnapshots', () => toggleAutoSnapshots()),
+		vscode.commands.registerCommand('lipcoder.profiler.toggleASRProfiling', () => toggleASRProfiling()),
+		vscode.commands.registerCommand('lipcoder.profiler.heapSnapshot', () => takeHeapSnapshot('manual')),
+		vscode.commands.registerCommand('lipcoder.profiler.startCPU', () => startCPUProfile('manual')),
+		vscode.commands.registerCommand('lipcoder.profiler.stopCPU', () => stopCPUProfile()),
+		vscode.commands.registerCommand('lipcoder.profiler.analyzeLatestCPU', () => analyzeLatestCPUProfile()),
+		vscode.commands.registerCommand('lipcoder.profiler.openFolder', () => openProfilesFolder())
+	);
+
 	await registerInlineSuggestions(context);
 	log('✅ registerInlineSuggestions completed');
 
@@ -1170,6 +1187,17 @@ export async function deactivate() {
 			logSuccess('✅ Audio resources cleaned up');
 		} catch (err) {
 			logError(`❌ Failed to cleanup audio: ${err}`);
+		}
+
+		// Dispose TTS HTTP keep-alive agent
+		try {
+			const { disposeTTSAgent } = require('./tts');
+			if (typeof disposeTTSAgent === 'function') {
+				disposeTTSAgent();
+				logSuccess('✅ TTS HTTP agent disposed');
+			}
+		} catch (err) {
+			logError(`❌ Failed to dispose TTS HTTP agent: ${err}`);
 		}
 		
 		// Aggressive language client cleanup
