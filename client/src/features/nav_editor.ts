@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import { log } from '../utils';
 import { isFileTreeReading } from './file_tree';
-import { stopReading, getLineTokenReadingActive, stopForCursorMovement, stopAllAudio, lineAbortController, setLineTokenReadingActive } from './stop_reading';
+import { stopReading, getLineTokenReadingActive, stopForCursorMovement, stopAllAudio, lineAbortController, setLineTokenReadingActive, bumpNavigationGeneration } from './stop_reading';
 import { speakTokenList, TokenChunk } from '../audio';
 import { readWordTokens } from './read_word_tokens';
-import { readTextTokens, getReadTextTokensActive } from './read_text_tokens';
+import { readTextTokens, getReadTextTokensActive, clearTypingAudioStateForUri } from './read_text_tokens';
 import { config } from '../config';
 import { updateLineSeverity } from './line_severity';
 import { shouldSuppressReadingEnhanced } from './debug_console_detection';
@@ -365,50 +365,53 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
                 log(`[NavEditor] ⏱️ Timing check: timeSinceTyping=${timeSinceTyping}ms, isTypingRelated=${isTypingRelated}`);
                 
-                if (!isTypingRelated) {
-                    // ULTRA-AGGRESSIVE STOP: Stop all audio immediately when cursor moves to new line
-                    // This is especially important for Korean TTS which can take longer to generate
-                    log('[NavEditor] CURSOR MOVEMENT DETECTED - ULTRA-AGGRESSIVE AUDIO STOP');
-                    
-                    // 1. Cancel any pending line read from previous cursor movement FIRST (no longer needed with immediate reading)
-                    if (pendingLineReadTimeout) {
-                        clearTimeout(pendingLineReadTimeout);
-                        pendingLineReadTimeout = null;
-                        log('[NavEditor] Cancelled pending line read timeout');
-                    }
-                    
-                    // 2. Force clear Korean TTS protection to allow immediate stopping
-                    (global as any).koreanTTSActive = false;
-                    log('[NavEditor] Cleared Korean TTS protection for cursor movement');
-                    
-                    // 3. Set line token reading as inactive BEFORE stopping audio
-                    setLineTokenReadingActive(false);
-                    log('[NavEditor] Set line token reading inactive');
-                    
-                    // 4. Stop all audio systems with maximum aggression
-                    stopForCursorMovement();
-                    stopAllAudio();
-                    stopForCursorMovement(); // Call twice for safety
-                    
-                    // 5. Force abort the line reading controller immediately
-                    if (lineAbortController && !lineAbortController.signal.aborted) {
-                        lineAbortController.abort();
-                        log('[NavEditor] Force aborted line reading controller');
-                    }
-                    
-                    // 6. Additional safety: Clear any audio player state
-                    try {
-                        const { audioPlayer } = require('../audio');
-                        if (audioPlayer && audioPlayer.stopCurrentPlayback) {
-                            audioPlayer.stopCurrentPlayback(true); // Force immediate stop
-                            log('[NavEditor] Force stopped audio player');
-                        }
-                    } catch (err) {
-                        // Ignore errors in emergency stop
-                    }
-                    
-                    log('[NavEditor] ULTRA-AGGRESSIVE STOP COMPLETE - All audio systems terminated');
+                // ALWAYS stop any ongoing audio on line change, even if typing-related
+                // This prevents the previous line from continuing to play after moving the cursor
+                log('[NavEditor] CURSOR LINE CHANGE - enforcing immediate audio stop');
+                // Bump navigation generation to invalidate any in-flight reads
+                const gen = bumpNavigationGeneration();
+                log(`[NavEditor] Bumped navigation generation to ${gen}`);
+
+                // 1. Cancel any pending line read from previous cursor movement
+                if (pendingLineReadTimeout) {
+                    clearTimeout(pendingLineReadTimeout);
+                    pendingLineReadTimeout = null;
+                    log('[NavEditor] Cancelled pending line read timeout');
                 }
+
+                // 2. Force clear Korean TTS protection to allow immediate stopping
+                (global as any).koreanTTSActive = false;
+                log('[NavEditor] Cleared Korean TTS protection for cursor movement');
+
+                // 3. Set line token reading as inactive BEFORE stopping audio
+                setLineTokenReadingActive(false);
+                log('[NavEditor] Set line token reading inactive');
+
+                // 4. Clear any pending typing batches for this document
+                try {
+                    clearTypingAudioStateForUri(e.textEditor.document.uri.toString());
+                    log('[NavEditor] Cleared typing audio batch state for current document');
+                } catch {}
+
+                // 5. Stop all audio systems with maximum aggression
+                stopForCursorMovement();
+                stopAllAudio();
+                stopForCursorMovement(); // Call twice for safety
+
+                // 6. Do NOT abort here. stopAllAudio() already aborted and replaced the controller.
+
+                // 7. Additional safety: Clear any audio player state
+                try {
+                    const { audioPlayer } = require('../audio');
+                    if (audioPlayer && audioPlayer.stopCurrentPlayback) {
+                        audioPlayer.stopCurrentPlayback(true); // Force immediate stop
+                        log('[NavEditor] Force stopped audio player');
+                    }
+                } catch (err) {
+                    // Ignore errors in emergency stop
+                }
+
+                log('[NavEditor] ULTRA-AGGRESSIVE STOP COMPLETE - All audio systems terminated');
 
                 currentLineNum = lineNum;
                 lastCursorMoveTime = Date.now();
@@ -456,7 +459,8 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                         log('[NavEditor] ❌ BLOCKED - continuous tone is playing');
                     }
                 } else {
-                    log(`[NavEditor] ❌ BLOCKED - conditions not met: isTypingRelated=${isTypingRelated}, cursorLineReadingEnabled=${config.cursorLineReadingEnabled}`);
+                    // Typing-related movement: do NOT start a new read, but we already stopped previous audio above
+                    log(`[NavEditor] ⏭️ Skipping new line read due to typing-related movement (stopped previous audio). isTypingRelated=${isTypingRelated}, cursorLineReadingEnabled=${config.cursorLineReadingEnabled}`);
                 }
             } catch (err: any) {
                 console.error('onDidChangeTextEditorSelection handler error:', err);
@@ -553,11 +557,20 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 return;
             }
 
-            // ULTRA-AGGRESSIVE STOP for line change on ANY selection kind (keyboard or mouse)
+            // For line changes: only this handler processes MOUSE events.
+            // Keyboard line changes are handled by the primary handler above to avoid double triggers.
+            if (e.kind !== vscode.TextEditorSelectionChangeKind.Mouse) {
+                log('[NavEditor] Skipping line-change handling here for keyboard; primary handler manages it');
+                currentLineNum = sel.line;
+                currentCursor = sel;
+                return;
+            }
+
+            // ULTRA-AGGRESSIVE STOP for line change on MOUSE selection
             try {
                 const timeSinceTyping = Date.now() - lastTypingTime;
                 const isTypingRelated = timeSinceTyping < TYPING_DETECTION_WINDOW_MS;
-                log(`[NavEditor] (Mouse/Keyboard) Line change detected → aggressive stop. typingRelated=${isTypingRelated}`);
+                log(`[NavEditor] (Mouse) Line change detected → aggressive stop. typingRelated=${isTypingRelated}`);
 
                 if (pendingLineReadTimeout) {
                     clearTimeout(pendingLineReadTimeout);
@@ -573,11 +586,7 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
                 stopAllAudio();
                 stopForCursorMovement();
 
-                // Abort the controller if still active
-                if (lineAbortController && !lineAbortController.signal.aborted) {
-                    lineAbortController.abort();
-                    log('[NavEditor] Force aborted line reading controller (mouse/keyboard)');
-                }
+                // Do NOT abort here. stopAllAudio() already aborted and replaced the controller.
 
                 // Extra safety: stop audio player directly
                 try {
@@ -592,6 +601,9 @@ export function registerNavEditor(context: vscode.ExtensionContext, audioMap: an
             }
 
             currentLineNum = sel.line;
+            // Bump navigation generation for mouse line-change as well
+            const gen = bumpNavigationGeneration();
+            log(`[NavEditor] (Mouse) Bumped navigation generation to ${gen}`);
             vscode.commands.executeCommand('lipcoder.readLineTokens', e.textEditor);
             currentCursor = sel;
         })

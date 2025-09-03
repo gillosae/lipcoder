@@ -1397,12 +1397,15 @@ class AudioPlayer {
             }
         }
 
-        // log(`[playWavFile] Using WAV reader with queueing, panning: ${opts?.panning}`);
-        this.playQueue = this.playQueue.then(() => {
-            // log(`[playWavFile] Queue executing for: ${path.basename(filePath)}`);
+        // Bounded queue: if queue is busy and this is typing-related (immediate flag), drop queued item
+        if (opts?.immediate) {
+            // Execute without chaining to avoid backlog
             return this.playWavFileInternal(filePath, opts);
-        });
-        return this.playQueue;
+        } else {
+            // Maintain queue for non-typing playback
+            this.playQueue = this.playQueue.then(() => this.playWavFileInternal(filePath, opts));
+            return this.playQueue;
+        }
     }
 
     private async playWavFileInternal(filePath: string, opts?: { rate?: number; panning?: number }): Promise<void> {
@@ -1903,7 +1906,7 @@ class AudioPlayer {
         return this.currentSpeaker !== null || this.currentFallback !== null || this.isStopping;
     }
 
-    async playSequence(filePaths: string[], opts?: { rate?: number }): Promise<void> {
+    async playSequence(filePaths: string[], opts?: { rate?: number; immediate?: boolean }): Promise<void> {
         const existingFiles = filePaths.filter(fp => {
             if (!fs.existsSync(fp)) {
                 log(`🔕 playSequence skipping missing file: ${fp}`);
@@ -1913,12 +1916,41 @@ class AudioPlayer {
         });
         
         if (existingFiles.length === 0) return;
-        
-        if (opts?.rate && opts.rate !== 1) {
-            return this.playSequenceWithSox(existingFiles, opts.rate);
+        const run = async () => {
+            // Preserve pitch when a tempo is requested and configuration requires it
+            if (opts?.rate !== undefined && Math.abs(opts.rate - 1.0) > 0.01 && config.preservePitch) {
+                try {
+                    await this.playSequencePitchPreserving(existingFiles, opts.rate);
+                    return;
+                } catch (e) {
+                    log(`[playSequence] Pitch-preserving path failed, falling back to raw: ${e}`);
+                }
+            }
+            // Use internal raw path; apply rate by adjusting sample rate (changes pitch)
+            await this.playSequenceRaw(existingFiles, opts);
+        };
+        if (opts?.immediate) {
+            // Cut any current playback and run immediately, bypassing queue
+            this.stopCurrentPlayback(true);
+            return run();
+        } else {
+            this.playQueue = this.playQueue.then(run);
+            return this.playQueue;
         }
-        
-        return this.playSequenceRaw(existingFiles);
+    }
+
+    private async playSequencePitchPreserving(filePaths: string[], rate: number): Promise<void> {
+        // Process and play each file sequentially with FFmpeg atempo (preserves pitch)
+        for (const filePath of filePaths) {
+            try {
+                const processed = await applyAudioProcessing(filePath, rate);
+                // Queue processed files to preserve global order
+                await this.playWavFile(processed, { rate: 1.0 });
+            } catch (err) {
+                log(`[playSequencePitchPreserving] Failed for ${path.basename(filePath)}: ${err}, falling back to original`);
+                await this.playWavFile(filePath);
+            }
+        }
     }
 
     private async playSequenceWithSox(filePaths: string[], rate: number): Promise<void> {
@@ -1939,7 +1971,7 @@ class AudioPlayer {
         });
     }
 
-    private async playSequenceRaw(filePaths: string[]): Promise<void> {
+    private async playSequenceRaw(filePaths: string[], opts?: { rate?: number }): Promise<void> {
         const entries = filePaths.map(filePath => {
             const isPcmFile = filePath.toLowerCase().endsWith('.pcm');
             
@@ -1953,7 +1985,11 @@ class AudioPlayer {
         });
 
         const allPCM = Buffer.concat(entries.map(e => e.pcm));
-        const fmt = entries[0].format;
+        const baseFmt = entries[0].format;
+        const fmt = { ...baseFmt } as any;
+        if (opts?.rate !== undefined) {
+            fmt.sampleRate = Math.floor(baseFmt.sampleRate * opts.rate);
+        }
 
         return new Promise<void>((resolve, reject) => {
             const speaker = new Speaker(fmt);

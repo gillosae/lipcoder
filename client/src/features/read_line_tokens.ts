@@ -4,7 +4,7 @@ import { log } from '../utils';
 import { getSpecialCharSpoken } from '../mapping';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { speakTokenList } from '../audio';
-import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive, getASRRecordingActive } from './stop_reading';
+import { stopForNewLineReading, stopAllAudio, lineAbortController, setLineTokenReadingActive, getLineTokenReadingActive, getASRRecordingActive, getNavigationGeneration } from './stop_reading';
 import { isEditorActive } from '../ide/active';
 import { config } from '../config';
 import { logFeatureUsage } from '../activity_logger';
@@ -58,6 +58,7 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         const uri = editor.document.uri.toString();
         const line = editor.selection.active.line;
         const column = editor.selection.active.character;
+        const capturedGen = getNavigationGeneration();
         
         // Store the current line for race condition checking
         const originalLine = line;
@@ -88,6 +89,11 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
         const currentLine = editor.selection.active.line;
         if (currentLine !== originalLine) {
             log(`[readLineTokens] Cursor moved from line ${originalLine} to ${currentLine} during LSP request - aborting`);
+            return;
+        }
+        // Guard: If a newer navigation happened, abort stale read
+        if (getNavigationGeneration() !== capturedGen) {
+            log(`[readLineTokens] Navigation generation changed (before playback). Aborting stale read.`);
             return;
         }
         
@@ -195,6 +201,11 @@ async function executeReadLineTokens(editor: vscode.TextEditor, client: Language
             // The abort controller and cursor position checks are sufficient
             // The flag check here was too aggressive and prevented legitimate audio
             
+            // Final guard right before speaking
+            if (getNavigationGeneration() !== capturedGen) {
+                log(`[readLineTokens] Navigation generation changed (pre-speak). Aborting.`);
+                return;
+            }
             await speakTokenList(validChunks, lineAbortController.signal);
             log(`[readLineTokens] Token sequence completed successfully`);
         } catch (err: any) {

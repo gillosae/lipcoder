@@ -86,8 +86,18 @@ function setupAutomaticTypingDetection(context: vscode.ExtensionContext): void {
             }
         }
         
-        // Execute the original command
-        return originalExecuteCommand.call(vscode.commands, command, ...args);
+        // Execute the original command with cancellation-safe handling
+        try {
+            return await originalExecuteCommand.call(vscode.commands, command, ...args);
+        } catch (err: any) {
+            const isCanceled = err && (err.name === 'Canceled' || String(err).includes('Canceled'));
+            if (isCanceled) {
+                // Swallow benign cancellation errors to avoid unhandled rejections
+                log('[FindDialogSimple] Ignored cancellation from executeCommand');
+                return undefined as any;
+            }
+            throw err;
+        }
     };
 
     // Replace the executeCommand function

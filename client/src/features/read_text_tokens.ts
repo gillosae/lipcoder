@@ -12,6 +12,97 @@ import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 // Track when readTextTokens is actively processing to prevent navigation audio conflicts
 let isReadTextTokensActive = false;
 
+// Abort controller to preempt any in-flight typing TTS on new keystrokes
+let typingAbortController: AbortController | null = null;
+
+// Micro-batching for rapid typing: coalesce chars and play as one sequence
+type BatchState = { files: string[]; timer: NodeJS.Timeout | null };
+const charBatchByUri = new Map<string, BatchState>();
+const BATCH_IDLE_MS = 35; // flush after brief idle
+const MAX_BATCH_SIZE = 3; // flush when sustained typing hits this many chars
+
+function resolveCharToFilePath(ch: string, audioMap: Record<string, string>): string | null {
+    // Alphabet
+    if (/^[a-zA-Z]$/.test(ch)) {
+        const tokenPath = audioMap[ch.toLowerCase()];
+        if (tokenPath) {
+            return path.join(config.alphabetPath(), tokenPath);
+        }
+        return null;
+    }
+    // Numbers/specials via earcon mapping
+    const resolved = findTokenSound(ch);
+    if (resolved) return resolved;
+    // Fallback to audioMap earcon if present
+    if (audioMap[ch]) {
+        return path.join(config.audioPath(), 'earcon', audioMap[ch]);
+    }
+    return null;
+}
+
+function enqueueCharPlayback(uri: string, ch: string, audioMap: Record<string, string>): void {
+    const filePath = resolveCharToFilePath(ch, audioMap);
+    if (!filePath) return;
+    let state = charBatchByUri.get(uri);
+    if (!state) {
+        state = { files: [], timer: null };
+        charBatchByUri.set(uri, state);
+    }
+    state.files.push(filePath);
+    // Size-based flush to ensure playback during sustained typing
+    if (state.files.length >= MAX_BATCH_SIZE) {
+        // Do not kill current playback here; rely on ordered queue to preserve sequence
+        const filesNow = state.files.slice();
+        state.files = [];
+        if (state.timer) {
+            clearTimeout(state.timer);
+            state.timer = null;
+        }
+        audioPlayer.playSequence(filesNow, { rate: config.playSpeed, immediate: true }).catch(() => {});
+        return;
+    }
+    if (state.timer) {
+        clearTimeout(state.timer);
+    }
+    state.timer = setTimeout(() => {
+        // Preserve ordering: don't force-stop here; enqueue the batch
+        const files = state!.files.slice();
+        state!.files = [];
+        state!.timer = null;
+        // Apply global playspeed when flushing idle batch (pitch preserved internally)
+        audioPlayer.playSequence(files, { rate: config.playSpeed, immediate: true }).catch(() => {});
+    }, BATCH_IDLE_MS);
+}
+
+// Expose a way to clear any pending typing batches and abort in-flight typing TTS
+export function clearTypingAudioStateForUri(uri?: string): void {
+    try {
+        if (typingAbortController) {
+            typingAbortController.abort();
+            typingAbortController = null;
+        }
+    } catch {}
+    if (uri) {
+        const state = charBatchByUri.get(uri);
+        if (state) {
+            if (state.timer) {
+                clearTimeout(state.timer);
+                state.timer = null;
+            }
+            state.files = [];
+        }
+    } else {
+        for (const [, state] of charBatchByUri) {
+            if (state.timer) {
+                clearTimeout(state.timer);
+                state.timer = null;
+            }
+            state.files = [];
+        }
+        charBatchByUri.clear();
+    }
+}
+
 export function getReadTextTokensActive(): boolean {
     return isReadTextTokensActive;
 }
@@ -58,15 +149,20 @@ export async function readTextTokens(
     }
     
     for (const change of changes) {
-        // Check if Korean TTS is active and should be protected
+        // If Korean TTS is active from a previous operation, force-clear it for typing preemption
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (koreanTTSActive) {
-            log(`[readTextTokens] Korean TTS is active - skipping text reading to prevent interruption`);
-            return;
+            (global as any).koreanTTSActive = false;
+            log(`[readTextTokens] Cleared koreanTTSActive for typing preemption`);
         }
-        
-        // Immediately halt any currently playing audio when a new key event occurs
-        stopAllAudio();
+
+        // Cancel any in-flight typing TTS and stop audio immediately
+        try {
+            if (typingAbortController) {
+                typingAbortController.abort();
+            }
+        } catch {}
+        typingAbortController = new AbortController();
         log(`change.text:' ${JSON.stringify(change.text)}, rangeLength: ${change.rangeLength}, startChar: ${change.range.start.character}`);
 
         const uri = event.document.uri.toString();
@@ -196,113 +292,23 @@ export async function readTextTokens(
             // OPTIMIZATION: Check if this is all alphabet characters for faster stopping
             const isAllAlphabet = /^[a-zA-Z]+$/.test(text);
             
-            if (isAllAlphabet) {
-                // For all-alphabet input, use direct audioPlayer stopping for faster response
-                audioPlayer.stopCurrentPlayback(true);
-                log(`[read_text_tokens] MULTI-ALPHABET FAST STOP: Used direct audioPlayer stop for "${text}"`);
-            } else {
-                // For mixed content, use regular stopAllAudio()
-                stopAllAudio();
-            }
-            
+            // Micro-batch: enqueue characters and flush after brief idle
             for (let i = 0; i < text.length; i++) {
                 const ch = text[i];
-                // Calculate panning for each character based on its position
-                const charPanning = calculatePanning(change.range.start.character + i);
-                
-                // Remove redundant stopAllAudio() call here
-                try {
-                    if (/^[a-zA-Z]$/.test(ch)) {
-                        // Handle alphabet characters first with proper path construction
-                        const tokenPath = audioMap[ch.toLowerCase()];
-                        if (tokenPath) {
-                            const fullPath = path.join(config.alphabetPath(), tokenPath);
-                            audioPlayer.playPcmCached(fullPath, charPanning);
-                        }
-                    } else if (audioMap[ch] && !/^[a-zA-Z]$/.test(ch)) {
-                        // Handle non-alphabet audioMap entries (numbers, special chars)
-                        // Use proper path resolution that checks both special and earcon directories
-                        const resolvedPath = findTokenSound(ch);
-                        if (resolvedPath) {
-                            playWave(resolvedPath, { 
-                                isEarcon: true, 
-                                immediate: true, 
-                                panning: charPanning
-                            });
-                        } else {
-                            // Fallback to earcon directory if findTokenSound doesn't find it
-                            const fallbackPath = path.join(config.audioPath(), 'earcon', audioMap[ch]);
-                            playWave(fallbackPath, { 
-                                isEarcon: true, 
-                                immediate: true, 
-                                panning: charPanning
-                            });
-                        }
-                    } else if (isEarcon(ch)) {
-                        // Handle earcon characters (brackets, parentheses, etc.)
-                        await playEarcon(ch, charPanning);
-                    } else if (getSpecialCharSpoken(ch)) {
-                        // Handle TTS for special characters
-                        await speakTokenList([{ tokens: [getSpecialCharSpoken(ch)!], category: 'special', panning: charPanning }]);
-                    } else {
-                        // No audio found for grouped char
-                    }
-                } catch (err) {
-                    console.error('Typing audio error:', err);
-                }
+                enqueueCharPlayback(uri, ch, audioMap);
             }
             continue;
         }
         // Single-character logic
         const char = text;
-        
-        // OPTIMIZATION: For alphabet characters, use direct audioPlayer stopping for faster response
-        if (/^[a-zA-Z]$/.test(char)) {
-            // For alphabet characters, use immediate audioPlayer stopping instead of stopAllAudio()
-            audioPlayer.stopCurrentPlayback(true);
-            log(`[read_text_tokens] ALPHABET FAST STOP: Used direct audioPlayer stop for "${char}"`);
-        } else {
-            // For non-alphabet characters, use regular stopAllAudio()
-            stopAllAudio();
-        }
+        // Prefer batching for single characters; avoid global stops on every key
         try {
             const specialCharSpoken = getSpecialCharSpoken(char);
             const isEarconChar = isEarcon(char);
             log(`[read_text_tokens] Processing single char: "${char}", audioMap[char]: ${audioMap[char]}, specialCharMap: ${specialCharSpoken}, isEarcon: ${isEarconChar}`);
-            if (/^[a-zA-Z]$/.test(char)) {
-                // Handle alphabet characters first with proper path construction
-                const tokenPath = audioMap[char.toLowerCase()];
-                log(`[read_text_tokens] Alphabet char "${char}" -> tokenPath: ${tokenPath}`);
-                if (tokenPath) {
-                    const fullPath = path.join(config.alphabetPath(), tokenPath);
-                    log(`[read_text_tokens] Playing alphabet audio (cached) for "${char}": ${fullPath}`);
-                    audioPlayer.playPcmCached(fullPath, panning);
-                    return; // Prevent further processing to avoid double audio
-                } else {
-                    log(`[read_text_tokens] No tokenPath found for alphabet char "${char}"`);
-                }
-            } else if (audioMap[char] && !/^[a-zA-Z]$/.test(char)) {
-                // Handle non-alphabet audioMap entries (numbers, special chars)
-                // Use proper path resolution that checks both special and earcon directories
-                const resolvedPath = findTokenSound(char);
-                if (resolvedPath) {
-                    log(`[read_text_tokens] 🔊 RESOLVED: Playing resolved audio for "${char}": ${resolvedPath}`);
-                    playWave(resolvedPath, { 
-                        isEarcon: true, 
-                        immediate: true, 
-                        panning
-                    });
-                } else {
-                    // Fallback to earcon directory if findTokenSound doesn't find it
-                    const fallbackPath = path.join(config.audioPath(), 'earcon', audioMap[char]);
-                    log(`[read_text_tokens] 🔄 FALLBACK: Using fallback path for "${char}": ${fallbackPath}`);
-                    playWave(fallbackPath, { 
-                        isEarcon: true, 
-                        immediate: true, 
-                        panning
-                    });
-                }
-                return; // Prevent further processing to avoid double audio
+            if (/^[a-zA-Z]$/.test(char) || (audioMap[char] && !/^[a-zA-Z]$/.test(char))) {
+                enqueueCharPlayback(uri, char, audioMap);
+                return;
             } else if (isEarcon(char)) {
                 // Handle earcon characters (brackets, parentheses, etc.)
                 log(`[read_text_tokens] 🔊 EARCON PATH: Playing earcon for "${char}" with panning ${panning}`);
@@ -310,8 +316,8 @@ export async function readTextTokens(
                 log(`[read_text_tokens] ✅ EARCON COMPLETED: Finished playing earcon for "${char}"`);
                 return; // Prevent further processing to avoid double audio
             } else if (getSpecialCharSpoken(char)) {
-                // Handle TTS for special characters
-                await speakTokenList([{ tokens: [getSpecialCharSpoken(char)!], category: 'special', panning }]);
+                // Avoid heavy TTS during fast typing; try to resolve to earcon path via enqueue
+                enqueueCharPlayback(uri, char, audioMap);
                 return; // Prevent further processing to avoid double audio
             } else {
                 // No audio found for character

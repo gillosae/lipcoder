@@ -12,6 +12,18 @@ let lineTokenReadingActive = false;
 // Track if ASR is currently recording (to prevent token reading from starting)
 let asrRecordingActive = false;
 
+// Navigation generation to invalidate stale reads when cursor moves again
+let navigationGeneration = 0;
+
+export function bumpNavigationGeneration(): number {
+    navigationGeneration += 1;
+    return navigationGeneration;
+}
+
+export function getNavigationGeneration(): number {
+    return navigationGeneration;
+}
+
 export function setLineTokenReadingActive(active: boolean): void {
 	lineTokenReadingActive = active;
 	

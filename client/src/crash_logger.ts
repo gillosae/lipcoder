@@ -74,12 +74,21 @@ class CrashLogger {
     private setupGlobalErrorHandlers(): void {
         // Node.js 전역 에러 핸들러
         process.on('uncaughtException', (error) => {
+            if (this.isBenignCancellation(error)) {
+                this.log(LogLevel.WARN, 'CANCEL', `UncaughtException (benign cancel): ${error?.message || error}`);
+                return;
+            }
             this.logCrash('UncaughtException', error);
             // 크래시 로그를 즉시 플러시
             this.flushLogs();
         });
 
         process.on('unhandledRejection', (reason, promise) => {
+            if (this.isBenignCancellation(reason)) {
+                this.log(LogLevel.WARN, 'CANCEL', `UnhandledRejection (benign cancel): ${reason instanceof Error ? reason.message : String(reason)}`, { promise: promise.toString() });
+                this.flushLogs();
+                return;
+            }
             this.logCrash('UnhandledRejection', reason as Error, { promise: promise.toString() });
             this.flushLogs();
         });
@@ -98,6 +107,13 @@ class CrashLogger {
                 this.logCrash('WindowUnhandledRejection', event.reason);
             });
         }
+    }
+
+    private isBenignCancellation(err: any): boolean {
+        if (!err) return false;
+        const name = err?.name || '';
+        const msg = (err?.message || String(err || '')).toLowerCase();
+        return name === 'Canceled' || name === 'AbortError' || msg.includes('canceled') || msg.includes('cancelled') || msg.includes('aborted');
     }
 
     private startPeriodicFlush(): void {

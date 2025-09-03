@@ -51,10 +51,19 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
             // Hide suggestions (ignore cancellations)
-            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
+            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch((e) => {
+                // Ignore benign cancellations; only log unexpected errors
+                if (!(e && (e.name === 'Canceled' || String(e).includes('Canceled')))) {
+                    // noop to avoid noisy logs
+                }
+            });
             
             // Disable at context level
-            Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', false)).catch(() => {});
+            Promise.resolve(vscode.commands.executeCommand('setContext', 'inlineSuggestionsEnabled', false)).catch((e) => {
+                if (!(e && (e.name === 'Canceled' || String(e).includes('Canceled')))) {
+                    // noop
+                }
+            });
             
             // Disable editor inline suggestions setting temporarily
             const config = vscode.workspace.getConfiguration('editor');
@@ -83,7 +92,11 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
         // Clear any existing inline suggestions if line reading becomes active OR audio is playing OR Korean TTS is active OR ASR is recording
         const koreanTTSActive = (global as any).koreanTTSActive || false;
         if (getLineTokenReadingActive() || isAudioPlaying() || koreanTTSActive || getASRRecordingActive()) {
-            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
+            Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch((e) => {
+                if (!(e && (e.name === 'Canceled' || String(e).includes('Canceled')))) {
+                    // noop
+                }
+            });
             if (koreanTTSActive) {
                 log(`[InlineSuggestions] Skipping due to Korean TTS protection`);
             }
@@ -100,7 +113,11 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
                 log(`[InlineSuggestions] BLOCKING suggestion generation during line token reading or audio playback (trigger: ${context.triggerKind})`);
                 
                 // Also try to hide any existing suggestions
-                Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch(() => {});
+                Promise.resolve(vscode.commands.executeCommand('editor.action.inlineSuggest.hide')).catch((e) => {
+                    if (!(e && (e.name === 'Canceled' || String(e).includes('Canceled')))) {
+                        // noop
+                    }
+                });
                 
                 return { items: [] };
             }

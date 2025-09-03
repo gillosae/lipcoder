@@ -82,6 +82,35 @@ export async function genTokenAudio(
     log(`[genTokenAudio] START token="${token}" category="${category}" backend="${currentBackend}"`);
     log(`[genTokenAudio] Call stack: ${new Error().stack?.split('\n')[2]?.trim()}`);
 
+    // Local helper: create a short silent WAV buffer to guarantee non-throwing fallback
+    function makeSilentWavBuffer(durationMs: number = 120, sampleRate: number = 24000, channels: number = 1): Buffer {
+        const bytesPerSample = 2; // 16-bit PCM
+        const numSamples = Math.max(1, Math.floor((durationMs / 1000) * sampleRate));
+        const blockAlign = channels * bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = numSamples * blockAlign;
+        const buffer = Buffer.alloc(44 + dataSize);
+        let o = 0;
+        // RIFF header
+        buffer.write('RIFF', o); o += 4;
+        buffer.writeUInt32LE(36 + dataSize, o); o += 4;
+        buffer.write('WAVE', o); o += 4;
+        // fmt chunk
+        buffer.write('fmt ', o); o += 4;
+        buffer.writeUInt32LE(16, o); o += 4; // PCM chunk size
+        buffer.writeUInt16LE(1, o); o += 2; // AudioFormat PCM
+        buffer.writeUInt16LE(channels, o); o += 2;
+        buffer.writeUInt32LE(sampleRate, o); o += 4;
+        buffer.writeUInt32LE(byteRate, o); o += 4;
+        buffer.writeUInt16LE(blockAlign, o); o += 2;
+        buffer.writeUInt16LE(16, o); o += 2; // bits per sample
+        // data chunk
+        buffer.write('data', o); o += 4;
+        buffer.writeUInt32LE(dataSize, o); o += 4;
+        // payload is already zero-filled
+        return buffer;
+    }
+
     // Handle regex patterns - convert to readable text
     let processedToken = token;
     if (category === 'regex_pattern') {
@@ -245,7 +274,12 @@ export async function genTokenAudio(
             ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
             : { abortSignal: opts?.abortSignal };
         log(`[genTokenAudio] *** FORCING OPENAI TTS *** - Vibe coding detected (category: ${category}, active: ${isVibeCodingActive}) for: "${token}"`);
-        wavBuffer = await generateOpenAITTS(token, category, gptOpts);
+        try {
+            wavBuffer = await generateOpenAITTS(token, category, gptOpts);
+        } catch (e) {
+            log(`[genTokenAudio] OpenAI TTS failed, returning silent fallback: ${e}`);
+            wavBuffer = makeSilentWavBuffer();
+        }
     } else if (currentBackend === TTSBackend.SileroGPT) {
         // Silero for English + GPT for Korean
         if (useKoreanTTS) {
@@ -253,10 +287,20 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            try {
+                wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            } catch (e) {
+                log(`[genTokenAudio] OpenAI TTS failed (Silero+GPT), using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         } else {
             log(`[genTokenAudio] English text detected, using Silero TTS (Silero+GPT backend): "${token}"`);
-            wavBuffer = await generateSileroTTS(processedToken, category, opts);
+            try {
+                wavBuffer = await generateSileroTTS(processedToken, category, opts);
+            } catch (e) {
+                log(`[genTokenAudio] Silero TTS failed, using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         }
     } else if (currentBackend === TTSBackend.EspeakGPT) {
         // Espeak for English + GPT for Korean
@@ -265,15 +309,30 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            try {
+                wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            } catch (e) {
+                log(`[genTokenAudio] OpenAI TTS failed (Espeak+GPT), using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         } else {
             log(`[genTokenAudio] English text detected, using Espeak TTS (Espeak+GPT backend): "${token}"`);
-            wavBuffer = await generateEspeakTTS(processedToken, category, opts);
+            try {
+                wavBuffer = await generateEspeakTTS(processedToken, category, opts);
+            } catch (e) {
+                log(`[genTokenAudio] Espeak TTS failed, using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         }
     } else if (currentBackend === TTSBackend.Espeak) {
         // Espeak for all languages (including Korean)
         log(`[genTokenAudio] Using Espeak TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
-        wavBuffer = await generateEspeakTTS(processedToken, category, opts);
+        try {
+            wavBuffer = await generateEspeakTTS(processedToken, category, opts);
+        } catch (e) {
+            log(`[genTokenAudio] Espeak TTS failed (pure), using silent fallback: ${e}`);
+            wavBuffer = makeSilentWavBuffer();
+        }
     } else if (currentBackend === TTSBackend.XTTSV2) {
         // XTTS-v2 for both Korean and English
         const xttsV2Port = serverManager.getServerPort('xtts_v2');
@@ -294,14 +353,24 @@ export async function genTokenAudio(
                 const fallbackOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                     ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                     : { abortSignal: opts?.abortSignal };
-                wavBuffer = await generateOpenAITTS(token, category, fallbackOpts);
+                try {
+                    wavBuffer = await generateOpenAITTS(token, category, fallbackOpts);
+                } catch (e2) {
+                    log(`[genTokenAudio] OpenAI fallback after XTTS-v2 also failed, using silent fallback: ${e2}`);
+                    wavBuffer = makeSilentWavBuffer();
+                }
             }
         } else {
             log(`[genTokenAudio] XTTS-v2 server not available, falling back to OpenAI TTS for: "${token}"`);
             const fallbackOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(token, category, fallbackOpts);
+            try {
+                wavBuffer = await generateOpenAITTS(token, category, fallbackOpts);
+            } catch (e) {
+                log(`[genTokenAudio] OpenAI fallback (no XTTS-v2) failed, using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         }
     } else if (currentBackend === TTSBackend.MacOSGPT) {
         // macOS for English + GPT for Korean
@@ -310,15 +379,30 @@ export async function genTokenAudio(
             const koreanOpts = opts?.speaker && isValidOpenAIVoice(opts.speaker) 
                 ? { speaker: opts.speaker, abortSignal: opts?.abortSignal }
                 : { abortSignal: opts?.abortSignal };
-            wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            try {
+                wavBuffer = await generateOpenAITTS(processedToken, category, koreanOpts);
+            } catch (e) {
+                log(`[genTokenAudio] OpenAI TTS failed (macOS+GPT), returning silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         } else {
             log(`[genTokenAudio] English text detected, using macOS TTS (macOS+GPT backend): "${token}"`);
-            wavBuffer = await generateMacOSTTS(processedToken, category, opts);
+            try {
+                wavBuffer = await generateMacOSTTS(processedToken, category, opts);
+            } catch (e) {
+                log(`[genTokenAudio] macOS TTS failed (macOS+GPT), using silent fallback: ${e}`);
+                wavBuffer = makeSilentWavBuffer();
+            }
         }
     } else if (currentBackend === TTSBackend.MacOS) {
         // macOS for all languages (including Korean)
         log(`[genTokenAudio] Using macOS TTS for all languages: "${token}" (${useKoreanTTS ? 'Korean' : 'English'})`);
-        wavBuffer = await generateMacOSTTS(processedToken, category, opts);
+        try {
+            wavBuffer = await generateMacOSTTS(processedToken, category, opts);
+        } catch (e) {
+            log(`[genTokenAudio] macOS TTS failed, using silent fallback: ${e}`);
+            wavBuffer = makeSilentWavBuffer();
+        }
     } else {
         throw new Error(`Unsupported TTS backend: ${currentBackend}`);
     }

@@ -87,19 +87,19 @@ export const EXACT_COMMANDS: ExactCommand[] = [
         type: 'action' 
     },
     { 
-        patterns: ['go to editor', 'editor', 'go editor', '코드 창', '코드 창', '코드 창으로 가', '코드 창 열기', '코드 창 열기', '코드 창 열어', '코드 창으로 가', '코드 창', '에디터', '에디터로 가', '에디터 창 열어', '에디터로가'], 
+        patterns: ['go to editor', 'editor', 'go editor', '코드 창', '코드 창', '코드 창으로 가', '코드 창 열기', '코드 창 열기', '코드 창 열어', '코드 창으로 가', '코드 창', '에디터', '에디터로 가', '에디터 창 열어', '에디터로가', '에디터로이동', '에디터로 이동', '에디터 열어줘', '에디터열어'], 
         command: 'workbench.action.focusActiveEditorGroup', 
         feedback: 'In editor', 
         type: 'navigation' 
     },
     { 
-        patterns: ['go to terminal', 'terminal', 'go terminal', '터미널로 가', '터미널', '터미널 열어', '터미널 창 열어', '터미널으로 가'], 
+        patterns: ['go to terminal', 'terminal', 'go terminal', '터미널로 가', '터미널', '터미널 열어', '터미널 창 열어', '터미널으로 가', '터미널로 이동', '터미널로이동', '터미널열어줘', '터미널 열어줘'], 
         command: 'lipcoder.smartGoToTerminal', 
         feedback: 'In terminal', 
         type: 'navigation' 
     },
     { 
-        patterns: ['go to explorer', 'explorer', 'go explorer', '탐색기로 가', '탐색기', '탐색기 열어', '탐색기 창 열어', '탐색기으로 가', '파일 탐색기', '파일 탐색기로 가'], 
+        patterns: ['go to explorer', 'explorer', 'go explorer', '탐색기로 가', '탐색기', '탐색기 열어', '탐색기 창 열어', '탐색기으로 가', '파일 탐색기', '파일 탐색기로 가', '탐색기로 이동', '탐색기로이동', '탐색기 열어줘'], 
         command: 'workbench.view.explorer', 
         feedback: 'In explorer', 
         type: 'navigation' 

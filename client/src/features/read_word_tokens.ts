@@ -7,6 +7,9 @@ import { shouldSuppressReadingEnhanced } from './debug_console_detection';
 
 const bufferMap = new Map<string, string>();
 
+// Abort controller to preempt word-level TTS on rapid typing
+let wordTypingAbortController: AbortController | null = null;
+
 // Helper function to calculate panning based on column position
 function calculatePanning(column: number): number {
     if (!config.globalPanningEnabled) {
@@ -40,7 +43,13 @@ export async function readWordTokens(
         
         // if user types a space (or newline), speak accumulated buffer + the space
         if (text === ' ' || text === '\n' || text === '\t') {
-            // halt any ongoing audio
+            // halt any ongoing audio and cancel any in-flight word-level TTS
+            try {
+                if (wordTypingAbortController) {
+                    wordTypingAbortController.abort();
+                }
+            } catch {}
+            wordTypingAbortController = new AbortController();
             stopAllAudio();
 
             const word = buf.trim();
@@ -48,7 +57,7 @@ export async function readWordTokens(
                 log(`[readWordTokens] speaking word="${word}"`);
                 // Send as variable category so universal word logic in speakTokenList applies
                 const category = /^\d+$/.test(word) ? 'literal' : 'variable';
-                await speakTokenList([{ tokens: [word], category, panning }]);
+                await speakTokenList([{ tokens: [word], category, panning }], wordTypingAbortController.signal);
             }
             // optionally speak the space itself as an earcon or omit
             bufferMap.set(uri, '');

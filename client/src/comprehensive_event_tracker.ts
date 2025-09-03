@@ -182,6 +182,14 @@ export class ComprehensiveEventTracker {
                 return result;
             } catch (error) {
                 const duration = Date.now() - startTime;
+                // Treat VS Code command cancellations as benign and do not escalate
+                const errObj: any = error;
+                const isCanceled = errObj && (errObj.name === 'Canceled' || String(errObj).includes('Canceled'));
+                if (isCanceled) {
+                    logCommandExecution(command, true, duration);
+                    this.handleFocusCommands(command);
+                    return undefined as unknown as T;
+                }
                 logCommandExecution(command, false, duration, String(error));
                 
                 if (command.startsWith('lipcoder.')) {
