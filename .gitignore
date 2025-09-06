@@ -4,8 +4,10 @@ node_modules
 .vscode-test/
 *.vsix
 
-# Don’t commit large model files:
+# Don't commit large model files:
 client/src/models/silero/**
+server/models/torch_hub_cache/**
+server/models/huggingface_cache/**
 
 # Don't commit the Python site-packages (we'll install on the end user's machine instead):
 client/src/python/lib/

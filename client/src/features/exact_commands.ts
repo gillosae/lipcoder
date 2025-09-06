@@ -488,7 +488,7 @@ export async function tryExactCommand(text: string): Promise<ConversationalRespo
                 
                 log(`[ExactCommands] Navigated to line ${lineNumber}`);
                 return {
-                    response: `Line ${lineNumber}`,
+                    response: `${lineNumber}`,
                     actions: [],
                     shouldSpeak: true
                 };

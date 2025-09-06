@@ -19,6 +19,17 @@ from flask import Flask, request, jsonify
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 import numpy as np
 
+# Set up Hugging Face cache directory within the project
+script_dir = os.path.dirname(os.path.abspath(__file__))
+hf_cache_dir = os.path.join(script_dir, 'models', 'huggingface_cache')
+os.makedirs(hf_cache_dir, exist_ok=True)
+
+# Set Hugging Face cache environment variable
+os.environ['HF_HOME'] = hf_cache_dir
+os.environ['TRANSFORMERS_CACHE'] = hf_cache_dir
+
+print(f"[HF-Whisper] Using Hugging Face cache directory: {hf_cache_dir}")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -51,16 +62,51 @@ def setup_whisper_model():
         
         logger.info(f"📥 Loading Whisper model: {model_id}")
         
-        # Load model and processor
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id, 
-            torch_dtype=torch_dtype, 
-            low_cpu_mem_usage=True, 
-            use_safetensors=True
-        )
-        model.to(device)
+        # Check if model is already cached
+        model_cache_path = os.path.join(hf_cache_dir, 'models--openai--whisper-small')
+        if os.path.exists(model_cache_path):
+            logger.info(f"✅ Found cached model at: {model_cache_path}")
+        else:
+            logger.info(f"📦 Model not cached, will download to: {model_cache_path}")
         
-        processor = AutoProcessor.from_pretrained(model_id)
+        # Try to load model with project cache first, fallback to system cache if failed
+        model = None
+        processor = None
+        
+        try:
+            # First attempt: Use project cache directory
+            logger.info(f"🔄 Attempting to load model with project cache: {hf_cache_dir}")
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id, 
+                dtype=torch_dtype, 
+                low_cpu_mem_usage=True, 
+                use_safetensors=True,
+                cache_dir=hf_cache_dir
+            )
+            processor = AutoProcessor.from_pretrained(model_id, cache_dir=hf_cache_dir)
+            logger.info("✅ Successfully loaded model with project cache")
+            
+        except Exception as cache_error:
+            logger.warning(f"⚠️ Failed to load model with project cache: {cache_error}")
+            logger.info("🔄 Falling back to system default cache...")
+            
+            # Clean up any corrupted cache files
+            if os.path.exists(model_cache_path):
+                logger.info(f"🧹 Removing corrupted cache: {model_cache_path}")
+                import shutil
+                shutil.rmtree(model_cache_path, ignore_errors=True)
+            
+            # Second attempt: Use system default cache (no cache_dir specified)
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id, 
+                dtype=torch_dtype, 
+                low_cpu_mem_usage=True, 
+                use_safetensors=True
+            )
+            processor = AutoProcessor.from_pretrained(model_id)
+            logger.info("✅ Successfully loaded model with system cache")
+        
+        model.to(device)
         
         # Create pipeline with optimized settings for minimal hallucination
         whisper_pipeline = pipeline(
@@ -72,7 +118,7 @@ def setup_whisper_model():
             chunk_length_s=30,
             batch_size=16,
             return_timestamps=True,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             device=device,
         )
         

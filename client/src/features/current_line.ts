@@ -45,9 +45,9 @@ export function registerCurrentLine(context: ExtensionContext) {
             }
 
             const lineNum = editor.selection.active.line + 1; // zero-based → human count
-            const msg = `Line ${lineNum}`;
-            vscode.window.showInformationMessage(msg);
-            const tokens = msg.split(/\s+/).filter(t => t.length > 0);
+            // Just read the current line content without announcing line number
+            const line = editor.document.lineAt(editor.selection.active.line);
+            const tokens = line.text.trim() ? [line.text] : ['blank'];
             
             // Convert tokens to speakable form and create chunks
             const chunks: TokenChunk[] = tokens.map(token => {

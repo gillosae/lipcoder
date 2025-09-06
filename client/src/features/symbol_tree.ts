@@ -112,7 +112,7 @@ export function registerSymbolTree(context: ExtensionContext) {
                         playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
                         
                         // Use readInEspeak for fast combined reading of symbol names with abort signal
-                        readInEspeak([{ tokens: [label], category: undefined }], lineAbortController.signal).catch(console.error);
+                        readInEspeak([{ tokens: [label], category: undefined, priority: 'high' }], lineAbortController.signal).catch(console.error);
                     }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
@@ -131,7 +131,8 @@ export function registerSymbolTree(context: ExtensionContext) {
                     // Use readInEspeak for fast combined reading of acceptance message
                     readInEspeak([{ 
                         tokens: [`moved to symbol ${label} line ${line + 1}`], 
-                        category: undefined 
+                        category: undefined,
+                        priority: 'high'
                     }], lineAbortController.signal).catch(console.error);
                 }
                 quickPick.hide();

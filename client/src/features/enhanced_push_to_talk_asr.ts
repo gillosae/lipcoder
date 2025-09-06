@@ -8,7 +8,8 @@ import { currentASRBackend, ASRBackend, loadConfigFromSettings } from '../config
 import { CommandRouter, findFunctionWithLLM, executePackageJsonScript, type RouterEditorContext } from '../command_router';
 import { log, logError, logWarning, logSuccess } from '../utils';
 import { stopAllAudio, setASRRecordingActive } from './stop_reading';
-import { speakTokenList, TokenChunk } from '../audio';
+import { stopSpeaking, playASRStartEarcon, playASRStopEarcon } from '../tts';
+import { speakTokenList, TokenChunk, startThinkingAudio } from '../audio';
 import { playEarcon } from '../earcon';
 import { handleASRError } from '../asr_error_handler';
 import { getLastActiveEditor, isEditorActive } from '../ide/active';
@@ -24,6 +25,13 @@ let statusBarItem: vscode.StatusBarItem | null = null;
 let commandRouter: CommandRouter | null = null;
 let isRecording = false;
 let context: vscode.ExtensionContext | null = null;
+
+/**
+ * Get current ASR recording status
+ */
+export function getASRRecordingStatus(): boolean {
+    return isRecording;
+}
 
 // Track editor context when recording starts
 interface EditorContext {
@@ -166,12 +174,12 @@ function initializeASRClients(): void {
                         }
                     },
                     onASRReady: async () => {
-                        // Play ASR start sound when ASR is actually ready and working
+                        // Play ASR start earcon when ASR is actually ready and working
                         try {
-                            await playEarcon('asr_start', 0);
-                            log('[Enhanced-ASR] Played ASR start sound (Silero ASR ready)');
+                            await playASRStartEarcon();
+                            log('[Enhanced-ASR] Played ASR start earcon (Silero ASR ready)');
                         } catch (error) {
-                            log(`[Enhanced-ASR] Failed to play ASR start sound (Silero ASR ready): ${error}`);
+                            log(`[Enhanced-ASR] Failed to play ASR start earcon (Silero ASR ready): ${error}`);
                         }
                     }
                 });
@@ -202,12 +210,12 @@ function initializeASRClients(): void {
                         }
                     },
                     onRecordingStart: async () => {
-                        // Play ASR start sound when GPT4o ASR is actually ready and working
+                        // Play ASR start earcon when GPT4o ASR is actually ready and working
                         try {
-                            await playEarcon('asr_start', 0);
-                            log('[Enhanced-ASR] Played ASR start sound (GPT4o ASR ready)');
+                            await playASRStartEarcon();
+                            log('[Enhanced-ASR] Played ASR start earcon (GPT4o ASR ready)');
                         } catch (error) {
-                            log(`[Enhanced-ASR] Failed to play ASR start sound (GPT4o ASR ready): ${error}`);
+                            log(`[Enhanced-ASR] Failed to play ASR start earcon (GPT4o ASR ready): ${error}`);
                         }
                         handleRecordingStart();
                     },
@@ -242,12 +250,12 @@ function initializeASRClients(): void {
                         await handleASRError(error, 'Hugging Face Whisper ASR');
                     },
                     onRecordingStart: async () => {
-                        await playEarcon('asr_start', 0);
-                        log('[Enhanced-ASR] Played ASR start sound');
+                        await playASRStartEarcon();
+                        log('[Enhanced-ASR] Played ASR start earcon');
                     },
                     onRecordingStop: async () => {
-                        await playEarcon('asr_stop', 0);
-                        log('[Enhanced-ASR] Played ASR stop sound');
+                        await playASRStopEarcon();
+                        log('[Enhanced-ASR] Played ASR stop earcon');
                     }
                 });
                 
@@ -674,9 +682,10 @@ async function startRecording(): Promise<void> {
         log('[Enhanced-ASR] Starting ASR recording...');
         logSuccess('🔴 [ASR-DEBUG] About to initialize ASR client...');
         
-        // Stop all ongoing audio/token reading before starting recording
+        // Stop all ongoing audio/token reading and TTS before starting recording
         stopAllAudio();
-        log('[Enhanced-ASR] Stopped all ongoing audio before recording');
+        await stopSpeaking();
+        log('[Enhanced-ASR] Stopped all ongoing audio and TTS before recording');
         
         // Capture editor context at the start of recording with fallback
         recordingContext = getEditorContextWithFallback();
@@ -830,12 +839,18 @@ async function stopRecording(): Promise<void> {
             await onASRStop();
         } catch {}
         
-        // Play ASR stop sound
+        // Play ASR stop earcon and immediately start thinking audio
         try {
-            await playEarcon('asr_stop', 0);
-            log('[Enhanced-ASR] Played ASR stop sound');
+            await playASRStopEarcon();
+            log('[Enhanced-ASR] Played ASR stop earcon');
         } catch (error) {
-            log(`[Enhanced-ASR] Failed to play ASR stop sound: ${error}`);
+            log(`[Enhanced-ASR] Failed to play ASR stop earcon: ${error}`);
+        }
+        try {
+            await startThinkingAudio();
+            log('[Enhanced-ASR] Started thinking audio right after ASR stop');
+        } catch (error) {
+            log(`[Enhanced-ASR] Failed to start thinking audio after ASR stop: ${error}`);
         }
         
         logSuccess('[Enhanced-ASR] Recording stopped successfully');

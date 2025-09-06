@@ -575,6 +575,7 @@ export const earconTextMap: Record<string, string> = {
 export const config = {
     typingSpeechEnabled: true,  // global flag for typing speech
     cursorLineReadingEnabled: true,  // enable automatic line reading when cursor moves
+    cursorWordReadingEnabled: true,  // enable reading the word on word-wise navigation (Option+Arrow)
     playSpeed: 2.0,              // playback speed multiplier - now supports pitch preservation!
     preservePitch: true,         // use pitch-preserving time stretching (requires FFmpeg)
     panningEnabled: true,        // enable positional panning for tokens (legacy)
@@ -587,7 +588,7 @@ export const config = {
     aggressiveAudioPipeline: true, // use smaller audio buffers for lower latency
 
     // Audio Minimap Configuration
-    audioMinimapEnabled: true,   // enable audio minimap when cursor moves quickly
+    audioMinimapEnabled: false,  // disable audio minimap - removed feature
     audioMinimapSpeedThreshold: 3.5, // lines per second threshold to trigger minimap (increased to reduce false triggers)
     audioMinimapTimeout: 150,    // minimum milliseconds between line changes to calculate speed (reduced for more responsive detection)
 
@@ -667,6 +668,7 @@ export const config = {
 } as {
     typingSpeechEnabled: boolean;
     cursorLineReadingEnabled: boolean;
+    cursorWordReadingEnabled: boolean;
     playSpeed: number;
     preservePitch: boolean;
     panningEnabled: boolean;
@@ -833,6 +835,17 @@ export function loadConfigFromSettings() {
         // Load vibe coding popup preferences
         const vibeCodingShowPopups = config.get('vibeCodingShowPopups', false) as boolean;
         vibeCodingConfig.showPopups = vibeCodingShowPopups;
+
+        // Load cursor word reading preference
+        const cursorWordReadingEnabled = config.get('cursorWordReadingEnabled', true) as boolean;
+        // Update runtime flag
+        try {
+            (config as any).cursorWordReadingEnabled = cursorWordReadingEnabled;
+        } catch {
+            // Fallback direct assignment
+            // @ts-ignore
+            config.cursorWordReadingEnabled = cursorWordReadingEnabled;
+        }
         
         console.log('[Config] Configuration loaded successfully');
     } catch (error) {

@@ -5,6 +5,24 @@ import { log } from '../utils';
 export interface LineSeverityMap { [line: number]: vscode.DiagnosticSeverity }
 const diagCache: Map<string /* uri */, LineSeverityMap> = new Map();
 
+/**
+ * Get the diagnostic cache
+ */
+export function getDiagnosticCache(): Map<string, LineSeverityMap> {
+    return diagCache;
+}
+
+/**
+ * Get line severity for a specific line in a document
+ */
+export function getLineSeverity(uri: string, line: number): vscode.DiagnosticSeverity | null {
+    const lineMap = diagCache.get(uri);
+    if (!lineMap || !(line in lineMap)) {
+        return null;
+    }
+    return lineMap[line];
+}
+
 export function updateLineSeverity() {
     vscode.languages.onDidChangeDiagnostics(e => {
         for (const uri of e.uris) {

@@ -229,7 +229,7 @@ async function showSyntaxErrorList(editorArg?: vscode.TextEditor): Promise<void>
                 // Use readInEspeak for fast combined reading of error information with abort signal
                 const cleanText = `line ${item.error.line + 1}, ${item.error.message}`;
                 log(`[SyntaxErrors] Speaking: "${cleanText}"`);
-                readInEspeak([{ tokens: [cleanText], category: undefined }], lineAbortController.signal).catch(console.error);
+                readInEspeak([{ tokens: [cleanText], category: undefined, priority: 'high' }], lineAbortController.signal).catch(console.error);
             }, 200); // 200ms delay to ensure stopping is complete
         }
     });

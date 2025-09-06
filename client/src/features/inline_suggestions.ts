@@ -243,7 +243,7 @@ export async function registerInlineSuggestions(context: vscode.ExtensionContext
                 stopAllAudio(); // Use centralized stopping system
             }
             
-            playEarcon('client/audio/alert/suggestion.pcm', 0); // Center panning for alert
+            playEarcon('client/audio/alert/suggestion.pcm'); // Center panning for alert
             await speakTokenList([{ tokens: [lastSuggestion.suggestion], category: undefined }], lineAbortController.signal);
             markSuggestionRead();
         } else {

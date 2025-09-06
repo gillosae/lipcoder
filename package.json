@@ -1161,6 +1161,49 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically overwrite files when save conflicts occur (prevents 'content is newer' dialogs)."
+        },
+        "lipcoder.tts.voice": {
+          "type": "string",
+          "default": "Yuna",
+          "description": "Default TTS voice for text-to-speech."
+        },
+        "lipcoder.tts.rate": {
+          "type": "number",
+          "default": 200,
+          "minimum": 50,
+          "maximum": 500,
+          "description": "Speech rate in words per minute."
+        },
+        "lipcoder.tts.volume": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Volume level for TTS (0.0 = silent, 1.0 = maximum)."
+        },
+        "lipcoder.tts.punctuation": {
+          "type": "string",
+          "enum": ["none", "some", "all"],
+          "default": "some",
+          "description": "Punctuation reading level: 'none' = no punctuation, 'some' = basic punctuation, 'all' = all punctuation."
+        },
+        "lipcoder.tts.panningEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable spatial audio panning based on cursor position. Audio will pan left/right based on column position in the editor."
+        },
+        "lipcoder.tts.panningStrength": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Strength of the panning effect (0.0 = no panning, 1.0 = maximum panning). Controls how much the audio shifts left/right based on cursor position."
+        }
+        ,
+        "lipcoder.cursorWordReadingEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, moving by word (Option+Left/Right) speaks the word at the new cursor position, VoiceOver-style."
         }
       }
     }

@@ -9,8 +9,27 @@ import numpy as np
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
+# Set up torch hub cache directory within the project
+script_dir = os.path.dirname(os.path.abspath(__file__))
+torch_hub_cache_dir = os.path.join(script_dir, 'models', 'torch_hub_cache')
+os.makedirs(torch_hub_cache_dir, exist_ok=True)
+
+# Set torch hub directory to project-local cache
+torch.hub.set_dir(torch_hub_cache_dir)
+
+print(f"[ASR] Using torch hub cache directory: {torch_hub_cache_dir}")
+
 # Initialize device and load the Silero STT model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"[ASR] Loading Silero ASR model on device: {device}")
+
+# Check if model is already cached
+model_cache_path = os.path.join(torch_hub_cache_dir, 'snakers4_silero-models_master')
+if os.path.exists(model_cache_path):
+    print(f"[ASR] Found cached model at: {model_cache_path}")
+else:
+    print(f"[ASR] Model not cached, will download to: {model_cache_path}")
+
 model, decoder, utils = torch.hub.load(
     repo_or_dir='snakers4/silero-models',
     model='silero_stt',
@@ -18,6 +37,8 @@ model, decoder, utils = torch.hub.load(
     device=device
 )  #  [oai_citation:0‡PyTorch](https://pytorch.org/hub/snakers4_silero-models_stt/)
 read_batch, split_into_batches, read_audio, prepare_model_input = utils
+
+print(f"[ASR] Silero ASR model loaded successfully")
 
 # Wrap the Flask app for ASGI servers if you want to run with Uvicorn/Hypercorn
 asgi_app = WsgiToAsgi(app)

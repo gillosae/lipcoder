@@ -148,4 +148,13 @@ export function registerPlaySpeed(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(`🚀 LipCoder playback speed set to 2.0× ${pitchNote}`);
         })
     );
+
+    // Add ultra-fast preset for power users
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lipcoder.setPlaySpeedUltraFast', () => {
+            config.playSpeed = 3.0;
+            const pitchNote = config.preservePitch ? '(pitch preserved)' : '(extremely high pitch)';
+            vscode.window.showInformationMessage(`⚡ LipCoder playback speed set to 3.0× ${pitchNote}`);
+        })
+    );
 }

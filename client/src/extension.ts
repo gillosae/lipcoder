@@ -73,6 +73,8 @@ import { registerSpeedTestCommand } from './features/speed_test_command';
 import { registerTestSuggestionStorage } from './features/test_suggestion_storage';
 import { registerTerminalErrorFixer } from './features/terminal_error_fixer';
 import { registerFindDialogSimple } from './features/find_dialog_simple';
+import { registerEnterSoundFeedback } from './features/enter_sound_feedback';
+import { updateLineSeverity } from './features/line_severity';
 import { toggleAutoSnapshots, toggleASRProfiling, takeHeapSnapshot, startCPUProfile, stopCPUProfile, maybeSnapshotOnHighMemory, analyzeLatestCPUProfile, openProfilesFolder } from './profiler';
 
 // Configure VS Code to automatically overwrite files on save conflicts
@@ -611,7 +613,11 @@ export async function activate(context: vscode.ExtensionContext) {
 		logWarning(`⚠️ Failed to preload alphabet PCM: ${err}`);
 	}
 
-	// 4) Build the unified audioMap ─────────────────────────────────────────────
+	// 4) Initialize line severity tracking for syntax error detection ──────────────
+	updateLineSeverity();
+	log('✅ Line severity tracking initialized');
+
+	// 5) Build the unified audioMap ─────────────────────────────────────────────
 	const audioMapObj = createAudioMap(context);
 	
 	// Convert Map to Record for compatibility with readTextTokens
@@ -779,6 +785,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	registerFindDialogSimple(context);
 	log('✅ registerFindDialogSimple completed');
+
+	registerEnterSoundFeedback(context);
+	log('✅ registerEnterSoundFeedback completed');
 
 	// Profiler commands
 	context.subscriptions.push(

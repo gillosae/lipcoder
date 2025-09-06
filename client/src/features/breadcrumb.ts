@@ -81,7 +81,7 @@ export function registerBreadcrumb(
                     
                     // Add small delay to ensure audio stopping is complete before starting new audio
                     setTimeout(() => {
-                        speakTokenList([{ tokens: [label], category: undefined }], lineAbortController.signal);
+                        speakTokenList([{ tokens: [label], category: undefined, priority: 'high' }], lineAbortController.signal);
                     }, 200); // 200ms delay to ensure stopping is complete
                 }
             });
