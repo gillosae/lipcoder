@@ -15,3 +15,18 @@ client/src/python/include/
 
 # Node.js version cache for automatic native module rebuilding:
 .node-version-cache
+
+**/.hf_cache/
+**/.cache/
+**/models/
+**/checkpoints/
+*.pt
+*.bin
+*.safetensors
+*.onnx
+*.mp4
+*.wav
+*.flac
+*.zip
+*.tar
+*.tar.gz
