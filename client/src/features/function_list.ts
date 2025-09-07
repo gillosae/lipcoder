@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { log } from '../utils';
-import { playWave, speakTokenList, speakGPT, TokenChunk, clearAudioStoppingState, readInEspeak, stopThinkingAudio } from '../audio';
+import { speakGPT, TokenChunk, clearAudioStoppingState, readInEspeak, stopThinkingAudio } from '../audio';
 import { stopAllAudio, lineAbortController } from './stop_reading';
 import { stopEarconPlayback } from '../earcon';
 
-import { config } from '../config';
 import type { DocumentSymbol } from 'vscode';
 
 let autoTimer: NodeJS.Timeout | null = null;
@@ -87,7 +85,7 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                 }
                 const sel = active[0];
                 if (sel) {
-                    const { line, label, depth } = sel;
+                    const { line, label } = sel;
                     const editor = vscode.window.activeTextEditor!;
                     const pos = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(pos, pos);
@@ -115,13 +113,6 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                             log(`[FunctionList] Navigation aborted, skipping audio for: ${label}`);
                             return;
                         }
-                        
-                        // Play indent earcon for nesting depth
-                        const MAX_INDENT_UNITS = 5;
-                        const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                        const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
-                        playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                        
                         // Use readInEspeak for fast combined reading of function names with navigation signal
                         const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces used for indentation
                         const chunks: TokenChunk[] = [{ 
@@ -139,19 +130,11 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                 accepted = true;
                 const sel = quickPick.activeItems[0];
                 if (sel) {
-                    const { label, line, depth } = sel;
-                    // Play indent earcon for nesting depth on accept as well
-                    const MAX_INDENT_UNITS = 5;
-                    const idx = depth >= MAX_INDENT_UNITS ? MAX_INDENT_UNITS - 1 : depth;
-                    const indentFile = path.join(config.earconPath(), `indent_${idx}.pcm`);
-                    playWave(indentFile, { isEarcon: true, immediate: true }).catch(console.error);
-                    
-                    // Use readInEspeak for fast combined reading of confirmation message
-                    const functionName = label.replace(/\u00A0/g, ''); // Remove non-breaking spaces
+                    const { label } = sel;
+                    // Speak only the function name on accept
+                    const functionName = label.replace(/\u00A0/g, '');
                     const chunks: TokenChunk[] = [
-                        { tokens: ['moved', 'to', 'function'], category: undefined, priority: 'high' },
-                        { tokens: [functionName], category: 'variable', priority: 'high' }, // Auto word chunking
-                        { tokens: ['line', (line + 1).toString()], category: undefined, priority: 'high' }
+                        { tokens: [functionName], category: 'variable', priority: 'high' }
                     ];
                     readInEspeak(chunks).catch(console.error);
                 }
@@ -171,7 +154,6 @@ export function registerFunctionList(context: vscode.ExtensionContext) {
                 quickPick.dispose();
             });
 
-            const MAX_INDENT_UNITS = 5;
             quickPick.show();
             // Ensure thinking earcon stops once the list is visible
             try { await stopThinkingAudio(); } catch {}

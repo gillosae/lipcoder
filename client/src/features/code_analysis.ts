@@ -147,8 +147,98 @@ function findCurrentFunction(symbols: vscode.DocumentSymbol[], position: vscode.
 async function analyzeCodeQuestion(question: string, context: CodeContext): Promise<CodeAnalysisResult> {
     const client = getOpenAIClient();
     
-    // Create a comprehensive prompt for code analysis
-    const prompt = `You are a code analysis assistant that answers questions about code in both English and Korean. 
+    // Determine scope: whole-file overview vs function/section-specific
+    const isFunctionSpecific = (
+        /함수|function|메서드|method/i.test(question) &&
+        (/뭐하는|무엇을|설명|역할|이 부분|이 함수|current function|this function|focused/i.test(question))
+    ) || (!!context.currentFunction && /지금 내가 있는 함수|현재 함수/i.test(question));
+
+    const isWholeFileOverview = /이 코드가 뭐하는 코드야|what does this code do|explain this code|코드 설명/i.test(question);
+
+    // Collect function symbols from current file for targeted selection
+    let functionNames: string[] = [];
+    let targetFunctionName: string | null = null;
+    let targetFunctionRange: vscode.Range | null = null;
+
+    try {
+        const document = vscode.window.activeTextEditor?.document;
+        if (document) {
+            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                document.uri
+            );
+            if (symbols) {
+                const allFunctions: vscode.DocumentSymbol[] = [];
+                const collect = (nodes: vscode.DocumentSymbol[]) => {
+                    for (const n of nodes) {
+                        if (n.kind === vscode.SymbolKind.Function || n.kind === vscode.SymbolKind.Method) {
+                            allFunctions.push(n);
+                        }
+                        if (n.children && n.children.length) collect(n.children);
+                    }
+                };
+                collect(symbols);
+                functionNames = allFunctions.map(f => f.name);
+
+                // Try to detect ASCII-like function mention in the question and match
+                const asciiCandidates = (question.match(/[A-Za-z_][A-Za-z0-9_]{1,60}/g) || [])
+                    .map(s => s.toLowerCase());
+                if (asciiCandidates.length > 0) {
+                    const normalized = (s: string) => s.toLowerCase();
+                    const byScore = allFunctions
+                        .map(fn => {
+                            const name = normalized(fn.name);
+                            let score = 0;
+                            for (const c of asciiCandidates) {
+                                if (name === c) score += 100;
+                                else if (name.includes(c)) score += Math.min(90, c.length);
+                            }
+                            return { fn, score };
+                        })
+                        .sort((a, b) => b.score - a.score);
+                    if (byScore.length > 0 && byScore[0].score > 0) {
+                        targetFunctionName = byScore[0].fn.name;
+                        targetFunctionRange = new vscode.Range(byScore[0].fn.range.start, byScore[0].fn.range.end);
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    // Select analysis target text
+    let analysisText = context.fullText;
+    let analysisScopeNote = 'full file';
+    if (targetFunctionRange) {
+        const document = vscode.window.activeTextEditor?.document;
+        if (document) {
+            analysisText = document.getText(targetFunctionRange);
+            analysisScopeNote = `function ${targetFunctionName}`;
+        }
+    } else if (isFunctionSpecific && context.currentFunction) {
+        // Try to extract just the current function block for focused analysis
+        try {
+            const document = vscode.window.activeTextEditor?.document;
+            if (document) {
+                const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                    'vscode.executeDocumentSymbolProvider',
+                    document.uri
+                );
+                const func = symbols ? findCurrentFunction(symbols, context.cursorPosition) : null;
+                if (func) {
+                    const range = new vscode.Range(func.range.start, func.range.end);
+                    analysisText = document.getText(range);
+                    analysisScopeNote = `function ${func.name}`;
+                }
+            }
+        } catch {}
+    } else if (context.selectedText && context.selectedText.trim().length > 0) {
+        // If user highlighted a section, focus on that
+        analysisText = context.selectedText;
+        analysisScopeNote = 'selected section';
+    }
+
+    // Create a comprehensive prompt for code analysis with scoped behavior
+    const prompt = `You are a code analysis assistant that answers questions about code in both English and Korean.
 
 Question: "${question}"
 
@@ -156,14 +246,23 @@ Code Context:
 - File: ${context.fileName}
 - Language: ${context.language}
 - Current function: ${context.currentFunction || 'Not in a function'}
-- Selected text: ${context.selectedText || 'None'}
+- Selected text: ${context.selectedText ? 'Provided' : 'None'}
+- Analysis scope: ${analysisScopeNote}
+- Available functions (names only, from this file): ${functionNames.length > 0 ? functionNames.join(', ') : 'None detected'}
 
-Code:
+Code to analyze:
 \`\`\`${context.language}
-${context.fullText}
+${analysisText}
 \`\`\`
 
-Please analyze the code and answer the question. Common question types include:
+Answer the question with the following behavior:
+- If the user asks a general question like "이 코드가 뭐하는 코드야?" or "what does this code do?": provide a friendly whole-file overview (high level purpose, main components, key functions/classes, data flow) in 6-10 lines max.
+- If the user asks about a specific function/section (e.g., mentions 함수/이 부분/this function/current function): explain ONLY that scope (purpose, inputs, outputs, side effects, key steps) in 6-10 lines max.
+- Prefer Korean if the question is in Korean; otherwise reply in the question's language.
+
+When the question appears to refer to a function by description (e.g., Korean words describing a function like "하이드 커서 함수"), choose the single most relevant function name from the "Available functions" list above and focus ONLY on that function. Do not guess functions that are not in the provided list.
+
+Common question types include:
 - Code state/status questions (지금 코드가 어떤 상태야?)
 - Function explanations (어떤 함수에 대해 설명해줘, 지금 내가 있는 함수는 뭐하는 함수야?)
 - Variable counts (지금 전역변수가 몇개야?)
@@ -172,14 +271,13 @@ Please analyze the code and answer the question. Common question types include:
 - Code quality assessment
 
 Special handling for Korean function analysis questions:
-- When asked "지금 내가 있는 함수는 뭐하는 함수야?" or similar, focus on explaining the current function's purpose, parameters, return value, and main logic.
-- Provide detailed explanations in Korean including what the function does, how it works, and its role in the codebase.
+- When asked "지금 내가 있는 함수는 뭐하는 함수야?" or similar, focus on the current function's purpose, parameters, return value, side-effects, and main logic only.
 
-IMPORTANT: Keep your answer very concise and focused (maximum 10 lines or 300 characters for the main answer). Provide a clear, direct response in the same language as the question. If the question is in Korean, answer in Korean. If in English, answer in English. Focus only on the core essence without unnecessary details.
+IMPORTANT: Keep your answer concise (max 10 lines). Use bullet-like short sentences or compact paragraphs. Avoid implementation-heavy details unless directly asked. Use the same language as the question.
 
 Response format:
 {
-  "answer": "Direct, concise answer to the question (maximum 10 lines or 300 characters)",
+  "answer": "Direct, concise answer (max 10 lines)",
   "details": "Additional details if needed (optional, keep brief)",
   "statistics": {
     "functions": number_of_functions,
@@ -233,7 +331,7 @@ Respond with valid JSON only.`;
  * Fallback basic analysis when LLM fails
  */
 async function performBasicAnalysis(question: string, context: CodeContext): Promise<CodeAnalysisResult> {
-    const { fullText, language, currentFunction } = context;
+    const { fullText, language, currentFunction, selectedText } = context;
     const lines = fullText.split('\n');
     
     // Basic statistics
@@ -248,12 +346,16 @@ async function performBasicAnalysis(question: string, context: CodeContext): Pro
         lines: lines.length
     };
     
-    // Generate basic answer based on question type
+    // Scope: whole-file vs function/selection only
+    const asksWholeFile = /이 코드가 뭐하는 코드야|what does this code do|explain this code|코드 설명/i.test(question);
+    const asksFunction = /함수|function|메서드|method|현재 함수|지금 내가 있는 함수/i.test(question);
+
+    // Generate basic answer based on question type and scope
     let answer = '';
     
     if (question.includes('상태') || question.includes('state')) {
         answer = `현재 ${language} 파일은 ${statistics.lines}줄이며, ${statistics.functions}개의 함수와 ${statistics.classes}개의 클래스를 포함하고 있습니다.`;
-    } else if (question.includes('함수') || question.includes('function')) {
+    } else if (asksFunction) {
         if (currentFunction) {
             if (question.includes('뭐하는') || question.includes('무엇을') || question.includes('어떤')) {
                 // Try to extract function code for better analysis
@@ -283,7 +385,8 @@ async function performBasicAnalysis(question: string, context: CodeContext): Pro
                     }
                 }
                 
-                answer = `현재 ${currentFunction} 함수 안에 있습니다. 이 함수는 ${language} 언어로 작성되었으며, 코드를 분석해보면 주요 기능을 수행하는 함수로 보입니다. 전체 파일에는 ${statistics.functions}개의 함수가 있습니다.`;
+                // Provide concise function-only description
+                answer = `현재 ${currentFunction} 함수 설명: 입력과 반환, 주요 단계 중심으로 동작합니다. 파일 전체 맥락은 생략하고 함수의 역할에만 집중합니다. (함수 수: ${statistics.functions})`;
             } else {
                 answer = `현재 ${currentFunction} 함수 안에 있습니다. 전체 파일에는 ${statistics.functions}개의 함수가 있습니다.`;
             }
@@ -293,7 +396,13 @@ async function performBasicAnalysis(question: string, context: CodeContext): Pro
     } else if (question.includes('변수') || question.includes('variable')) {
         answer = `전체 파일에 약 ${statistics.variables}개의 변수 선언이 있습니다.`;
     } else {
-        answer = `${language} 파일 분석 결과: ${statistics.lines}줄, ${statistics.functions}개 함수, ${statistics.variables}개 변수, ${statistics.classes}개 클래스`;
+        if (asksWholeFile || !selectedText) {
+            // Whole-file high-level overview
+            answer = `${language} 파일 개요: ${statistics.lines}줄, 함수 ${statistics.functions}개, 클래스 ${statistics.classes}개, 변수 ${statistics.variables}개. 주요 구성요소와 흐름을 중심으로 동작합니다.`;
+        } else {
+            // Selection-only brief
+            answer = `선택된 코드 요약: 핵심 목적과 흐름을 간단히 보여줍니다. 파일 전체 설명은 생략합니다.`;
+        }
     }
     
     return {
